@@ -1,9 +1,11 @@
 mod curves;
 mod fields;
+mod synthesis;
 mod util;
 
 pub use curves::{Curve, Ec1};
 pub use fields::{Field, Fp};
+pub use synthesis::{Backend, Basic, SynthesisDriver};
 
 use std::ops::{Add, Neg, Sub};
 
