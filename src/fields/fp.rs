@@ -7,8 +7,8 @@ const MODULUS: u32 = 2113929217;
 pub struct Fp(u32);
 
 impl Field for Fp {
-    const CAPACITY: usize = 30;
-    const S: usize = 25;
+    const CAPACITY: u32 = 30;
+    const S: u32 = 25;
     const GENERATOR: Self = Fp(5);
     const ALPHA: Self = Fp(1971140334);
 
@@ -20,7 +20,7 @@ impl Field for Fp {
         if self.0 == 0 {
             None
         } else {
-            Some(self.pow(MODULUS - 2))
+            Some(self.pow((MODULUS - 2) as u64))
         }
     }
 }

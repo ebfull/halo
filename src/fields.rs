@@ -17,10 +17,10 @@ pub trait Field:
     + Eq
 {
     /// How many bits of information can be stored reliably?
-    const CAPACITY: usize;
+    const CAPACITY: u32;
 
     // p - 1 is divisible by 2^s
-    const S: usize;
+    const S: u32;
 
     /// Generator of the p - 1 order multiplicative subgroup
     const GENERATOR: Self;
@@ -40,7 +40,7 @@ pub trait Field:
     fn square(&self) -> Self {
         (*self) * (*self)
     }
-    fn pow(&self, by: u32) -> Self {
+    fn pow(&self, by: u64) -> Self {
         let mut acc = Self::one();
         for i in (0..32).rev().map(|b| ((by >> b) & 1) == 1) {
             acc = acc.square();

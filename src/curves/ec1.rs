@@ -1,5 +1,5 @@
-use crate::fields::{Field, Fp};
 use crate::curves::Curve;
+use crate::fields::{Field, Fp};
 
 use std::ops::{Add, Mul, Neg, Sub};
 
