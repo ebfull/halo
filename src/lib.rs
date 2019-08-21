@@ -1,1 +1,2 @@
+mod curves;
 mod fields;
