@@ -10,12 +10,20 @@ pub struct Ec1(Fp);
 
 impl Curve for Ec1 {
     type Scalar = Fp;
+    type Base = Fp; // TODO
 
-    fn one(&self) -> Self {
+    fn zero() -> Self {
+        Ec1(Fp::zero())
+    }
+    fn one() -> Self {
         Ec1(Fp::one())
     }
     fn double(&self) -> Self {
         Ec1(self.0 + self.0)
+    }
+    fn get_xy(&self) -> (Self::Base, Self::Base) {
+        // TODO
+        (self.0, self.0)
     }
 }
 

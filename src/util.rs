@@ -1,6 +1,56 @@
-use crate::fields::Field;
+use crate::{Curve, Field};
 use crossbeam_utils::thread;
 use num_cpus;
+
+pub fn compute_inner_product<F: Field>(a: &[F], b: &[F]) -> F {
+    assert_eq!(a.len(), b.len());
+    let mut acc = F::zero();
+
+    for (a, b) in a.iter().zip(b.iter()) {
+        acc = acc + ((*a) * (*b));
+    }
+
+    acc
+}
+
+/// TODO: Naive multiexp for now.
+pub fn multiexp<F: Field, C: Curve<Scalar = F>>(coeffs: &[C::Scalar], bases: &[C]) -> C {
+    assert_eq!(coeffs.len(), bases.len());
+
+    let num_cpus = num_cpus::get();
+    if coeffs.len() > num_cpus {
+        let mut results = vec![C::zero(); num_cpus::get()];
+        thread::scope(|scope| {
+            let chunk = coeffs.len() / num_cpus::get();
+
+            for ((coeffs, bases), acc) in coeffs
+                .chunks(chunk)
+                .zip(bases.chunks(chunk))
+                .zip(results.iter_mut())
+            {
+                scope.spawn(move |_| {
+                    for (coeff, base) in coeffs.iter().zip(bases.iter()) {
+                        let coeff: F = *coeff;
+                        let base: C = *base;
+                        let product = base * coeff;
+                        *acc = (*acc) + product;
+                    }
+                });
+            }
+        })
+        .unwrap();
+        results.iter().fold(C::zero(), |a, b| a + *b)
+    } else {
+        let mut acc = C::zero();
+        for (coeff, base) in coeffs.iter().zip(bases.iter()) {
+            let coeff: F = *coeff;
+            let base: C = *base;
+            let product = base * coeff;
+            acc = acc + product;
+        }
+        acc
+    }
+}
 
 pub fn multiply_polynomials<F: Field>(mut a: Vec<F>, mut b: Vec<F>) -> Vec<F> {
     let degree_of_result = (a.len() - 1) + (b.len() - 1);

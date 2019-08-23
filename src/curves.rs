@@ -18,9 +18,12 @@ pub trait Curve:
     + Eq
 {
     type Scalar: Field;
+    type Base: Field;
 
-    fn one(&self) -> Self;
+    fn zero() -> Self;
+    fn one() -> Self;
     fn double(&self) -> Self;
+    fn get_xy(&self) -> (Self::Base, Self::Base);
 }
 
 mod ec1;

@@ -16,12 +16,20 @@ impl Field for Fp {
         Fp((v % (MODULUS as u64)) as u32)
     }
 
+    fn from_u128(v: u128) -> Self {
+        Fp((v % (MODULUS as u128)) as u32)
+    }
+
     fn invert(&self) -> Option<Self> {
         if self.0 == 0 {
             None
         } else {
             Some(self.pow((MODULUS - 2) as u64))
         }
+    }
+
+    fn get_lower_128<FF: Field>(&self) -> FF {
+        FF::from_u128(self.0 as u128)
     }
 }
 

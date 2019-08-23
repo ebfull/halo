@@ -29,6 +29,7 @@ pub trait Field:
     const ALPHA: Self;
 
     fn from_u64(v: u64) -> Self;
+    fn from_u128(v: u128) -> Self;
     fn invert(&self) -> Option<Self>;
 
     fn zero() -> Self {
@@ -49,6 +50,22 @@ pub trait Field:
             }
         }
         acc
+    }
+    fn get_lower_128<FF: Field>(&self) -> FF;
+
+    // Performs a batch inversion using Montgomery's trick,
+    // returns the product of every inverse. Assumes all inputs
+    // are nonzero.
+    fn batch_invert(v: &mut [Self]) -> Self {
+        // TODO: actually implement this
+        let mut allinv = Self::one();
+        for v in v {
+            let inv = v.invert().unwrap();
+            allinv = allinv * inv;
+            *v = inv;
+        }
+
+        allinv
     }
 }
 
