@@ -85,6 +85,8 @@ pub fn create_groth_opening<F: Field, C: Curve<Scalar = F>>(
     while (1 << k) < a.len() {
         k += 1;
     }
+    a.resize(1 << k, F::zero());
+    b.resize(1 << k, F::zero());
 
     let value = util::compute_inner_product(&a, &b);
     transcript.append_scalar(value);
@@ -92,6 +94,7 @@ pub fn create_groth_opening<F: Field, C: Curve<Scalar = F>>(
     let mut rounds = Vec::with_capacity(k);
 
     let mut generators = generators.to_vec();
+    generators.resize(1 << k, C::zero());
 
     while k > 0 {
         let l = 1 << (k - 1);
@@ -162,6 +165,9 @@ pub fn verify_groth_opening<F: Field, C: Curve<Scalar = F>>(
         k += 1;
     }
 
+    let mut generators = generators.to_vec();
+    generators.resize(1 << k, C::zero());
+
     assert_eq!(opening.rounds.len(), k);
 
     transcript.append_scalar(opening.value);
@@ -197,7 +203,7 @@ pub fn verify_groth_opening<F: Field, C: Curve<Scalar = F>>(
         acc = acc + (*lv * challenges_sq[i]) + (*rv * challenges_inv_sq[i]);
     }
 
-    let b = compute_b_for_inner_product(m as u64, &challenges_sq, allinv, x);
+    let b = compute_b_for_inner_product(m as u64, n, &challenges_sq, allinv, x);
     let rhs = compute_g_for_inner_product(&generators, &challenges_sq, allinv) * opening.a;
 
     let ab = opening.a * b;
@@ -205,9 +211,9 @@ pub fn verify_groth_opening<F: Field, C: Curve<Scalar = F>>(
     ab == value_acc && acc == rhs
 }
 
-pub fn compute_b_for_inner_product<F: Field>(m: u64, challenges_sq: &[F], allinv: F, x: F) -> F {
+pub fn compute_b_for_inner_product<F: Field>(m: u64, n: usize, challenges_sq: &[F], allinv: F, x: F) -> F {
     let lg_n = challenges_sq.len();
-    let n = 1 << lg_n;
+    assert!((1 << lg_n) >= n);
 
     let mut s = Vec::with_capacity(n);
     s.push(allinv);
@@ -259,9 +265,8 @@ fn test_groth_commitments() {
     // so that mn = (m/2)(n*2)
     // and also for the inner product argument
 
-    let s = 4;
-    let m = 1 << (s / 2);
-    let n = 1 << (s / 2);
+    let m = 13;
+    let n = 18;
     let coeffs = (0..m * n)
         .map(|i| Fp::from_u64(i as u64))
         .collect::<Vec<_>>();
