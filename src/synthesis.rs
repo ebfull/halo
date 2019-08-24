@@ -195,6 +195,7 @@ impl SynthesisDriver for Basic {
         circuit.synthesize(&mut tmp)?;
 
         println!("n = {}", tmp.n);
+        println!("q = {}", tmp.q);
 
         Ok(())
     }
