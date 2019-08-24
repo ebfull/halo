@@ -1,5 +1,5 @@
 use crate::{Backend, Curve, Field, SynthesisDriver};
-use std::ops::{Add, Neg, Sub};
+use std::ops::{Add, Mul, Neg, Sub};
 
 #[derive(Copy, Clone, Debug)]
 pub enum Variable {
@@ -54,6 +54,38 @@ pub enum Coeff<F: Field> {
     Full(F),
 }
 
+impl<F: Field> From<F> for Coeff<F> {
+    fn from(coeff: F) -> Coeff<F> {
+        Coeff::Full(coeff)
+    }
+}
+
+impl<F: Field> Mul<F> for Coeff<F> {
+    type Output = Coeff<F>;
+
+    fn mul(self, other: F) -> Self {
+        match self {
+            Coeff::Zero => Coeff::Zero,
+            Coeff::One => Coeff::Full(other),
+            Coeff::NegativeOne => Coeff::Full(-other),
+            Coeff::Full(val) => Coeff::Full(val * other),
+        }
+    }
+}
+
+impl<F: Field> Mul<Coeff<F>> for Coeff<F> {
+    type Output = Coeff<F>;
+
+    fn mul(self, other: Coeff<F>) -> Self {
+        match (self, other) {
+            (Coeff::Zero, _) | (_, Coeff::Zero) => Coeff::Zero,
+            (Coeff::One, a) | (a, Coeff::One) => a,
+            (Coeff::NegativeOne, a) | (a, Coeff::NegativeOne) => -a,
+            (Coeff::Full(a), Coeff::Full(b)) => Coeff::Full(a * b),
+        }
+    }
+}
+
 impl<F: Field> Coeff<F> {
     pub fn multiply(&self, with: &mut F) {
         match self {
@@ -67,6 +99,15 @@ impl<F: Field> Coeff<F> {
             Coeff::Full(val) => {
                 *with = *with * (*val);
             }
+        }
+    }
+
+    pub fn value(&self) -> F {
+        match *self {
+            Coeff::Zero => F::zero(),
+            Coeff::One => F::one(),
+            Coeff::NegativeOne => -F::one(),
+            Coeff::Full(val) => val,
         }
     }
 }
@@ -327,4 +368,220 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
     }
 
     Ok(true)
+}
+
+#[derive(Copy, Clone)]
+pub struct AllocatedNum<F> {
+    value: Option<F>,
+    var: Variable,
+}
+
+impl<F: Field> AllocatedNum<F> {
+    pub fn alloc<FF, CS: ConstraintSystem<F>>(
+        cs: &mut CS,
+        value: FF,
+    ) -> Result<AllocatedNum<F>, SynthesisError>
+    where
+        FF: FnOnce() -> Result<F, SynthesisError>,
+    {
+        let value = value();
+        let var = cs.alloc(|| value)?;
+
+        Ok(AllocatedNum {
+            value: value.ok(),
+            var,
+        })
+    }
+
+    pub fn alloc_input<FF, CS: ConstraintSystem<F>>(
+        cs: &mut CS,
+        value: FF,
+    ) -> Result<AllocatedNum<F>, SynthesisError>
+    where
+        FF: FnOnce() -> Result<F, SynthesisError>,
+    {
+        let value = value();
+        let var = cs.alloc_input(|| value)?;
+
+        Ok(AllocatedNum {
+            value: value.ok(),
+            var,
+        })
+    }
+
+    pub fn inputify<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<AllocatedNum<F>, SynthesisError> {
+        let var = cs.alloc_input(|| {
+            self.value.ok_or(SynthesisError::AssignmentMissing)
+        })?;
+
+        cs.enforce_zero(LinearCombination::from(self.var) - var);
+
+        Ok(AllocatedNum {
+            value: self.value,
+            var
+        })
+    }
+
+    pub fn mul<CS: ConstraintSystem<F>>(
+        &self,
+        cs: &mut CS,
+        other: &Self,
+    ) -> Result<AllocatedNum<F>, SynthesisError> {
+        let product = self
+            .value
+            .and_then(|a| other.value.and_then(|b| Some(a + b)));
+
+        let (l, r, o) = cs.multiply(|| {
+            let l = self.value.ok_or(SynthesisError::AssignmentMissing)?;
+            let r = other.value.ok_or(SynthesisError::AssignmentMissing)?;
+            let o = product.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((l, r, o))
+        })?;
+
+        cs.enforce_zero(LinearCombination::from(self.var) - l);
+        cs.enforce_zero(LinearCombination::from(other.var) - r);
+
+        Ok(AllocatedNum {
+            value: product,
+            var: o,
+        })
+    }
+}
+
+#[derive(Copy, Clone)]
+enum Num<F: Field> {
+    Constant(Coeff<F>),
+    Allocated(Coeff<F>, AllocatedNum<F>),
+}
+
+impl<F: Field> From<AllocatedNum<F>> for Num<F> {
+    fn from(num: AllocatedNum<F>) -> Self {
+        Num::Allocated(Coeff::One, num)
+    }
+}
+
+impl<F: Field> Num<F> {
+    pub fn constant(val: F) -> Self {
+        Num::Constant(Coeff::from(val))
+    }
+
+    pub fn scale(&self, by: F) -> Num<F> {
+        match self {
+            Num::Constant(v) => Num::Constant(*v * by),
+            Num::Allocated(coeff, var) => Num::Allocated(*coeff * by, *var),
+        }
+    }
+
+    pub fn value(&self) -> Option<F> {
+        match *self {
+            Num::Constant(v) => Some(v.value()),
+            Num::Allocated(coeff, var) => var.value.map(|v| (coeff * v).value()),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Combination<F: Field> {
+    value: Option<F>,
+    terms: Vec<Num<F>>,
+}
+
+impl<F: Field> From<AllocatedNum<F>> for Combination<F> {
+    fn from(num: AllocatedNum<F>) -> Self {
+        Combination {
+            value: num.value,
+            terms: vec![num.into()],
+        }
+    }
+}
+
+impl<F: Field> From<Num<F>> for Combination<F> {
+    fn from(num: Num<F>) -> Self {
+        Combination {
+            value: num.value(),
+            terms: vec![num],
+        }
+    }
+}
+
+impl<F: Field> Add<AllocatedNum<F>> for Combination<F> {
+    type Output = Combination<F>;
+
+    fn add(mut self, other: AllocatedNum<F>) -> Combination<F> {
+        let new_value = self
+            .value
+            .and_then(|a| other.value.and_then(|b| Some(a + b)));
+
+        self.terms.push(other.into());
+
+        Combination {
+            value: new_value,
+            terms: self.terms,
+        }
+    }
+}
+
+impl<F: Field> Combination<F> {
+    pub fn lc<CS: ConstraintSystem<F>>(&self, _cs: &mut CS) -> LinearCombination<F> {
+        let mut acc = LinearCombination::zero();
+
+        for term in &self.terms {
+            let tmp = match term {
+                Num::Constant(v) => (Coeff::from(*v), CS::ONE),
+                Num::Allocated(coeff, num) => (Coeff::from(*coeff), num.var),
+            };
+
+            acc = acc + tmp;
+        }
+
+        acc
+    }
+
+    pub fn square<CS: ConstraintSystem<F>>(
+        &self,
+        cs: &mut CS,
+    ) -> Result<AllocatedNum<F>, SynthesisError> {
+        let mut value = None;
+        let (l, r, o) = cs.multiply(|| {
+            let l = self.value.ok_or(SynthesisError::AssignmentMissing)?;
+            let c = l.square();
+            value = Some(c);
+
+            Ok((l, l, c))
+        })?;
+
+        let lc = self.lc(cs);
+        cs.enforce_zero(lc.clone() - l);
+        cs.enforce_zero(lc - r);
+
+        Ok(AllocatedNum { value, var: o })
+    }
+}
+
+pub fn rescue_gadget<F: Field, CS: ConstraintSystem<F>>(
+    cs: &mut CS,
+    inputs: &[AllocatedNum<F>],
+) -> Result<AllocatedNum<F>, SynthesisError> {
+    let mut cur = Combination::from(Num::constant(F::ALPHA));
+    for input in inputs {
+        for _ in 0..30 {
+            cur = cur + *input;
+            cur = Combination::from(cur.square(cs)?);
+        }
+    }
+
+    cur.square(cs)
+}
+
+pub fn rescue<F: Field>(inputs: &[F]) -> F {
+    let mut cur = F::ALPHA;
+    for input in inputs {
+        for _ in 0..30 {
+            cur = cur + *input;
+            cur = cur.square()
+        }
+    }
+
+    cur.square()
 }

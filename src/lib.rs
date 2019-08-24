@@ -195,6 +195,7 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
 
         Ok(SubsonicProof::invalid())
     }
+
     fn verify_proof(
         proof: &Self::Proof,
         parameters: &Self::Parameters,
@@ -213,31 +214,12 @@ fn test_subsonic() {
 
     impl<F: Field> Circuit<F> for DinkyCircuit<F> {
         fn synthesize<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
-            let a = cs.alloc_input(|| self.a.ok_or(SynthesisError::AssignmentMissing))?;
-            let b = cs.alloc(|| self.b.ok_or(SynthesisError::AssignmentMissing))?;
+            let a = AllocatedNum::alloc_input(cs, || self.a.ok_or(SynthesisError::AssignmentMissing))?;
+            let b = AllocatedNum::alloc(cs, || self.b.ok_or(SynthesisError::AssignmentMissing))?;
 
-            let (l, r, o) = cs.multiply(|| {
-                let a = self.a.ok_or(SynthesisError::AssignmentMissing)?;
-                let b = self.b.ok_or(SynthesisError::AssignmentMissing)?;
+            let result = rescue_gadget(cs, &[a, b])?;
 
-                let c = a * b;
-
-                Ok((a, b, c))
-            })?;
-
-            cs.enforce_zero(LinearCombination::from(l) - a);
-            cs.enforce_zero(LinearCombination::from(r) - b);
-
-            let c = cs.alloc_input(|| {
-                let a = self.a.ok_or(SynthesisError::AssignmentMissing)?;
-                let b = self.b.ok_or(SynthesisError::AssignmentMissing)?;
-
-                let c = a * b;
-
-                Ok(c)
-            })?;
-
-            cs.enforce_zero(LinearCombination::from(o) - c);
+            result.inputify(cs)?;
 
             Ok(())
         }
@@ -246,16 +228,20 @@ fn test_subsonic() {
     let params = Subsonic::new(2, 4);
     let mycircuit = DinkyCircuit {
         a: Some(Fp::from_u64(10)),
-        b: Some(Fp::from_u64(10)),
+        b: Some(Fp::from_u64(15)),
     };
-    assert!(circuits::is_satisfied::<_, _, Basic>(&mycircuit, &[Fp::from_u64(10), Fp::from_u64(100)]).unwrap());
-
-    let proof = Subsonic::<Ec1>::new_proof::<_, Basic>(
+    let expected = rescue(&[Fp::from_u64(10), Fp::from_u64(15)]);
+    assert!(circuits::is_satisfied::<_, _, Basic>(
         &mycircuit,
-        &params
-    ).unwrap();
+        &[Fp::from_u64(10), expected]
+    )
+    .unwrap());
 
-    assert!(
-        Subsonic::<Ec1>::verify_proof(&proof, &params, &[Fp::from_u64(10), Fp::from_u64(100)])
-    );
+    let proof = Subsonic::<Ec1>::new_proof::<_, Basic>(&mycircuit, &params).unwrap();
+
+    assert!(Subsonic::<Ec1>::verify_proof(
+        &proof,
+        &params,
+        &[Fp::from_u64(10), expected]
+    ));
 }
