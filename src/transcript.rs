@@ -1,4 +1,4 @@
-use crate::{Field, Curve};
+use crate::{Curve, Field};
 
 // TODO: This is not secure yet.
 pub struct Transcript<C: Curve> {

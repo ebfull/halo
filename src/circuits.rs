@@ -1,4 +1,4 @@
-use crate::{Field, Curve, Backend, SynthesisDriver};
+use crate::{Backend, Curve, Field, SynthesisDriver};
 use std::ops::{Add, Neg, Sub};
 
 #[derive(Copy, Clone, Debug)]
@@ -91,7 +91,7 @@ impl<F: Field> Neg for Coeff<F> {
 pub struct LinearCombination<F: Field>(Vec<(Variable, Coeff<F>)>);
 
 impl<F: Field> LinearCombination<F> {
-    fn evaluate(&self, a: &[F], b: &[F], c: &[F]) -> F {
+    pub fn evaluate(&self, a: &[F], b: &[F], c: &[F]) -> F {
         let mut acc = F::zero();
         for &(var, ref coeff) in self.as_ref() {
             let mut var = match var {

@@ -211,7 +211,13 @@ pub fn verify_groth_opening<F: Field, C: Curve<Scalar = F>>(
     ab == value_acc && acc == rhs
 }
 
-pub fn compute_b_for_inner_product<F: Field>(m: u64, n: usize, challenges_sq: &[F], allinv: F, x: F) -> F {
+pub fn compute_b_for_inner_product<F: Field>(
+    m: u64,
+    n: usize,
+    challenges_sq: &[F],
+    allinv: F,
+    x: F,
+) -> F {
     let lg_n = challenges_sq.len();
     assert!((1 << lg_n) >= n);
 
