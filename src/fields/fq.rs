@@ -59,7 +59,7 @@ impl ConditionallySelectable for Fq {
 }
 
 /// Constant representing the modulus
-/// q = 0x5c5e464a35c12769bac2a757742b393081be9c1a3201248299fffe7d00000001
+/// q = 0x5c5e464a35c12769bac2a757742b39311b849d0f1801860419fffe7d00000001
 const MODULUS: Fq = Fq([
     0x19fffe7d00000001,
     0x1b849d0f18018604,

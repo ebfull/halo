@@ -1,9 +1,10 @@
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-use subtle::{Choice, ConditionallySelectable, CtOption};
+use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
 pub trait Field:
     Sized
+    + Default
     + Copy
     + Clone
     + Send
@@ -26,6 +27,7 @@ pub trait Field:
     + PartialEq
     + Eq
     + ConditionallySelectable
+    + ConstantTimeEq
 {
     /// How many bits of information can be stored reliably?
     const CAPACITY: u32;
