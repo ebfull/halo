@@ -4,25 +4,52 @@ use crate::{util, Curve, Field, Transcript};
 pub struct GrothCommitment<C: Curve>(Vec<C>);
 
 impl<C: Curve> GrothCommitment<C> {
+    pub fn dummy_commitment(m: usize, n: usize) -> Self {
+        let points = (0..m).map(|_| C::one()).collect();
+
+        GrothCommitment(points)
+    }
+}
+
+impl<C: Curve> GrothCommitment<C> {
     pub fn get_points(&self) -> &[C] {
         &self.0
     }
 }
 
+fn get_coeff<F: Field>(coeffs: &[F], index: usize, edge: bool, offset: usize) -> F {
+    // If `edge` is specified, the polynomial is being committed to at the
+    // right edge of possible polynomials to degree bound it. As a result,
+    // all queries to coeffs at `index` smaller than `offset` are implicitly
+    // zero
+    if edge {
+        if index < offset {
+            F::zero()
+        } else {
+            coeffs[index - offset]
+        }
+    } else {
+        coeffs.get(index).map(|a| *a).unwrap_or_else(|| F::zero())
+    }
+}
+
 pub fn create_groth_commitment<F: Field, C: Curve<Scalar = F>>(
     coefficients: &[F],
+    edge: bool,
     generators: &[C],
     m: usize,
     n: usize,
 ) -> GrothCommitment<C> {
-    assert_eq!(coefficients.len(), m * n);
+    assert!(coefficients.len() <= (m * n));
     assert_eq!(generators.len(), n);
+
+    let offset = (m * n) - coefficients.len();
 
     let mut results = vec![C::zero(); m];
     let mut v = vec![F::zero(); n];
     for i in 0..m {
         for j in 0..n {
-            v[j] = coefficients[(j * m) + i];
+            v[j] = get_coeff(&coefficients, (j * m) + i, edge, offset);
         }
         results[i] = util::multiexp(&v, &generators);
     }
@@ -40,14 +67,17 @@ pub struct GrothOpeningProof<C: Curve> {
 /// already been appended to the transcript.
 pub fn create_groth_opening<F: Field, C: Curve<Scalar = F>>(
     transcript: &mut Transcript<C>,
+    edge: bool,
     coefficients: &[F],
     generators: &[C],
     m: usize,
     n: usize,
     x: F,
 ) -> GrothOpeningProof<C> {
-    assert_eq!(coefficients.len(), m * n);
+    assert!(coefficients.len() <= (m * n));
     assert_eq!(generators.len(), n);
+
+    let offset = (m * n) - coefficients.len();
 
     let mut powers_of_x = vec![F::zero(); m];
     {
@@ -63,7 +93,7 @@ pub fn create_groth_opening<F: Field, C: Curve<Scalar = F>>(
         let jm = j * m;
         let mut acc = F::zero();
         for i in 0..m {
-            acc = acc + (coefficients[jm + i] * powers_of_x[i]);
+            acc = acc + (get_coeff(&coefficients, jm + i, edge, offset) * powers_of_x[i]);
         }
         a[j] = acc;
     }
@@ -285,17 +315,71 @@ fn test_groth_commitments() {
         }
     }
     let x = Fp::from_u64(384734);
-    let commitment = create_groth_commitment(&coeffs, &generators, m, n);
+    let commitment = create_groth_commitment(&coeffs, false, &generators, m, n);
 
     let mut transcript = Transcript::new();
     transcript.append_groth_commitment(&commitment);
-    let opening = create_groth_opening(&mut transcript, &coeffs, &generators, m, n, x);
+    let opening = create_groth_opening(&mut transcript, false, &coeffs, &generators, m, n, x);
 
     let mut expected_value = Fp::zero();
     for coeff in coeffs.iter().rev() {
         expected_value = expected_value * x;
         expected_value = expected_value + *coeff;
     }
+
+    assert_eq!(expected_value, opening.value);
+
+    {
+        let mut transcript = Transcript::new();
+        transcript.append_groth_commitment(&commitment);
+
+        assert!(verify_groth_opening(
+            &mut transcript,
+            &commitment,
+            &opening,
+            &generators,
+            m,
+            n,
+            x
+        ));
+    }
+}
+
+#[test]
+fn test_edge_commitment() {
+    use crate::{Ec1, Fp};
+
+    let m = 15;
+    let n = 10;
+
+    // mn = 150
+
+    // poly with 30 coefficients
+    let coeffs = (0..30).map(|i| Fp::from_u64(i as u64)).collect::<Vec<_>>();
+
+    let mut generators = Vec::with_capacity(n);
+    {
+        let mut cur = Ec1::one();
+        for _ in 0..n {
+            generators.push(cur);
+            cur = cur * Fp::from_u64(123728);
+        }
+    }
+    let x = Fp::from_u64(384734);
+    let commitment = create_groth_commitment(&coeffs, true, &generators, m, n);
+
+    let mut transcript = Transcript::new();
+    transcript.append_groth_commitment(&commitment);
+    let opening = create_groth_opening(&mut transcript, true, &coeffs, &generators, m, n, x);
+
+    let mut expected_value = Fp::zero();
+    for coeff in coeffs.iter().rev() {
+        expected_value = expected_value * x;
+        expected_value = expected_value + *coeff;
+    }
+
+    // expected value should actually be multiplied by x^(30 - 150 = 120)
+    expected_value = expected_value * x.pow(120);
 
     assert_eq!(expected_value, opening.value);
 

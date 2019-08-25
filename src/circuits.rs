@@ -409,16 +409,17 @@ impl<F: Field> AllocatedNum<F> {
         })
     }
 
-    pub fn inputify<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<AllocatedNum<F>, SynthesisError> {
-        let var = cs.alloc_input(|| {
-            self.value.ok_or(SynthesisError::AssignmentMissing)
-        })?;
+    pub fn inputify<CS: ConstraintSystem<F>>(
+        &self,
+        cs: &mut CS,
+    ) -> Result<AllocatedNum<F>, SynthesisError> {
+        let var = cs.alloc_input(|| self.value.ok_or(SynthesisError::AssignmentMissing))?;
 
         cs.enforce_zero(LinearCombination::from(self.var) - var);
 
         Ok(AllocatedNum {
             value: self.value,
-            var
+            var,
         })
     }
 
