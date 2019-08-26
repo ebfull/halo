@@ -1,11 +1,15 @@
 #[macro_use]
 mod util;
 
+mod circuits;
 mod curves;
 mod fields;
+mod synthesis;
 
+pub use circuits::*;
 pub use curves::*;
 pub use fields::*;
+pub use synthesis::*;
 
 // TODO: This should be upstreamed to subtle.
 // See https://github.com/dalek-cryptography/subtle/pull/48

@@ -126,10 +126,7 @@ fn point_double<F: Field, CS: ConstraintSystem<F>>(
         let tmp = x2.get_value().ok_or(SynthesisError::AssignmentMissing)?;
         let tmp = tmp * F::from_u64(3);
         let y_value = y.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-        let tmp = tmp
-            * ((y_value + y_value)
-                .invert()
-                .ok_or(SynthesisError::Violation))?;
+        let tmp = tmp * ((y_value + y_value).invert().unwrap());
 
         Ok(tmp)
     })?;
@@ -249,19 +246,59 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
 
 fn main() {
     let circuit = MyCircuit {
-        x_input: Some(Fp::from_u64(171950885)),
-        y_input: Some(Fp::from_u64(1172990737)),
-        x_output: Some(Fp::from_u64(1943278323)),
-        y_output: Some(Fp::from_u64(1526590629)),
+        x_input: Some(Fp::from_raw([
+            0xdb6e8b6dfcb425f4,
+            0xdb9d7c6884110585,
+            0xe5af8e2b94293c57,
+            0x110ec8ac0520acff,
+        ])),
+        y_input: Some(Fp::from_raw([
+            0xb8726fb5ec64ef71,
+            0xf91065bebc57cd04,
+            0x7181d0ce926fb19e,
+            0x4144b4a744fc23a9,
+        ])),
+        x_output: Some(Fp::from_raw([
+            0xde5c85c0439fc8ed,
+            0x1695fafd1a8c5d8a,
+            0x3cc56d62335791f8,
+            0x34a1874282f601bc,
+        ])),
+        y_output: Some(Fp::from_raw([
+            0x78373da05adf8c08,
+            0x7af422acb2d02b18,
+            0x5621168cb14bddb5,
+            0x8da4ddf78a0bac9,
+        ])),
     };
 
     assert!(is_satisfied::<Fp, _, Basic>(
         &circuit,
         &[
-            Fp::from_u64(171950885),
-            Fp::from_u64(1172990737),
-            Fp::from_u64(1943278323),
-            Fp::from_u64(1526590629)
+            Fp::from_raw([
+                0xdb6e8b6dfcb425f4,
+                0xdb9d7c6884110585,
+                0xe5af8e2b94293c57,
+                0x110ec8ac0520acff
+            ]),
+            Fp::from_raw([
+                0xb8726fb5ec64ef71,
+                0xf91065bebc57cd04,
+                0x7181d0ce926fb19e,
+                0x4144b4a744fc23a9
+            ]),
+            Fp::from_raw([
+                0xde5c85c0439fc8ed,
+                0x1695fafd1a8c5d8a,
+                0x3cc56d62335791f8,
+                0x34a1874282f601bc
+            ]),
+            Fp::from_raw([
+                0x78373da05adf8c08,
+                0x7af422acb2d02b18,
+                0x5621168cb14bddb5,
+                0x8da4ddf78a0bac9
+            ])
         ]
     )
     .unwrap());
