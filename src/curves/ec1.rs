@@ -45,6 +45,10 @@ impl Curve for Ec1 {
     type Scalar = Fq;
     type Base = Fp;
 
+    fn b() -> Self::Base {
+        B
+    }
+
     fn zero() -> Self {
         Ec1 {
             x: Fp::zero(),

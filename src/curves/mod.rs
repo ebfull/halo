@@ -43,6 +43,8 @@ pub trait Curve:
     fn get_xy(&self) -> CtOption<(Self::Base, Self::Base)>;
 
     fn double(&self) -> Self;
+
+    fn b() -> Self::Base;
 }
 
 mod ec0;

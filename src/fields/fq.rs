@@ -185,50 +185,6 @@ impl Fq {
         self.add(self)
     }
 
-    /// Attempts to convert a little-endian byte representation of
-    /// a scalar into a `Fq`, failing if the input is not canonical.
-    pub fn from_bytes(bytes: &[u8; 32]) -> CtOption<Fq> {
-        let mut tmp = Fq([0, 0, 0, 0]);
-
-        tmp.0[0] = LittleEndian::read_u64(&bytes[0..8]);
-        tmp.0[1] = LittleEndian::read_u64(&bytes[8..16]);
-        tmp.0[2] = LittleEndian::read_u64(&bytes[16..24]);
-        tmp.0[3] = LittleEndian::read_u64(&bytes[24..32]);
-
-        // Try to subtract the modulus
-        let (_, borrow) = sbb(tmp.0[0], MODULUS.0[0], 0);
-        let (_, borrow) = sbb(tmp.0[1], MODULUS.0[1], borrow);
-        let (_, borrow) = sbb(tmp.0[2], MODULUS.0[2], borrow);
-        let (_, borrow) = sbb(tmp.0[3], MODULUS.0[3], borrow);
-
-        // If the element is smaller than MODULUS then the
-        // subtraction will underflow, producing a borrow value
-        // of 0xffff...ffff. Otherwise, it'll be zero.
-        let is_some = (borrow as u8) & 1;
-
-        // Convert to Montgomery form by computing
-        // (a.R^0 * R^2) / R = a.R
-        tmp *= &R2;
-
-        CtOption::new(tmp, Choice::from(is_some))
-    }
-
-    /// Converts an element of `Fq` into a byte representation in
-    /// little-endian byte order.
-    pub fn to_bytes(&self) -> [u8; 32] {
-        // Turn into canonical form by computing
-        // (a.R) / R = a
-        let tmp = Fq::montgomery_reduce(self.0[0], self.0[1], self.0[2], self.0[3], 0, 0, 0, 0);
-
-        let mut res = [0; 32];
-        LittleEndian::write_u64(&mut res[0..8], tmp.0[0]);
-        LittleEndian::write_u64(&mut res[8..16], tmp.0[1]);
-        LittleEndian::write_u64(&mut res[16..24], tmp.0[2]);
-        LittleEndian::write_u64(&mut res[24..32], tmp.0[3]);
-
-        res
-    }
-
     /// Converts a 512-bit little endian integer into
     /// a `Fq` by reducing by the modulus.
     pub fn from_bytes_wide(bytes: &[u8; 64]) -> Fq {
@@ -496,6 +452,7 @@ impl<'a> From<&'a Fq> for [u8; 32] {
 }
 
 impl Field for Fq {
+    const NUM_BITS: u32 = 255;
     const CAPACITY: u32 = 254;
     const S: u32 = 32;
     const ALPHA: Self = ROOT_OF_UNITY;
@@ -526,6 +483,50 @@ impl Field for Fq {
 
     fn invert(&self) -> CtOption<Self> {
         self.invert()
+    }
+
+    /// Attempts to convert a little-endian byte representation of
+    /// a scalar into a `Fq`, failing if the input is not canonical.
+    fn from_bytes(bytes: &[u8; 32]) -> CtOption<Fq> {
+        let mut tmp = Fq([0, 0, 0, 0]);
+
+        tmp.0[0] = LittleEndian::read_u64(&bytes[0..8]);
+        tmp.0[1] = LittleEndian::read_u64(&bytes[8..16]);
+        tmp.0[2] = LittleEndian::read_u64(&bytes[16..24]);
+        tmp.0[3] = LittleEndian::read_u64(&bytes[24..32]);
+
+        // Try to subtract the modulus
+        let (_, borrow) = sbb(tmp.0[0], MODULUS.0[0], 0);
+        let (_, borrow) = sbb(tmp.0[1], MODULUS.0[1], borrow);
+        let (_, borrow) = sbb(tmp.0[2], MODULUS.0[2], borrow);
+        let (_, borrow) = sbb(tmp.0[3], MODULUS.0[3], borrow);
+
+        // If the element is smaller than MODULUS then the
+        // subtraction will underflow, producing a borrow value
+        // of 0xffff...ffff. Otherwise, it'll be zero.
+        let is_some = (borrow as u8) & 1;
+
+        // Convert to Montgomery form by computing
+        // (a.R^0 * R^2) / R = a.R
+        tmp *= &R2;
+
+        CtOption::new(tmp, Choice::from(is_some))
+    }
+
+    /// Converts an element of `Fq` into a byte representation in
+    /// little-endian byte order.
+    fn to_bytes(&self) -> [u8; 32] {
+        // Turn into canonical form by computing
+        // (a.R) / R = a
+        let tmp = Fq::montgomery_reduce(self.0[0], self.0[1], self.0[2], self.0[3], 0, 0, 0, 0);
+
+        let mut res = [0; 32];
+        LittleEndian::write_u64(&mut res[0..8], tmp.0[0]);
+        LittleEndian::write_u64(&mut res[8..16], tmp.0[1]);
+        LittleEndian::write_u64(&mut res[16..24], tmp.0[2]);
+        LittleEndian::write_u64(&mut res[24..32], tmp.0[3]);
+
+        res
     }
 
     fn get_lower_128(&self) -> u128 {

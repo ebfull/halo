@@ -29,6 +29,9 @@ pub trait Field:
     + ConditionallySelectable
     + ConstantTimeEq
 {
+    /// How many bits needed to express the modulus?
+    const NUM_BITS: u32;
+
     /// How many bits of information can be stored reliably?
     const CAPACITY: u32;
 
@@ -47,6 +50,9 @@ pub trait Field:
     fn zero() -> Self;
     fn one() -> Self;
     fn square(&self) -> Self;
+
+    fn to_bytes(&self) -> [u8; 32];
+    fn from_bytes(bytes: &[u8; 32]) -> CtOption<Self>;
 
     /// Exponentiates `self` by `by`, where `by` is a
     /// little-endian order integer exponent.
