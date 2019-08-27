@@ -67,8 +67,8 @@ impl<'a, E1: Curve, E2: Curve<Base=E1::Scalar>, Inner: Circuit<E1::Scalar>> Circ
         // Hash the commitment to r(X, Y)
         let transcript = append_point(cs, &transcript, &r_commitment)?;
 
-        // Obtain the challenge y
-        let (transcript, y) = obtain_challenge(cs, &transcript)?;
+        // Obtain the challenge y_cur
+        let (transcript, y_cur) = obtain_challenge(cs, &transcript)?;
 
         self.inner_circuit.synthesize(cs)
     }

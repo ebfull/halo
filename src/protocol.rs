@@ -62,6 +62,23 @@ impl<C: Curve> Subsonic<C> {
             util::multiexp(&v, &self.generators[0..(self.generators.len() - v.len())])
         }
     }
+
+    pub fn compute_sx<CS: Circuit<C::Scalar>, S: SynthesisDriver>(
+        &self,
+        circuit: &CS,
+        y: C::Scalar
+    ) -> Result<Vec<C::Scalar>, SynthesisError>
+    {
+        let mut sx = SxEval::new(y);
+        S::synthesize(&mut sx, circuit)?;
+        let (sx_negative, sx_positive) = sx.poly();
+        let mut sx = Vec::with_capacity(3 * self.n + 1);
+        sx.extend(sx_negative.into_iter().rev());
+        sx.push(C::Scalar::zero());
+        sx.extend(sx_positive);
+
+        Ok(sx)
+    }
 }
 
 pub struct SubsonicProof<C: Curve> {
@@ -196,7 +213,7 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
         assignment.c.resize(self.n, C::Scalar::zero());
 
         // Compute r(X, Y)
-        let mut rx = Vec::with_capacity(3 * assignment.n + 1);
+        let mut rx = Vec::with_capacity(3 * self.n + 1);
         rx.extend(assignment.c.into_iter().rev());
         rx.extend(assignment.b.into_iter().rev());
         rx.push(C::Scalar::zero());
@@ -205,13 +222,16 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
         // Commit to r(X, Y)
         let r_commitment = self.commit(&rx, true);
 
-        // Obtain the challenge y
+        // Obtain the challenge y_cur
         let transcript = C::Base::zero();
         let transcript = append_point::<C>(transcript, &r_commitment);
-        let (transcript, y) = get_challenge::<_, C::Scalar>(transcript);
+        let (transcript, y_cur) = get_challenge::<_, C::Scalar>(transcript);
 
-        // Compute s(X, y)
-        // TODO
+        // Compute s(X, y_cur) for the current proof
+        let sx_cur = self.compute_sx::<_, S>(circuit, y_cur)?;
+
+        // Commit to s(X, y)
+        let s_cur_commitment = self.commit(&sx_cur, false);
 
         Ok(SubsonicProof { r_commitment })
     }
@@ -250,4 +270,115 @@ fn get_challenge<F1: Field, F2: Field>(
     let challenge = transcript.get_lower_128();
 
     (new_transcript, F2::from_u128(challenge))
+}
+
+/*
+s(X, Y) =   \sum\limits_{i=1}^N u_i(Y) X^{-i}
+          + \sum\limits_{i=1}^N v_i(Y) X^{i}
+          + \sum\limits_{i=1}^N w_i(Y) X^{i+N}
+where
+    u_i(Y) = \sum\limits_{q=1}^Q Y^{q} u_{i,q}
+    v_i(Y) = \sum\limits_{q=1}^Q Y^{q} v_{i,q}
+    w_i(Y) = \sum\limits_{q=1}^Q Y^{q} w_{i,q}
+*/
+#[derive(Clone)]
+struct SxEval<F: Field> {
+    y: F,
+
+    // current value of y^{q}
+    cur_y: F,
+
+    // x^{-i} (\sum\limits_{q=1}^Q y^{q} u_{i,q})
+    u: Vec<F>,
+    // x^{i} (\sum\limits_{q=1}^Q y^{q} v_{i,q})
+    v: Vec<F>,
+    // x^{i+N} (\sum\limits_{q=1}^Q y^{q} w_{i,q})
+    w: Vec<F>,
+}
+
+impl<F: Field> SxEval<F> {
+    fn new(y: F) -> Self {
+        let u = vec![];
+        let v = vec![];
+        let w = vec![];
+
+        SxEval {
+            y,
+            cur_y: y,
+            u,
+            v,
+            w,
+        }
+    }
+
+    fn poly(mut self) -> (Vec<F>, Vec<F>) {
+        self.v.extend(self.w);
+
+        (self.u, self.v)
+    }
+
+    // TODO: remove?
+    fn finalize(self, x: F) -> F {
+        let x_inv = x.invert().unwrap(); // TODO
+
+        let mut tmp = x_inv;
+
+        let mut acc = F::zero();
+        for mut u in self.u {
+            u.mul_assign(&tmp);
+            acc.add_assign(&u);
+            tmp.mul_assign(&x_inv);
+        }
+
+        let mut tmp = x;
+        for mut v in self.v {
+            v.mul_assign(&tmp);
+            acc.add_assign(&v);
+            tmp.mul_assign(&x);
+        }
+        for mut w in self.w {
+            w.mul_assign(&tmp);
+            acc.add_assign(&w);
+            tmp.mul_assign(&x);
+        }
+
+        acc
+    }
+}
+
+impl<'a, F: Field> Backend<F> for &'a mut SxEval<F> {
+    type LinearConstraintIndex = F;
+
+    fn new_multiplication_gate(&mut self) {
+        self.u.push(F::zero());
+        self.v.push(F::zero());
+        self.w.push(F::zero());
+    }
+
+    fn new_linear_constraint(&mut self) -> F {
+        self.cur_y.mul_assign(&self.y);
+        self.cur_y
+    }
+
+    fn get_for_q(&self, q: usize) -> Self::LinearConstraintIndex {
+        self.y.pow(&[q as u64, 0, 0, 0])
+    }
+
+    fn insert_coefficient(&mut self, var: Variable, coeff: Coeff<F>, y: &F) {
+        let acc = match var {
+            Variable::A(index) => {
+                &mut self.u[index - 1]
+            }
+            Variable::B(index) => {
+                &mut self.v[index - 1]
+            }
+            Variable::C(index) => {
+                &mut self.w[index - 1]
+            }
+        };
+
+        let mut tmp = *y;
+        coeff.multiply(&mut tmp);
+        *acc = *acc + tmp;
+    }
 }
