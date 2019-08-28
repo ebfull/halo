@@ -32,7 +32,7 @@ fn main() {
 
     let mycircuit = MyCircuit;
 
-    let proof0 = RecursiveProof::<Ec0, Ec1>::create_false_proof();
+    let proof0 = RecursiveProof::<Ec0, Ec1>::create_false_proof(&params2);
 
     // will fail eventually
     assert!(proof0.verify_proof(&params2, &mycircuit, &[]).unwrap());

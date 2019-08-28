@@ -45,6 +45,9 @@ pub trait Curve:
     fn double(&self) -> Self;
 
     fn b() -> Self::Base;
+
+    // TODO: dunno bout this
+    fn is_on_curve(&self) -> bool;
 }
 
 mod ec0;

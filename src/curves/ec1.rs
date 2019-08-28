@@ -151,6 +151,15 @@ impl Curve for Ec1 {
             z: z3,
         }
     }
+
+    fn is_on_curve(&self) -> bool {
+        if bool::from(self.is_zero()) {
+            return true;
+        }
+
+        let (x, y) = self.get_xy().unwrap();
+        (x.square() * x + B) == y.square()
+    }
 }
 
 const B: Fp = Fp::from_raw([7, 0, 0, 0]);
@@ -166,6 +175,11 @@ impl<'a> Neg for &'a Ec1 {
 
     #[inline]
     fn neg(self) -> Ec1 {
+        // TODO: not constant time
+        if bool::from(self.is_zero()) {
+            return *self;
+        }
+
         Ec1 {
             x: self.x,
             y: -self.y,

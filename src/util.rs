@@ -19,9 +19,11 @@ pub fn multiexp<F: Field, C: Curve<Scalar = F>>(coeffs: &[C::Scalar], bases: &[C
 
     let num_cpus = num_cpus::get();
     if coeffs.len() > num_cpus {
-        let mut results = vec![C::zero(); num_cpus::get()];
+        let chunk = coeffs.len() / num_cpus;
+        let num_chunks = coeffs.chunks(chunk).len();
+        let mut results = vec![C::zero(); num_chunks];
         thread::scope(|scope| {
-            let chunk = coeffs.len() / num_cpus::get();
+            let chunk = coeffs.len() / num_cpus;
 
             for ((coeffs, bases), acc) in coeffs
                 .chunks(chunk)
@@ -275,6 +277,27 @@ pub fn compute_b<F: Field>(x: F, challenges: &[F], challenges_inv: &[F]) -> F {
                 &challenges_inv[0..(challenges.len() - 1)],
             );
     }
+}
+
+pub fn compute_g_for_inner_product<F: Field, C: Curve<Scalar = F>>(
+    generators: &[C],
+    challenges_sq: &[F],
+    allinv: F,
+) -> C {
+    let n = generators.len();
+    let lg_n = challenges_sq.len();
+    assert_eq!(n, 1 << lg_n);
+
+    let mut s = Vec::with_capacity(n);
+    s.push(allinv);
+    for i in 1..n {
+        let lg_i = (32 - 1 - (i as u32).leading_zeros()) as usize;
+        let k = 1 << lg_i;
+        let u_lg_i_sq = challenges_sq[(lg_n - 1) - lg_i];
+        s.push(s[i - k] * u_lg_i_sq);
+    }
+
+    multiexp(&s, &generators)
 }
 
 #[test]

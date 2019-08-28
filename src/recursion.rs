@@ -114,11 +114,11 @@ impl<E1: Curve, E2: Curve<Base=E1::Scalar>> RecursiveProof<E1, E2> {
         })
     }
 
-    pub fn create_false_proof() -> Self {
+    pub fn create_false_proof(params: &RecursiveParameters<E1, E2>) -> Self {
         RecursiveProof {
             proof: SubsonicProof::dummy(),
-            oldproof1: ProofMetadata::dummy(),
-            oldproof2: ProofMetadata::dummy(),
+            oldproof1: ProofMetadata::dummy(params.a.k),
+            oldproof2: ProofMetadata::dummy(params.b.k),
             deferred: Deferred::dummy(),
 
             is_valid: false,
