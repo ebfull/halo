@@ -279,14 +279,12 @@ pub fn compute_b<F: Field>(x: F, challenges: &[F], challenges_inv: &[F]) -> F {
     }
 }
 
-pub fn compute_g_for_inner_product<F: Field, C: Curve<Scalar = F>>(
-    generators: &[C],
+pub fn compute_g_coeffs_for_inner_product<F: Field>(
     challenges_sq: &[F],
     allinv: F,
-) -> C {
-    let n = generators.len();
+) -> Vec<F> {
     let lg_n = challenges_sq.len();
-    assert_eq!(n, 1 << lg_n);
+    let n = 1 << lg_n;
 
     let mut s = Vec::with_capacity(n);
     s.push(allinv);
@@ -296,6 +294,16 @@ pub fn compute_g_for_inner_product<F: Field, C: Curve<Scalar = F>>(
         let u_lg_i_sq = challenges_sq[(lg_n - 1) - lg_i];
         s.push(s[i - k] * u_lg_i_sq);
     }
+
+    s
+}
+
+pub fn compute_g_for_inner_product<F: Field, C: Curve<Scalar = F>>(
+    generators: &[C],
+    challenges_sq: &[F],
+    allinv: F,
+) -> C {
+    let s = compute_g_coeffs_for_inner_product::<F>(challenges_sq, allinv);
 
     multiexp(&s, &generators)
 }

@@ -124,6 +124,7 @@ pub struct SubsonicProof<C: Curve> {
     pub t_negative_commitment: C,
     pub c_commitment: C,
     pub s_new_commitment: C,
+    pub g_old_commitment: C,
 
     // Openings
     pub rx_opening: C::Scalar,
@@ -133,25 +134,32 @@ pub struct SubsonicProof<C: Curve> {
     pub tx_positive_opening: C::Scalar,
     pub tx_negative_opening: C::Scalar,
     pub sx_new_opening: C::Scalar,
+
+    // Inner product proof
+    pub inner_product: MultiPolynomialOpening<C>,
 }
 
 impl<C: Curve> SubsonicProof<C> {
     pub fn dummy() -> Self {
         SubsonicProof {
-            r_commitment: C::one(),
-            s_old_commitment: C::one(),
-            s_cur_commitment: C::one(),
-            t_positive_commitment: C::one(),
-            t_negative_commitment: C::one(),
-            c_commitment: C::one(),
-            s_new_commitment: C::one(),
-            rx_opening: C::Scalar::one(),
-            rxy_opening: C::Scalar::one(),
-            sx_old_opening: C::Scalar::one(),
-            sx_cur_opening: C::Scalar::one(),
-            tx_positive_opening: C::Scalar::one(),
-            tx_negative_opening: C::Scalar::one(),
-            sx_new_opening: C::Scalar::one(),
+            r_commitment: C::zero(),
+            s_old_commitment: C::zero(),
+            s_cur_commitment: C::zero(),
+            t_positive_commitment: C::zero(),
+            t_negative_commitment: C::zero(),
+            c_commitment: C::zero(),
+            s_new_commitment: C::zero(),
+            g_old_commitment: C::zero(),
+
+            rx_opening: C::Scalar::zero(),
+            rxy_opening: C::Scalar::zero(),
+            sx_old_opening: C::Scalar::zero(),
+            sx_cur_opening: C::Scalar::zero(),
+            tx_positive_opening: C::Scalar::zero(),
+            tx_negative_opening: C::Scalar::zero(),
+            sx_new_opening: C::Scalar::zero(),
+
+            inner_product: unimplemented!()// MultiPolynomialOpening::dummy(),
         }
     }
 }
@@ -304,6 +312,7 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
 
         // Commit to s(X, y_old)
         let s_old_commitment = self.commit(&sx_old, false);
+        //assert_eq!(s_old_commitment, old_proof_data.s_commitment);
         let transcript = append_point::<C>(transcript, &s_old_commitment);
 
         // Compute s(X, y_cur)
@@ -393,6 +402,23 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
         let s_new_commitment = self.commit(&sx_new, false);
         let transcript = append_point::<C>(transcript, &t_positive_commitment);
 
+        // Compute the coefficients for G_old
+        let challenges_old_sq: Vec<C::Scalar> = old_proof_data.challenges_new.iter().map(|a| a.square()).collect();
+        let mut challenges_old_inv = old_proof_data.challenges_new.clone();
+        for c in &mut challenges_old_inv {
+            *c = c.invert().unwrap();
+        }
+        let mut allinv_old = C::Scalar::one();
+        for c in &old_proof_data.challenges_new {
+            allinv_old *= &c.invert().unwrap();
+        }
+        let gx_old = compute_g_coeffs_for_inner_product(&challenges_old_sq, allinv_old);
+
+        // Commit to G_old
+        let g_old_commitment = self.commit(&gx_old, false);
+        let transcript = append_point::<C>(transcript, &t_positive_commitment);
+        //assert_eq!(old_proof_data.g_new, g_old_commitment);
+
         // Send the openings to all commitments
         let rx_opening = self.compute_opening(&rx, x, true);
         let transcript = append_scalar::<C>(transcript, &rx_opening);
@@ -408,6 +434,8 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
         let transcript = append_scalar::<C>(transcript, &tx_negative_opening);
         let sx_new_opening = self.compute_opening(&sx_new, x, false);
         let transcript = append_scalar::<C>(transcript, &sx_new_opening);
+        let gx_old_opening = self.compute_opening(&gx_old, x, false);
+        assert_eq!(gx_old_opening, compute_b(x, &old_proof_data.challenges_new, &challenges_old_inv));
 
         // Obtain the challenge z_0
         let (transcript, z_0) = get_challenge::<_, C::Scalar>(transcript);
@@ -420,6 +448,7 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
         let p_commitment = p_commitment * &z_0 + t_positive_commitment;
         let p_commitment = p_commitment * &z_0 + t_negative_commitment;
         let p_commitment = p_commitment * &z_0 + s_new_commitment;
+        let p_commitment = p_commitment * &z_0 + g_old_commitment;
 
         let p_opening = rx_opening;
         let p_opening = p_opening * &z_0 + &sx_old_opening;
@@ -427,6 +456,7 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
         let p_opening = p_opening * &z_0 + &tx_positive_opening;
         let p_opening = p_opening * &z_0 + &tx_negative_opening;
         let p_opening = p_opening * &z_0 + &sx_new_opening;
+        let p_opening = p_opening * &z_0 + &gx_old_opening;
 
         let mut px = vec![C::Scalar::zero(); self.d];
         px[(self.d - rx.len())..].copy_from_slice(&rx);
@@ -446,6 +476,7 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
             mul_px(&mut px, &z_0); add_to_px(&mut px, &tx_positive); drop(tx_positive);
             mul_px(&mut px, &z_0); add_to_px(&mut px, &tx_negative); drop(tx_negative);
             mul_px(&mut px, &z_0); add_to_px(&mut px, &sx_new); drop(sx_new);
+            mul_px(&mut px, &z_0); add_to_px(&mut px, &gx_old); drop(gx_old);
         }
 
         // sanity check
@@ -464,9 +495,8 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
         assert_eq!(self.compute_opening(&sy, y_new, false), sx_new_opening);
         assert_eq!(c_commitment, self.commit(&sy, false));
 
-        let mut transcript_cpy = transcript;
         let mut transcript = transcript;
-        let (first_inner_product, challenges_cur_prover, g_cur_prover) = MultiPolynomialOpening::new_proof(
+        let inner_product = MultiPolynomialOpening::new_proof(
             &mut transcript,
             &[
                 (PolynomialOpening {
@@ -504,63 +534,6 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
             self.k
         );
 
-        let (worked, challenges_cur_verifier, g_cur_verifier) = first_inner_product.verify_proof(
-            &mut transcript_cpy,
-            &[
-                PolynomialOpening {
-                    commitment: p_commitment,
-                    opening: p_opening,
-                    point: x,
-                    right_edge: false,
-                },
-                PolynomialOpening {
-                    commitment: r_commitment,
-                    opening: rxy_opening,
-                    point: x * &y_cur,
-                    right_edge: true
-                },
-                PolynomialOpening {
-                    commitment: c_commitment,
-                    opening: sx_old_opening,
-                    point: y_old,
-                    right_edge: false,
-                },
-                PolynomialOpening {
-                    commitment: c_commitment,
-                    opening: sx_cur_opening,
-                    point: y_cur,
-                    right_edge: false,
-                },
-                PolynomialOpening {
-                    commitment: c_commitment,
-                    opening: sx_new_opening,
-                    point: y_new,
-                    right_edge: false,
-                },
-            ],
-            &self.generators,
-            self.k
-        );
-        assert!(worked);
-        assert_eq!(challenges_cur_verifier, challenges_cur_prover);
-        assert_eq!(g_cur_verifier, g_cur_prover);
-        {
-            let challenges_sq: Vec<C::Scalar> = challenges_cur_verifier.iter().map(|a| a.square()).collect();
-            let mut allinv = C::Scalar::one();
-            for c in &challenges_cur_verifier {
-                allinv *= &c.invert().unwrap();
-            }
-            assert_eq!(g_cur_verifier, compute_g_for_inner_product(&self.generators, &challenges_sq, allinv));
-        }
-
-        /*
-        pub fn compute_g_for_inner_product<F: Field, C: Curve<Scalar = F>>(
-            generators: &[C],
-            challenges_sq: &[F],
-            allinv: F,
-        ) -> C
-        */
-
         Ok(SubsonicProof {
             r_commitment,
             s_old_commitment,
@@ -569,6 +542,7 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
             t_negative_commitment,
             c_commitment,
             s_new_commitment,
+            g_old_commitment,
 
             rx_opening,
             rxy_opening,
@@ -577,6 +551,8 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
             tx_positive_opening,
             tx_negative_opening,
             sx_new_opening,
+
+            inner_product
         })
     }
     fn verify_proof<CS: Circuit<C::Scalar>, S: SynthesisDriver>(
@@ -596,24 +572,24 @@ impl<C: Curve> ProvingSystem<C> for Subsonic<C> {
         circuit: &CS,
         proof: &Self::Proof,
     ) -> Result<Self::ProofMetadata, SynthesisError> {
-        Ok(ProofMetadata::dummy(self.k))
+        Ok(Self::ProofMetadata::dummy(self.k))
     }
 }
 
-struct PolynomialOpening<C: Curve> {
+pub struct PolynomialOpening<C: Curve> {
     commitment: C,
     opening: C::Scalar,
     point: C::Scalar,
     right_edge: bool,
 }
 
-struct MultiPolynomialOpening<C: Curve> {
+pub struct MultiPolynomialOpening<C: Curve> {
     rounds: Vec<InnerProductRound<C>>,
     a: Vec<C::Scalar>,
     g: C,
 }
 
-struct InnerProductRound<C: Curve> {
+pub struct InnerProductRound<C: Curve> {
     L: Vec<C>,
     R: Vec<C>,
     l: Vec<C::Scalar>,
@@ -621,7 +597,7 @@ struct InnerProductRound<C: Curve> {
 }
 
 impl<C: Curve> MultiPolynomialOpening<C> {
-    fn verify_proof(
+    pub fn verify_proof(
         &self,
         transcript: &mut C::Base,
         instances: &[PolynomialOpening<C>],
@@ -686,12 +662,12 @@ impl<C: Curve> MultiPolynomialOpening<C> {
         return (true, challenges, self.g)
     }
 
-    fn new_proof<'a>(
+    pub fn new_proof<'a>(
         transcript: &mut C::Base,
         instances: &'a [(PolynomialOpening<C>, &'a [C::Scalar])],
         generators: &[C],
         k: usize,
-    ) -> (MultiPolynomialOpening<C>, Vec<C::Scalar>, C) {
+    ) -> MultiPolynomialOpening<C> {
         let mut rounds = vec![];
         let mut a = vec![];
         let mut b = vec![];
@@ -780,15 +756,11 @@ impl<C: Curve> MultiPolynomialOpening<C> {
 
         assert_eq!(generators.len(), 1);
 
-        (
-            MultiPolynomialOpening {
-                rounds,
-                a: final_a,
-                g: generators[0]
-            },
-            challenges,
-            generators[0]
-        )
+        MultiPolynomialOpening {
+            rounds,
+            a: final_a,
+            g: generators[0]
+        }
     }
 }
 
