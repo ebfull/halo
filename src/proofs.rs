@@ -1,20 +1,20 @@
 use crate::*;
 
-#[derive(Clone)]
-pub struct ProofMetadata<C: Curve> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Leftovers<C: Curve> {
     pub s_new_commitment: C,
     pub y_new: C::Scalar,
     pub g_new: C,
     pub challenges_new: Vec<C::Scalar>,
 }
 
-impl<C: Curve> ProofMetadata<C> {
+impl<C: Curve> Leftovers<C> {
     /// Creates a phony instance of metadata from a "previous"
     /// proof that never existed; used to bootstrap the cycle.
     pub fn dummy<CS: Circuit<C::Scalar>, S: SynthesisDriver>(
         params: &Params<C>,
         circuit: &CS,
-    ) -> Result<ProofMetadata<C>, SynthesisError> {
+    ) -> Result<Leftovers<C>, SynthesisError> {
         let y_new = C::Scalar::one();
         let sx = params.compute_sx::<_, S>(circuit, y_new)?;
         let s_new_commitment = params.commit(&sx, false);
@@ -22,7 +22,7 @@ impl<C: Curve> ProofMetadata<C> {
         let g_new =
             compute_g_for_inner_product(&params.generators, &challenges_new, C::Scalar::one());
 
-        Ok(ProofMetadata {
+        Ok(Leftovers {
             s_new_commitment,
             y_new,
             g_new,
@@ -52,6 +52,8 @@ impl<C: Curve> ProofMetadata<C> {
     }
 }
 
+// curve points: 10k + 9
+// scalars: 11k + 13
 pub struct Proof<C: Curve> {
     // Commitments
     pub s_old_commitment: C,
@@ -82,8 +84,8 @@ impl<C: Curve> Proof<C> {
     pub fn new<CS: Circuit<C::Scalar>, S: SynthesisDriver>(
         params: &Params<C>,
         circuit: &CS,
-        old_metadata: &ProofMetadata<C>,
-    ) -> Result<(Proof<C>, ProofMetadata<C>), SynthesisError> {
+        old_metadata: &Leftovers<C>,
+    ) -> Result<(Proof<C>, Leftovers<C>), SynthesisError> {
         struct Assignment<F: Field> {
             n: usize,
             q: usize,
@@ -467,7 +469,7 @@ impl<C: Curve> Proof<C> {
             params.k,
         );
 
-        let metadata = ProofMetadata {
+        let metadata = Leftovers {
             s_new_commitment,
             y_new,
             g_new,
@@ -506,7 +508,7 @@ impl<C: Curve> Proof<C> {
         params: &Params<C>,
         circuit: &CS,
         inputs: &[C::Scalar],
-    ) -> Result<(bool, ProofMetadata<C>), SynthesisError> {
+    ) -> Result<(bool, Leftovers<C>), SynthesisError> {
         struct InputMap {
             inputs: Vec<usize>,
         }
@@ -658,7 +660,7 @@ impl<C: Curve> Proof<C> {
             params.k,
         );
 
-        let metadata = ProofMetadata {
+        let metadata = Leftovers {
             s_new_commitment: self.s_new_commitment,
             y_new,
             g_new,
@@ -710,33 +712,50 @@ fn my_test_circuit() {
 
     let params: Params<Ec1> = Params::new(4);
 
-    let prover_circuit: CubingCircuit<Fq> = CubingCircuit {
+    let mut prover_circuit: CubingCircuit<Fq> = CubingCircuit {
         x: Some(Fq::from(10)),
     };
     assert!(is_satisfied::<_, _, Basic>(&prover_circuit, &[Fq::from(1000)]).unwrap());
     let verifier_circuit: CubingCircuit<Fq> = CubingCircuit { x: None };
 
     // bootstrap the cycle with phony inputs
-    let dummy_metadata = ProofMetadata::dummy::<_, Basic>(&params, &verifier_circuit).unwrap();
-    assert!(dummy_metadata
+    let dummy_leftovers = Leftovers::dummy::<_, Basic>(&params, &verifier_circuit).unwrap();
+    assert!(dummy_leftovers
         .verify::<_, Basic>(&params, &verifier_circuit)
         .unwrap());
 
     // create proof
-    let (proof, prover_new_metadata) =
-        Proof::new::<_, Basic>(&params, &prover_circuit, &dummy_metadata).unwrap();
-    assert!(prover_new_metadata
+    let (proof, prover_new_leftovers) =
+        Proof::new::<_, Basic>(&params, &prover_circuit, &dummy_leftovers).unwrap();
+    assert!(prover_new_leftovers
         .verify::<_, Basic>(&params, &verifier_circuit)
         .unwrap());
 
     // partially verify proof (without doing any linear time procedures)
-    let (valid_proof, verifier_new_metadata) = proof
+    let (valid_proof, verifier_new_leftovers) = proof
         .verify::<_, Basic>(&params, &verifier_circuit, &[Fq::from(1000)])
         .unwrap();
-    assert!(verifier_new_metadata
+    assert!(verifier_new_leftovers
         .verify::<_, Basic>(&params, &verifier_circuit)
         .unwrap());
     assert!(valid_proof);
+    assert_eq!(prover_new_leftovers, verifier_new_leftovers);
+
+    prover_circuit.x = Some(Fq::from_u64(3));
+
+    let (proof, prover_new_leftovers) =
+        Proof::new::<_, Basic>(&params, &prover_circuit, &prover_new_leftovers).unwrap();
+    assert!(prover_new_leftovers
+        .verify::<_, Basic>(&params, &verifier_circuit)
+        .unwrap());
+
+    let (valid_proof, verifier_new_leftovers) = proof
+        .verify::<_, Basic>(&params, &verifier_circuit, &[Fq::from(27)])
+        .unwrap();
+    assert!(valid_proof);
+    assert!(verifier_new_leftovers
+        .verify::<_, Basic>(&params, &verifier_circuit)
+        .unwrap());
 }
 
 #[derive(Clone)]
