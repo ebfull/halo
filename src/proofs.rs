@@ -56,10 +56,6 @@ impl<C: Curve> Leftovers<C> {
 // scalars: 11k + 13
 pub struct Proof<C: Curve> {
     // Commitments
-    pub s_old_commitment: C,
-    pub y_old: C::Scalar,
-    pub g_old_commitment: C,
-    pub challenges_old: Vec<C::Scalar>,
     pub r_commitment: C,
     pub s_cur_commitment: C,
     pub t_positive_commitment: C,
@@ -188,14 +184,8 @@ impl<C: Curve> Proof<C> {
         let y_old = old_leftovers.y_new;
         let sx_old = params.compute_sx::<_, S>(circuit, y_old)?;
 
-        // Commit to s(X, y_old)
+        // Get s(X, y_old)
         let s_old_commitment = old_leftovers.s_new_commitment;
-        // let s_old_commitment = params.commit(&sx_old, false);
-        // assert_eq!(s_old_commitment, old_leftovers.s_new_commitment);
-        let transcript = append_point::<C>(transcript, &s_old_commitment);
-
-        // Commit to y_old
-        let transcript = append_scalar::<C>(transcript, &y_old);
 
         // Compute the coefficients for G_old
         let challenges_old_sq: Vec<C::Scalar> = old_leftovers
@@ -213,16 +203,8 @@ impl<C: Curve> Proof<C> {
         }
         let gx_old = compute_g_coeffs_for_inner_product(&challenges_old_sq, allinv_old);
 
-        // Commit to G_old
+        // Get G_old
         let g_old_commitment = old_leftovers.g_new;
-        // let g_old_commitment = params.commit(&gx_old, false);
-        // assert_eq!(old_leftovers.g_new, g_old_commitment);
-        let mut transcript = append_point::<C>(transcript, &g_old_commitment);
-
-        // Commit to the challenges for G_old
-        for challenge in &old_leftovers.challenges_new {
-            transcript = append_scalar::<C>(transcript, challenge);
-        }
 
         // Compute k(Y)
         let mut ky = vec![];
@@ -491,10 +473,6 @@ impl<C: Curve> Proof<C> {
 
         Ok((
             Proof {
-                s_old_commitment,
-                y_old,
-                g_old_commitment,
-                challenges_old: old_leftovers.challenges_new.clone(),
                 r_commitment,
                 s_cur_commitment,
                 t_positive_commitment,
@@ -518,6 +496,7 @@ impl<C: Curve> Proof<C> {
 
     pub fn verify<CS: Circuit<C::Scalar>, S: SynthesisDriver>(
         &self,
+        leftovers: &Leftovers<C>,
         params: &Params<C>,
         circuit: &CS,
         inputs: &[C::Scalar],
@@ -550,12 +529,6 @@ impl<C: Curve> Proof<C> {
         let transcript = C::Base::zero();
 
         // Commitments
-        let transcript = append_point::<C>(transcript, &self.s_old_commitment);
-        let transcript = append_scalar::<C>(transcript, &self.y_old);
-        let mut transcript = append_point::<C>(transcript, &self.g_old_commitment);
-        for challenge in &self.challenges_old {
-            transcript = append_scalar::<C>(transcript, challenge);
-        }
         let mut ky = vec![];
         ky.push(C::Scalar::zero());
         for (index, value) in inputmap
@@ -614,22 +587,22 @@ impl<C: Curve> Proof<C> {
 
         let circuit_satisfied = rhs == lhs;
 
-        let mut challenges_old_inv = self.challenges_old.clone();
+        let mut challenges_old_inv = leftovers.challenges_new.clone();
         for c in &mut challenges_old_inv {
             *c = c.invert().unwrap()
         }
         // Not added to the transcript; we computed it.
-        let gx_old_opening = compute_b(x, &self.challenges_old, &challenges_old_inv);
+        let gx_old_opening = compute_b(x, &leftovers.challenges_new, &challenges_old_inv);
 
         let (transcript, z) = get_challenge::<_, C::Scalar>(transcript);
 
         let p_commitment = self.r_commitment;
-        let p_commitment = p_commitment * &z + self.s_old_commitment;
+        let p_commitment = p_commitment * &z + leftovers.s_new_commitment;
         let p_commitment = p_commitment * &z + self.s_cur_commitment;
         let p_commitment = p_commitment * &z + self.t_positive_commitment;
         let p_commitment = p_commitment * &z + self.t_negative_commitment;
         let p_commitment = p_commitment * &z + self.s_new_commitment;
-        let p_commitment = p_commitment * &z + self.g_old_commitment;
+        let p_commitment = p_commitment * &z + leftovers.g_new;
 
         let p_opening = self.rx_opening;
         let p_opening = p_opening * &z + &self.sx_old_opening;
@@ -661,7 +634,7 @@ impl<C: Curve> Proof<C> {
                 PolynomialOpening {
                     commitment: self.c_commitment,
                     opening: self.sx_old_opening,
-                    point: self.y_old,
+                    point: leftovers.y_new,
                     right_edge: false,
                 },
                 PolynomialOpening {
@@ -753,12 +726,12 @@ fn my_test_circuit() {
 
     // partially verify proof (without doing any linear time procedures)
     let (valid_proof, verifier_new_leftovers) = proof
-        .verify::<_, Basic>(&params, &verifier_circuit, &[Fq::from(1000)])
+        .verify::<_, Basic>(&dummy_leftovers, &params, &verifier_circuit, &[Fq::from(1000)])
         .unwrap();
+    assert!(valid_proof);
     assert!(verifier_new_leftovers
         .verify::<_, Basic>(&params, &verifier_circuit)
         .unwrap());
-    assert!(valid_proof);
     assert_eq!(prover_new_leftovers, verifier_new_leftovers);
 
     prover_circuit.x = Some(Fq::from_u64(3));
@@ -770,12 +743,13 @@ fn my_test_circuit() {
         .unwrap());
 
     let (valid_proof, verifier_new_leftovers) = proof
-        .verify::<_, Basic>(&params, &verifier_circuit, &[Fq::from(27)])
+        .verify::<_, Basic>(&verifier_new_leftovers, &params, &verifier_circuit, &[Fq::from(27)])
         .unwrap();
     assert!(valid_proof);
     assert!(verifier_new_leftovers
         .verify::<_, Basic>(&params, &verifier_circuit)
         .unwrap());
+    assert_eq!(prover_new_leftovers, verifier_new_leftovers);
 }
 
 #[derive(Clone)]
