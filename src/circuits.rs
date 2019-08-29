@@ -8,9 +8,10 @@ pub enum Variable {
     C(usize),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SynthesisError {
     AssignmentMissing,
+    Unsatisfiable,
     Violation,
 }
 
