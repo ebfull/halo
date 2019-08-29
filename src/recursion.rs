@@ -90,11 +90,9 @@ impl<E1: Curve, E2: Curve<Base=E1::Scalar>> RecursiveProof<E1, E2> {
             new_payload,
         };
 
-        let proof = params
+        let (proof, metadata) = params
             .a
             .new_proof::<_, Basic>(&circuit, &old_proof.oldproof2)?;
-
-        let proof_metadata = params.a.get_proof_metadata::<_, Basic>(&circuit, &proof)?;
 
         // arithmetic we need done by the parent proof system which can
         // do it more efficiently
@@ -104,7 +102,7 @@ impl<E1: Curve, E2: Curve<Base=E1::Scalar>> RecursiveProof<E1, E2> {
 
         Ok(RecursiveProof {
             proof,
-            oldproof1: proof_metadata,
+            oldproof1: metadata,
             oldproof2: old_proof.oldproof1.clone(),
             deferred,
 
