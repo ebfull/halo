@@ -84,7 +84,7 @@ impl<C: Curve> Proof<C> {
     pub fn new<CS: Circuit<C::Scalar>, S: SynthesisDriver>(
         params: &Params<C>,
         circuit: &CS,
-        old_metadata: &Leftovers<C>,
+        old_leftovers: &Leftovers<C>,
     ) -> Result<(Proof<C>, Leftovers<C>), SynthesisError> {
         struct Assignment<F: Field> {
             n: usize,
@@ -181,40 +181,42 @@ impl<C: Curve> Proof<C> {
         let transcript = C::Base::zero();
 
         // Compute s(X, y_old)
-        let y_old = old_metadata.y_new;
+        let y_old = old_leftovers.y_new;
         let sx_old = params.compute_sx::<_, S>(circuit, y_old)?;
 
         // Commit to s(X, y_old)
-        let s_old_commitment = params.commit(&sx_old, false);
-        assert_eq!(s_old_commitment, old_metadata.s_new_commitment);
+        let s_old_commitment = old_leftovers.s_new_commitment;
+        // let s_old_commitment = params.commit(&sx_old, false);
+        // assert_eq!(s_old_commitment, old_leftovers.s_new_commitment);
         let transcript = append_point::<C>(transcript, &s_old_commitment);
 
         // Commit to y_old
         let transcript = append_scalar::<C>(transcript, &y_old);
 
         // Compute the coefficients for G_old
-        let challenges_old_sq: Vec<C::Scalar> = old_metadata
+        let challenges_old_sq: Vec<C::Scalar> = old_leftovers
             .challenges_new
             .iter()
             .map(|a| a.square())
             .collect();
-        let mut challenges_old_inv = old_metadata.challenges_new.clone();
+        let mut challenges_old_inv = old_leftovers.challenges_new.clone();
         for c in &mut challenges_old_inv {
             *c = c.invert().unwrap();
         }
         let mut allinv_old = C::Scalar::one();
-        for c in &old_metadata.challenges_new {
+        for c in &old_leftovers.challenges_new {
             allinv_old *= &c.invert().unwrap();
         }
         let gx_old = compute_g_coeffs_for_inner_product(&challenges_old_sq, allinv_old);
 
         // Commit to G_old
-        let g_old_commitment = params.commit(&gx_old, false);
+        let g_old_commitment = old_leftovers.g_new;
+        // let g_old_commitment = params.commit(&gx_old, false);
+        // assert_eq!(old_leftovers.g_new, g_old_commitment);
         let mut transcript = append_point::<C>(transcript, &g_old_commitment);
-        assert_eq!(old_metadata.g_new, g_old_commitment);
 
         // Commit to the challenges for G_old
-        for challenge in &old_metadata.challenges_new {
+        for challenge in &old_leftovers.challenges_new {
             transcript = append_scalar::<C>(transcript, challenge);
         }
 
@@ -342,7 +344,7 @@ impl<C: Curve> Proof<C> {
         let gx_old_opening = params.compute_opening(&gx_old, x, false);
         assert_eq!(
             gx_old_opening,
-            compute_b(x, &old_metadata.challenges_new, &challenges_old_inv)
+            compute_b(x, &old_leftovers.challenges_new, &challenges_old_inv)
         );
 
         // Obtain the challenge z
@@ -398,22 +400,6 @@ impl<C: Curve> Proof<C> {
             add_to_px(&mut px, &gx_old);
             drop(gx_old);
         }
-
-        // sanity check
-        assert_eq!(params.compute_opening(&px, x, false), p_opening);
-        assert_eq!(p_commitment, params.commit(&px, false));
-
-        assert_eq!(params.compute_opening(&rx, x * &y_cur, true), rxy_opening);
-        assert_eq!(r_commitment, params.commit(&rx, true));
-
-        assert_eq!(params.compute_opening(&sy, y_old, false), sx_old_opening);
-        assert_eq!(c_commitment, params.commit(&sy, false));
-
-        assert_eq!(params.compute_opening(&sy, y_cur, false), sx_cur_opening);
-        assert_eq!(c_commitment, params.commit(&sy, false));
-
-        assert_eq!(params.compute_opening(&sy, y_new, false), sx_new_opening);
-        assert_eq!(c_commitment, params.commit(&sy, false));
 
         let mut transcript = transcript;
         let (inner_product, challenges_new, g_new) = MultiPolynomialOpening::new_proof(
@@ -481,7 +467,7 @@ impl<C: Curve> Proof<C> {
                 s_old_commitment,
                 y_old,
                 g_old_commitment,
-                challenges_old: old_metadata.challenges_new.clone(),
+                challenges_old: old_leftovers.challenges_new.clone(),
                 r_commitment,
                 s_cur_commitment,
                 t_positive_commitment,

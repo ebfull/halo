@@ -1,31 +1,28 @@
-use super::{Curve, Field, Subsonic, SubsonicProof, ProofMetadata, ProvingSystem};
+use super::{Curve, Field};
+use super::proofs::*;
 use super::circuits::*;
 use super::gadgets::*;
 use super::synthesis::Basic;
 use std::marker::PhantomData;
 
 pub struct RecursiveProof<E1: Curve, E2: Curve> {
-    proof: SubsonicProof<E1>,
-    oldproof1: ProofMetadata<E1>,
-    oldproof2: ProofMetadata<E2>,
+    proof: Proof<E1>,
+    oldproof1: Leftovers<E1>,
+    oldproof2: Leftovers<E2>,
     deferred: Deferred<E1>,
-
-    is_valid: bool,
-
-    _marker: PhantomData<(E1, E2)>,
 }
 
 #[derive(Clone)]
 pub struct RecursiveParameters<E1: Curve, E2: Curve> {
-    a: Subsonic<E1>,
-    b: Subsonic<E2>,
+    a: Params<E1>,
+    b: Params<E2>,
 }
 
 impl<E1: Curve, E2: Curve> RecursiveParameters<E1, E2> {
     pub fn new(k: usize) -> Self {
         RecursiveParameters {
-            a: Subsonic::new(k),
-            b: Subsonic::new(k),
+            a: Params::new(k),
+            b: Params::new(k),
         }
     }
 
@@ -39,8 +36,9 @@ impl<E1: Curve, E2: Curve> RecursiveParameters<E1, E2> {
 
 struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: Circuit<C1::Scalar>> {
     _marker: PhantomData<(C1, C2)>,
+    base_case: Option<bool>,
     inner_circuit: &'a CS,
-    proof: &'a SubsonicProof<C2>,
+//    proof: &'a RecursiveProof<C2, C1>,
     old_payload: &'a [u8],
     new_payload: &'a [u8],
 }
@@ -52,44 +50,54 @@ impl<'a, E1: Curve, E2: Curve<Base=E1::Scalar>, Inner: Circuit<E1::Scalar>> Circ
         &self,
         cs: &mut CS,
     ) -> Result<(), SynthesisError> {
-        // Witness the commitment to r(X, Y)
-        let r_commitment = CurvePoint::<E2>::alloc(cs, || {
-            let (x, y) = self.proof.r_commitment.get_xy().unwrap();
-            Ok((x, y))
-        })?;
+        // // Witness the commitment to r(X, Y)
+        // let r_commitment = CurvePoint::<E2>::alloc(cs, || {
+        //     let (x, y) = self.proof.r_commitment.get_xy().unwrap();
+        //     Ok((x, y))
+        // })?;
 
-        // The transcript starts out with value zero.
-        let transcript = AllocatedNum::alloc(cs, || {
-            Ok(E1::Scalar::zero())
-        })?;
-        cs.enforce_zero(transcript.lc());
+        // // The transcript starts out with value zero.
+        // let transcript = AllocatedNum::alloc(cs, || {
+        //     Ok(E1::Scalar::zero())
+        // })?;
+        // cs.enforce_zero(transcript.lc());
 
-        // Hash the commitment to r(X, Y)
-        let transcript = append_point(cs, &transcript, &r_commitment)?;
+        // // Hash the commitment to r(X, Y)
+        // let transcript = append_point(cs, &transcript, &r_commitment)?;
 
-        // Obtain the challenge y_cur
-        let (transcript, y_cur) = obtain_challenge(cs, &transcript)?;
+        // // Obtain the challenge y_cur
+        // let (transcript, y_cur) = obtain_challenge(cs, &transcript)?;
 
         self.inner_circuit.synthesize(cs)
     }
 }
 
 impl<E1: Curve, E2: Curve<Base=E1::Scalar>> RecursiveProof<E1, E2> {
+    pub fn create_first_proof<CS: Circuit<E1::Scalar> + Circuit<E2::Scalar>>(
+        params: &RecursiveParameters<E1, E2>,
+        circuit: &CS,
+        old_payload: &[u8],
+        new_payload: &[u8],
+    ) -> Result<Self, SynthesisError>
+    {
+        
+    }
+/*
     pub fn create_proof<CS: Circuit<E1::Scalar> + Circuit<E2::Scalar>>(
         params: &RecursiveParameters<E1, E2>,
-        old_proof: &RecursiveProof<E2, E1>,
+        old_proof: Option<&RecursiveProof<E2, E1>>,
         circuit: &CS,
         old_payload: &[u8],
         new_payload: &[u8],
     ) -> Result<Self, SynthesisError> {
         let circuit = VerificationCircuit::<E1, E2, _> {
             _marker: PhantomData,
+            base_case: None,
             inner_circuit: circuit,
-            proof: &old_proof.proof,
             old_payload,
             new_payload,
         };
-
+        
         let (proof, metadata) = params
             .a
             .new_proof::<_, Basic>(&circuit, &old_proof.oldproof2)?;
@@ -133,6 +141,7 @@ impl<E1: Curve, E2: Curve<Base=E1::Scalar>> RecursiveProof<E1, E2> {
     ) -> Result<bool, SynthesisError> {
         params.a.verify_proof::<_, Basic>(circuit, &self.proof, &[])
     }
+*/
 }
 
 #[derive(Clone)]
