@@ -848,6 +848,7 @@ pub struct MultiPolynomialOpening<C: Curve> {
     g: C,
 }
 
+#[allow(non_snake_case)]
 pub struct InnerProductRound<C: Curve> {
     L: Vec<C>,
     R: Vec<C>,
@@ -953,6 +954,7 @@ impl<C: Curve> MultiPolynomialOpening<C> {
         let mut challenges = vec![];
         {
             let mut k = k;
+            #[allow(non_snake_case)]
             while k > 0 {
                 let l = 1 << (k - 1);
                 let mut round_L = vec![];

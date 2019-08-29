@@ -1,5 +1,5 @@
 use crate::*;
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add};
 
 mod boolean;
 pub use boolean::*;
@@ -132,13 +132,6 @@ impl<F: Field> From<AllocatedNum<F>> for Num<F> {
 impl<F: Field> Num<F> {
     pub fn constant(val: F) -> Self {
         Num::Constant(Coeff::from(val))
-    }
-
-    pub fn scale(&self, by: F) -> Num<F> {
-        match self {
-            Num::Constant(v) => Num::Constant(*v * by),
-            Num::Allocated(coeff, var) => Num::Allocated(*coeff * by, *var),
-        }
     }
 
     pub fn value(&self) -> Option<F> {

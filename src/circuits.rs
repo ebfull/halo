@@ -1,4 +1,4 @@
-use crate::{Backend, Curve, Field, SynthesisDriver};
+use crate::{Backend, Field, SynthesisDriver};
 use std::ops::{Add, Mul, Neg, Sub};
 
 #[derive(Copy, Clone, Debug)]
