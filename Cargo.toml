@@ -9,3 +9,7 @@ byteorder = "*"
 subtle = "*"
 num_cpus = "*"
 crossbeam-utils = "*"
+
+[dev-dependencies]
+rand_core = "0.5"
+rand_xorshift = "0.2"

@@ -2,6 +2,8 @@ use crate::*;
 use std::ops::Add;
 
 mod boolean;
+mod uint32;
+
 pub use boolean::*;
 
 #[derive(Copy, Clone)]

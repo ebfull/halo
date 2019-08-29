@@ -119,6 +119,15 @@ impl<F: Field> Coeff<F> {
         }
     }
 
+    pub fn double(self) -> Self {
+        match self {
+            Coeff::Zero => Coeff::Zero,
+            Coeff::One => Coeff::Full(F::one() + F::one()),
+            Coeff::NegativeOne => Coeff::Full(-(F::one() + F::one())),
+            Coeff::Full(val) => Coeff::Full(val + val),
+        }
+    }
+
     pub fn value(&self) -> F {
         match *self {
             Coeff::Zero => F::zero(),
