@@ -7,8 +7,8 @@ mod fields;
 mod gadgets;
 //mod protocol;
 //mod recursion;
-mod synthesis;
 mod proofs;
+mod synthesis;
 
 pub use circuits::*;
 pub use curves::*;
@@ -16,6 +16,6 @@ pub use fields::*;
 pub use gadgets::*;
 //pub use protocol::*;
 //pub use recursion::*;
+pub use proofs::*;
 pub use synthesis::*;
 pub use util::*;
-pub use proofs::*;

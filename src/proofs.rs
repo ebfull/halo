@@ -5,7 +5,7 @@ pub struct ProofMetadata<C: Curve> {
     pub s_new_commitment: C,
     pub y_new: C::Scalar,
     pub g_new: C,
-    pub challenges_new: Vec<C::Scalar>
+    pub challenges_new: Vec<C::Scalar>,
 }
 
 impl<C: Curve> ProofMetadata<C> {
@@ -13,20 +13,20 @@ impl<C: Curve> ProofMetadata<C> {
     /// proof that never existed; used to bootstrap the cycle.
     pub fn dummy<CS: Circuit<C::Scalar>, S: SynthesisDriver>(
         params: &Params<C>,
-        circuit: &CS
-    ) -> Result<ProofMetadata<C>, SynthesisError>
-    {
+        circuit: &CS,
+    ) -> Result<ProofMetadata<C>, SynthesisError> {
         let y_new = C::Scalar::one();
         let sx = params.compute_sx::<_, S>(circuit, y_new)?;
         let s_new_commitment = params.commit(&sx, false);
         let challenges_new = vec![C::Scalar::one(); params.k];
-        let g_new = compute_g_for_inner_product(&params.generators, &challenges_new, C::Scalar::one());
+        let g_new =
+            compute_g_for_inner_product(&params.generators, &challenges_new, C::Scalar::one());
 
         Ok(ProofMetadata {
             s_new_commitment,
             y_new,
             g_new,
-            challenges_new
+            challenges_new,
         })
     }
 
@@ -34,9 +34,8 @@ impl<C: Curve> ProofMetadata<C> {
     pub fn verify<CS: Circuit<C::Scalar>, S: SynthesisDriver>(
         &self,
         params: &Params<C>,
-        circuit: &CS
-    ) -> Result<bool, SynthesisError>
-    {
+        circuit: &CS,
+    ) -> Result<bool, SynthesisError> {
         let sx = params.compute_sx::<_, S>(circuit, self.y_new)?;
         let s_new_commitment = params.commit(&sx, false);
         let mut challenges_sq = self.challenges_new.clone();
@@ -84,8 +83,7 @@ impl<C: Curve> Proof<C> {
         params: &Params<C>,
         circuit: &CS,
         old_metadata: &ProofMetadata<C>,
-    ) -> Result<(Proof<C>, ProofMetadata<C>), SynthesisError>
-    {
+    ) -> Result<(Proof<C>, ProofMetadata<C>), SynthesisError> {
         struct Assignment<F: Field> {
             n: usize,
             q: usize,
@@ -193,7 +191,11 @@ impl<C: Curve> Proof<C> {
         let transcript = append_scalar::<C>(transcript, &y_old);
 
         // Compute the coefficients for G_old
-        let challenges_old_sq: Vec<C::Scalar> = old_metadata.challenges_new.iter().map(|a| a.square()).collect();
+        let challenges_old_sq: Vec<C::Scalar> = old_metadata
+            .challenges_new
+            .iter()
+            .map(|a| a.square())
+            .collect();
         let mut challenges_old_inv = old_metadata.challenges_new.clone();
         for c in &mut challenges_old_inv {
             *c = c.invert().unwrap();
@@ -336,7 +338,10 @@ impl<C: Curve> Proof<C> {
         // We don't add this to the transcript, the verifier computes it.
         // That's the whole trick!
         let gx_old_opening = params.compute_opening(&gx_old, x, false);
-        assert_eq!(gx_old_opening, compute_b(x, &old_metadata.challenges_new, &challenges_old_inv));
+        assert_eq!(
+            gx_old_opening,
+            compute_b(x, &old_metadata.challenges_new, &challenges_old_inv)
+        );
 
         // Obtain the challenge z
         let (transcript, z) = get_challenge::<_, C::Scalar>(transcript);
@@ -372,12 +377,24 @@ impl<C: Curve> Proof<C> {
                     *a *= z;
                 }
             }
-            mul_px(&mut px, &z); add_to_px(&mut px, &sx_old); drop(sx_old);
-            mul_px(&mut px, &z); add_to_px(&mut px, &sx_cur); drop(sx_cur);
-            mul_px(&mut px, &z); add_to_px(&mut px, &tx_positive); drop(tx_positive);
-            mul_px(&mut px, &z); add_to_px(&mut px, &tx_negative); drop(tx_negative);
-            mul_px(&mut px, &z); add_to_px(&mut px, &sx_new); drop(sx_new);
-            mul_px(&mut px, &z); add_to_px(&mut px, &gx_old); drop(gx_old);
+            mul_px(&mut px, &z);
+            add_to_px(&mut px, &sx_old);
+            drop(sx_old);
+            mul_px(&mut px, &z);
+            add_to_px(&mut px, &sx_cur);
+            drop(sx_cur);
+            mul_px(&mut px, &z);
+            add_to_px(&mut px, &tx_positive);
+            drop(tx_positive);
+            mul_px(&mut px, &z);
+            add_to_px(&mut px, &tx_negative);
+            drop(tx_negative);
+            mul_px(&mut px, &z);
+            add_to_px(&mut px, &sx_new);
+            drop(sx_new);
+            mul_px(&mut px, &z);
+            add_to_px(&mut px, &gx_old);
+            drop(gx_old);
         }
 
         // sanity check
@@ -400,70 +417,88 @@ impl<C: Curve> Proof<C> {
         let (inner_product, challenges_new, g_new) = MultiPolynomialOpening::new_proof(
             &mut transcript,
             &[
-                (PolynomialOpening {
-                    commitment: p_commitment,
-                    opening: p_opening,
-                    point: x,
-                    right_edge: false,
-                }, &px),
-                (PolynomialOpening {
-                    commitment: r_commitment,
-                    opening: rxy_opening,
-                    point: x * &y_cur,
-                    right_edge: true,
-                }, &rx),
-                (PolynomialOpening {
-                    commitment: c_commitment,
-                    opening: sx_old_opening,
-                    point: y_old,
-                    right_edge: false,
-                }, &sy),
-                (PolynomialOpening {
-                    commitment: c_commitment,
-                    opening: sx_cur_opening,
-                    point: y_cur,
-                    right_edge: false,
-                }, &sy),
-                (PolynomialOpening {
-                    commitment: c_commitment,
-                    opening: sx_new_opening,
-                    point: y_new,
-                    right_edge: false,
-                }, &sy),
+                (
+                    PolynomialOpening {
+                        commitment: p_commitment,
+                        opening: p_opening,
+                        point: x,
+                        right_edge: false,
+                    },
+                    &px,
+                ),
+                (
+                    PolynomialOpening {
+                        commitment: r_commitment,
+                        opening: rxy_opening,
+                        point: x * &y_cur,
+                        right_edge: true,
+                    },
+                    &rx,
+                ),
+                (
+                    PolynomialOpening {
+                        commitment: c_commitment,
+                        opening: sx_old_opening,
+                        point: y_old,
+                        right_edge: false,
+                    },
+                    &sy,
+                ),
+                (
+                    PolynomialOpening {
+                        commitment: c_commitment,
+                        opening: sx_cur_opening,
+                        point: y_cur,
+                        right_edge: false,
+                    },
+                    &sy,
+                ),
+                (
+                    PolynomialOpening {
+                        commitment: c_commitment,
+                        opening: sx_new_opening,
+                        point: y_new,
+                        right_edge: false,
+                    },
+                    &sy,
+                ),
             ],
             &params.generators,
-            params.k
+            params.k,
         );
 
         let metadata = ProofMetadata {
             s_new_commitment,
             y_new,
             g_new,
-            challenges_new
+            challenges_new,
         };
 
-        Ok((Proof {
-            s_old_commitment,
-            y_old,
-            g_old_commitment,
-            challenges_old: old_metadata.challenges_new.clone(),
-            r_commitment,
-            s_cur_commitment,
-            t_positive_commitment,
-            t_negative_commitment,
-            c_commitment,
-            s_new_commitment,
+        Ok((
+            Proof {
+                s_old_commitment,
+                y_old,
+                g_old_commitment,
+                challenges_old: old_metadata.challenges_new.clone(),
+                r_commitment,
+                s_cur_commitment,
+                t_positive_commitment,
+                t_negative_commitment,
+                c_commitment,
+                s_new_commitment,
 
-            rx_opening,
-            rxy_opening,
-            sx_old_opening,
-            sx_cur_opening,
-            tx_positive_opening,
-            tx_negative_opening,
-            sx_new_opening,
+                rx_opening,
+                rxy_opening,
+                sx_old_opening,
+                sx_cur_opening,
+                tx_positive_opening,
+                tx_negative_opening,
+                sx_new_opening,
 
-            inner_product
-        }, metadata))
+                inner_product,
+            },
+            metadata,
+        ))
     }
 
     pub fn verify<CS: Circuit<C::Scalar>, S: SynthesisDriver>(
@@ -471,17 +506,17 @@ impl<C: Curve> Proof<C> {
         params: &Params<C>,
         circuit: &CS,
         inputs: &[C::Scalar],
-    ) -> Result<(bool, ProofMetadata<C>), SynthesisError>
-    {
-
+    ) -> Result<(bool, ProofMetadata<C>), SynthesisError> {
         struct InputMap {
-            inputs: Vec<usize>
+            inputs: Vec<usize>,
         }
 
         impl<'a, F: Field> Backend<F> for &'a mut InputMap {
             type LinearConstraintIndex = ();
 
-            fn get_for_q(&self, _q: usize) -> Self::LinearConstraintIndex { () }
+            fn get_for_q(&self, _q: usize) -> Self::LinearConstraintIndex {
+                ()
+            }
 
             fn new_k_power(&mut self, index: usize) {
                 self.inputs.push(index);
@@ -546,7 +581,11 @@ impl<C: Curve> Proof<C> {
         let lhs = lhs * &(self.rx_opening * &(xinv.pow(&[(params.n * 3 - 1) as u64, 0, 0, 0])));
 
         let mut ky = C::Scalar::zero();
-        for (exp, input) in inputmap.inputs.iter().zip(Some(C::Scalar::one()).iter().chain(inputs.iter())) {
+        for (exp, input) in inputmap
+            .inputs
+            .iter()
+            .zip(Some(C::Scalar::one()).iter().chain(inputs.iter()))
+        {
             let mut term = y_cur.pow(&[(*exp) as u64, 0, 0, 0]);
             term = term * input;
             ky = ky + &term;
@@ -616,14 +655,14 @@ impl<C: Curve> Proof<C> {
                     right_edge: false,
                 },
             ],
-            params.k
+            params.k,
         );
 
         let metadata = ProofMetadata {
             s_new_commitment: self.s_new_commitment,
             y_new,
             g_new,
-            challenges_new
+            challenges_new,
         };
 
         Ok((inner_product_satisfied & circuit_satisfied, metadata))
@@ -633,7 +672,7 @@ impl<C: Curve> Proof<C> {
 #[test]
 fn my_test_circuit() {
     struct CubingCircuit<F: Field> {
-        x: Option<F>
+        x: Option<F>,
     }
 
     impl<F: Field> Circuit<F> for CubingCircuit<F> {
@@ -644,7 +683,7 @@ fn my_test_circuit() {
                 let x2 = x.square();
 
                 x2value = Some(x2);
-                
+
                 Ok((x, x, x2))
             })?;
             let mut x3value = None;
@@ -654,16 +693,14 @@ fn my_test_circuit() {
                 let x3 = x * x2;
 
                 x3value = Some(x3);
-                
+
                 Ok((x, x2, x3))
             })?;
 
             cs.enforce_zero(LinearCombination::from(x) - a);
             cs.enforce_zero(LinearCombination::from(x2) - b);
 
-            let x3 = cs.alloc_input(|| {
-                x3value.ok_or(SynthesisError::AssignmentMissing)
-            })?;
+            let x3 = cs.alloc_input(|| x3value.ok_or(SynthesisError::AssignmentMissing))?;
 
             cs.enforce_zero(LinearCombination::from(x3) - c);
 
@@ -674,32 +711,31 @@ fn my_test_circuit() {
     let params: Params<Ec1> = Params::new(4);
 
     let prover_circuit: CubingCircuit<Fq> = CubingCircuit {
-        x: Some(Fq::from(10))
+        x: Some(Fq::from(10)),
     };
     assert!(is_satisfied::<_, _, Basic>(&prover_circuit, &[Fq::from(1000)]).unwrap());
-    let verifier_circuit: CubingCircuit<Fq> = CubingCircuit {
-        x: None
-    };
+    let verifier_circuit: CubingCircuit<Fq> = CubingCircuit { x: None };
 
     // bootstrap the cycle with phony inputs
     let dummy_metadata = ProofMetadata::dummy::<_, Basic>(&params, &verifier_circuit).unwrap();
-    assert!(dummy_metadata.verify::<_, Basic>(&params, &verifier_circuit).unwrap());
+    assert!(dummy_metadata
+        .verify::<_, Basic>(&params, &verifier_circuit)
+        .unwrap());
 
     // create proof
-    let (proof, prover_new_metadata) = Proof::new::<_, Basic>(
-        &params,
-        &prover_circuit,
-        &dummy_metadata
-    ).unwrap();
-    assert!(prover_new_metadata.verify::<_, Basic>(&params, &verifier_circuit).unwrap());
+    let (proof, prover_new_metadata) =
+        Proof::new::<_, Basic>(&params, &prover_circuit, &dummy_metadata).unwrap();
+    assert!(prover_new_metadata
+        .verify::<_, Basic>(&params, &verifier_circuit)
+        .unwrap());
 
     // partially verify proof (without doing any linear time procedures)
-    let (valid_proof, verifier_new_metadata) = proof.verify::<_, Basic>(
-        &params,
-        &verifier_circuit,
-        &[Fq::from(1000)]
-    ).unwrap();
-    assert!(verifier_new_metadata.verify::<_, Basic>(&params, &verifier_circuit).unwrap());
+    let (valid_proof, verifier_new_metadata) = proof
+        .verify::<_, Basic>(&params, &verifier_circuit, &[Fq::from(1000)])
+        .unwrap();
+    assert!(verifier_new_metadata
+        .verify::<_, Basic>(&params, &verifier_circuit)
+        .unwrap());
     assert!(valid_proof);
 }
 
@@ -747,9 +783,8 @@ impl<C: Curve> Params<C> {
     pub fn compute_sx<CS: Circuit<C::Scalar>, S: SynthesisDriver>(
         &self,
         circuit: &CS,
-        y: C::Scalar
-    ) -> Result<Vec<C::Scalar>, SynthesisError>
-    {
+        y: C::Scalar,
+    ) -> Result<Vec<C::Scalar>, SynthesisError> {
         let mut sx = SxEval::new(y);
         S::synthesize(&mut sx, circuit)?;
         let (mut u, mut v, mut w) = sx.poly();
@@ -772,8 +807,7 @@ impl<C: Curve> Params<C> {
         x: C::Scalar,
         n: usize,
         q: usize,
-    ) -> Result<Vec<C::Scalar>, SynthesisError>
-    {
+    ) -> Result<Vec<C::Scalar>, SynthesisError> {
         let mut sy = SyEval::new(x, n, q);
         S::synthesize(&mut sy, circuit)?;
         Ok(sy.poly())
@@ -878,7 +912,7 @@ impl<C: Curve> MultiPolynomialOpening<C> {
             }
         }
 
-        return (true, challenges, self.g)
+        return (true, challenges, self.g);
     }
 
     pub fn new_proof<'a>(
@@ -951,7 +985,8 @@ impl<C: Curve> MultiPolynomialOpening<C> {
                 }
 
                 for i in 0..l {
-                    generators[i] = (generators[i] * &challenge_inv) + &(generators[i + l] * &challenge);
+                    generators[i] =
+                        (generators[i] * &challenge_inv) + &(generators[i + l] * &challenge);
                 }
 
                 generators.truncate(l);
@@ -966,7 +1001,7 @@ impl<C: Curve> MultiPolynomialOpening<C> {
                 k -= 1;
             }
         }
-        
+
         let mut final_a = vec![];
         for j in 0..instances.len() {
             assert_eq!(a[j].len(), 1);
@@ -979,16 +1014,15 @@ impl<C: Curve> MultiPolynomialOpening<C> {
             MultiPolynomialOpening {
                 rounds,
                 a: final_a,
-                g: generators[0]
+                g: generators[0],
             },
             challenges,
-            generators[0]
+            generators[0],
         )
     }
 }
 
-fn append_point<C: Curve>(transcript: C::Base, p: &C) -> C::Base
-{
+fn append_point<C: Curve>(transcript: C::Base, p: &C) -> C::Base {
     let xy = p.get_xy();
     if bool::from(xy.is_some()) {
         let (x, y) = xy.unwrap();
@@ -998,15 +1032,11 @@ fn append_point<C: Curve>(transcript: C::Base, p: &C) -> C::Base
     }
 }
 
-fn append_scalar<C: Curve>(transcript: C::Base, scalar: &C::Scalar) -> C::Base
-{
+fn append_scalar<C: Curve>(transcript: C::Base, scalar: &C::Scalar) -> C::Base {
     append_point(transcript, &(C::one() * scalar))
 }
 
-fn get_challenge<F1: Field, F2: Field>(
-    transcript: F1
-) -> (F1, F2)
-{
+fn get_challenge<F1: Field, F2: Field>(transcript: F1) -> (F1, F2) {
     let new_transcript = rescue(&[transcript]);
     let challenge = transcript.get_lower_128();
 
@@ -1077,15 +1107,9 @@ impl<'a, F: Field> Backend<F> for &'a mut SxEval<F> {
 
     fn insert_coefficient(&mut self, var: Variable, coeff: Coeff<F>, y: &F) {
         let acc = match var {
-            Variable::A(index) => {
-                &mut self.u[index - 1]
-            }
-            Variable::B(index) => {
-                &mut self.v[index - 1]
-            }
-            Variable::C(index) => {
-                &mut self.w[index - 1]
-            }
+            Variable::A(index) => &mut self.u[index - 1],
+            Variable::B(index) => &mut self.v[index - 1],
+            Variable::C(index) => &mut self.w[index - 1],
         };
 
         let mut tmp = *y;
@@ -1093,8 +1117,6 @@ impl<'a, F: Field> Backend<F> for &'a mut SxEval<F> {
         *acc = *acc + tmp;
     }
 }
-
-
 
 /*
 s(X, Y) =   \sum\limits_{i=1}^N \sum\limits_{q=1}^Q Y^{q} u_{i,q} x^{-i}
@@ -1113,16 +1135,14 @@ struct SyEval<F: Field> {
 
     // Coefficients of s(x, Y)
     poly: Vec<F>,
+    /*
+        // coeffs for y^1, ..., y^{N+Q}
+        positive_coeffs: Vec<E::Fr>,
 
-/*
-    // coeffs for y^1, ..., y^{N+Q}
-    positive_coeffs: Vec<E::Fr>,
-
-    // coeffs for y^{-1}, y^{-2}, ..., y^{-N}
-    negative_coeffs: Vec<E::Fr>,
-*/
+        // coeffs for y^{-1}, y^{-2}, ..., y^{-N}
+        negative_coeffs: Vec<E::Fr>,
+    */
 }
-
 
 impl<F: Field> SyEval<F> {
     fn new(x: F, n: usize, q: usize) -> Self {

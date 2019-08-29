@@ -100,13 +100,16 @@ impl<F: Field> AllocatedNum<F> {
         })?;
         cs.enforce_zero(LinearCombination::from(a) - b);
 
-        Ok((AllocatedNum {
-            value: value.ok(),
-            var: a,
-        },AllocatedNum {
-            value: value_sq,
-            var: c,
-        }))
+        Ok((
+            AllocatedNum {
+                value: value.ok(),
+                var: a,
+            },
+            AllocatedNum {
+                value: value_sq,
+                var: c,
+            },
+        ))
     }
 
     pub fn lc(&self) -> LinearCombination<F> {
@@ -254,17 +257,15 @@ pub fn rescue<F: Field>(inputs: &[F]) -> F {
 pub fn append_point<C: Curve, CS: ConstraintSystem<C::Base>>(
     cs: &mut CS,
     transcript: &AllocatedNum<C::Base>,
-    point: &CurvePoint<C>
-) -> Result<AllocatedNum<C::Base>, SynthesisError>
-{
+    point: &CurvePoint<C>,
+) -> Result<AllocatedNum<C::Base>, SynthesisError> {
     rescue_gadget(cs, &[transcript.clone(), point.x.clone(), point.y.clone()])
 }
 
 pub fn obtain_challenge<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
-    transcript: &AllocatedNum<F>
-) -> Result<(AllocatedNum<F>, Vec<AllocatedBit>), SynthesisError>
-{
+    transcript: &AllocatedNum<F>,
+) -> Result<(AllocatedNum<F>, Vec<AllocatedBit>), SynthesisError> {
     let new_transcript = rescue_gadget(cs, &[transcript.clone()])?;
 
     // We don't need to enforce that it's canonical; the adversary
@@ -277,7 +278,7 @@ pub fn obtain_challenge<F: Field, CS: ConstraintSystem<F>>(
 
 pub struct CurvePoint<C: Curve> {
     x: AllocatedNum<C::Base>,
-    y: AllocatedNum<C::Base>
+    y: AllocatedNum<C::Base>,
 }
 
 impl<C: Curve> CurvePoint<C> {
@@ -300,9 +301,6 @@ impl<C: Curve> CurvePoint<C> {
         let x3 = x2.mul(cs, &x)?;
         cs.enforce_zero(LinearCombination::from(y2.var) - x3.var - (Coeff::from(C::b()), CS::ONE));
 
-        Ok(CurvePoint {
-            x,
-            y
-        })
+        Ok(CurvePoint { x, y })
     }
 }

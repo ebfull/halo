@@ -279,10 +279,7 @@ pub fn compute_b<F: Field>(x: F, challenges: &[F], challenges_inv: &[F]) -> F {
     }
 }
 
-pub fn compute_g_coeffs_for_inner_product<F: Field>(
-    challenges_sq: &[F],
-    allinv: F,
-) -> Vec<F> {
+pub fn compute_g_coeffs_for_inner_product<F: Field>(challenges_sq: &[F], allinv: F) -> Vec<F> {
     let lg_n = challenges_sq.len();
     let n = 1 << lg_n;
 

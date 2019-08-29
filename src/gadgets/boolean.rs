@@ -3,25 +3,22 @@ use crate::*;
 #[derive(Debug)]
 pub struct AllocatedBit {
     value: Option<bool>,
-    var: Variable
+    var: Variable,
 }
 
 impl AllocatedBit {
     pub fn alloc<F: Field, CS: ConstraintSystem<F>, FF>(
         cs: &mut CS,
-        value: FF
+        value: FF,
     ) -> Result<Self, SynthesisError>
-        where FF: FnOnce() -> Result<bool, SynthesisError>
+    where
+        FF: FnOnce() -> Result<bool, SynthesisError>,
     {
         let mut final_value = None;
         let (a, b, c) = cs.multiply(|| {
             let v = value()?;
             final_value = Some(v);
-            let fe = if v {
-                F::one()
-            } else {
-                F::zero()
-            };
+            let fe = if v { F::one() } else { F::zero() };
 
             Ok((fe, fe, fe))
         })?;
@@ -31,16 +28,15 @@ impl AllocatedBit {
 
         Ok(AllocatedBit {
             value: final_value,
-            var: a
+            var: a,
         })
     }
 }
 
 pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
-    num: &AllocatedNum<F>
-) -> Result<Vec<AllocatedBit>, SynthesisError>
-{
+    num: &AllocatedNum<F>,
+) -> Result<Vec<AllocatedBit>, SynthesisError> {
     let values = match num.value {
         Some(value) => {
             let mut tmp = Vec::with_capacity(F::NUM_BITS as usize);
@@ -54,10 +50,8 @@ pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
             }
 
             tmp
-        },
-        None => {
-            vec![None; F::NUM_BITS as usize]
         }
+        None => vec![None; F::NUM_BITS as usize],
     };
 
     let mut bools = vec![];
