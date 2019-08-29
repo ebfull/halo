@@ -40,8 +40,11 @@ pub trait Backend<FF: Field> {
     fn get_for_q(&self, q: usize) -> Self::LinearConstraintIndex;
 
     /// Mark y^{_index} as the power of y cooresponding to the public input
-    /// coefficient for the next public input, in the k(Y) polynomial.
-    fn new_k_power(&mut self, _index: usize) {}
+    /// coefficient for the next public input, in the k(Y) polynomial. Also
+    /// gives the value of the public input.
+    fn new_k_power(&mut self, _index: usize, _value: Option<FF>) -> Result<(), SynthesisError> {
+        Ok(())
+    }
 }
 
 /// This is an abstraction which synthesizes circuits.
@@ -121,10 +124,11 @@ impl SynthesisDriver for Basic {
             where
                 F: FnOnce() -> Result<FF, SynthesisError>,
             {
-                let input_var = self.alloc(value)?;
+                let value = value();
+                let input_var = self.alloc(|| value)?;
 
                 self.enforce_zero(LinearCombination::zero() + input_var);
-                self.backend.new_k_power(self.q);
+                self.backend.new_k_power(self.q, value.ok())?;
 
                 Ok(input_var)
             }

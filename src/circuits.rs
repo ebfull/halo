@@ -311,8 +311,10 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
 
         /// Mark y^{_index} as the power of y cooresponding to the public input
         /// coefficient for the next public input, in the k(Y) polynomial.
-        fn new_k_power(&mut self, index: usize) {
+        fn new_k_power(&mut self, index: usize, _: Option<F>) -> Result<(), SynthesisError> {
             self.inputs.push(index);
+
+            Ok(())
         }
     }
 

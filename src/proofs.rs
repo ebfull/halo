@@ -92,7 +92,7 @@ impl<C: Curve> Proof<C> {
             a: Vec<F>,
             b: Vec<F>,
             c: Vec<F>,
-            inputs: Vec<usize>,
+            inputs: Vec<(usize, F)>,
         }
 
         impl<'a, F: Field> Backend<F> for &'a mut Assignment<F> {
@@ -155,8 +155,12 @@ impl<C: Curve> Proof<C> {
 
             /// Mark y^{_index} as the power of y cooresponding to the public input
             /// coefficient for the next public input, in the k(Y) polynomial.
-            fn new_k_power(&mut self, index: usize) {
-                self.inputs.push(index);
+            fn new_k_power(&mut self, index: usize, value: Option<F>)
+                -> Result<(), SynthesisError>
+            {
+                self.inputs.push((index, value.ok_or(SynthesisError::AssignmentMissing)?));
+
+                Ok(())
             }
         }
 
@@ -220,6 +224,18 @@ impl<C: Curve> Proof<C> {
             transcript = append_scalar::<C>(transcript, challenge);
         }
 
+        // Compute k(Y)
+        let mut ky = vec![];
+        ky.push(C::Scalar::zero());
+        for (index, value) in assignment.inputs {
+            ky.resize(index + 1, C::Scalar::zero());
+            ky[index] = value;
+        }
+
+        // Commit to k(Y)
+        let k_commitment = params.commit(&ky, false);
+        let transcript = append_point::<C>(transcript, &k_commitment);
+
         // Compute r(X, Y)
         let mut rx = Vec::with_capacity(3 * params.n + 1);
         rx.extend(assignment.c.into_iter().rev());
@@ -282,6 +298,7 @@ impl<C: Curve> Proof<C> {
 
         let mut tx = util::multiply_polynomials(rx.clone(), r_primex);
         assert_eq!(tx.len(), 7 * params.n + 1);
+        //assert_eq!(tx[4 * params.n], params.compute_opening(&ky, y_cur, false) * &y_cur.pow(&[params.n as u64, 0, 0, 0]));
         tx[4 * params.n] = C::Scalar::zero(); // -k(y)
 
         // Commit to t^+(X, y)
@@ -324,6 +341,8 @@ impl<C: Curve> Proof<C> {
         let transcript = append_point::<C>(transcript, &s_new_commitment);
 
         // Send openings
+        let ky_opening = params.compute_opening(&ky, y_cur, false);
+        let transcript = append_scalar::<C>(transcript, &ky_opening);
         let rx_opening = params.compute_opening(&rx, x, true);
         let transcript = append_scalar::<C>(transcript, &rx_opening);
         let rxy_opening = params.compute_opening(&rx, x * &y_cur, true);
@@ -401,6 +420,14 @@ impl<C: Curve> Proof<C> {
             drop(gx_old);
         }
 
+        let q_commitment = c_commitment + (k_commitment * &z);
+        let qy_opening = sx_cur_opening + &(ky_opening * &z);
+
+        let mut qy = sy.clone();
+        for i in 0..ky.len() {
+            qy[i] = qy[i] + &(ky[i] * &z);
+        }
+
         let mut transcript = transcript;
         let (inner_product, challenges_new, g_new) = MultiPolynomialOpening::new_proof(
             &mut transcript,
@@ -434,12 +461,12 @@ impl<C: Curve> Proof<C> {
                 ),
                 (
                     PolynomialOpening {
-                        commitment: c_commitment,
-                        opening: sx_cur_opening,
+                        commitment: q_commitment,
+                        opening: qy_opening,
                         point: y_cur,
                         right_edge: false,
                     },
-                    &sy,
+                    &qy,
                 ),
                 (
                     PolynomialOpening {
@@ -506,8 +533,9 @@ impl<C: Curve> Proof<C> {
                 ()
             }
 
-            fn new_k_power(&mut self, index: usize) {
+            fn new_k_power(&mut self, index: usize, _: Option<F>) -> Result<(), SynthesisError> {
                 self.inputs.push(index);
+                Ok(())
             }
 
             fn new_linear_constraint(&mut self) {
@@ -528,6 +556,18 @@ impl<C: Curve> Proof<C> {
         for challenge in &self.challenges_old {
             transcript = append_scalar::<C>(transcript, challenge);
         }
+        let mut ky = vec![];
+        ky.push(C::Scalar::zero());
+        for (index, value) in inputmap
+            .inputs
+            .iter()
+            .zip(Some(C::Scalar::one()).iter().chain(inputs.iter()))
+        {
+            ky.resize(index + 1, C::Scalar::zero());
+            ky[*index] = *value;
+        }
+        let k_commitment = params.commit(&ky, false);
+        let transcript = append_point::<C>(transcript, &k_commitment);
         let transcript = append_point::<C>(transcript, &self.r_commitment);
         let (transcript, y_cur) = get_challenge::<_, C::Scalar>(transcript);
         let transcript = append_point::<C>(transcript, &self.s_cur_commitment);
@@ -539,6 +579,8 @@ impl<C: Curve> Proof<C> {
         let transcript = append_point::<C>(transcript, &self.s_new_commitment);
 
         // Openings
+        let ky_opening = params.compute_opening(&ky, y_cur, false);
+        let transcript = append_scalar::<C>(transcript, &ky_opening);
         let transcript = append_scalar::<C>(transcript, &self.rx_opening);
         let transcript = append_scalar::<C>(transcript, &self.rxy_opening);
         let transcript = append_scalar::<C>(transcript, &self.sx_old_opening);
@@ -567,18 +609,7 @@ impl<C: Curve> Proof<C> {
         let lhs = lhs - &thing;
         let lhs = lhs + &(self.rxy_opening * &(xyinv.pow(&[(params.n * 3 - 1) as u64, 0, 0, 0])));
         let lhs = lhs * &(self.rx_opening * &(xinv.pow(&[(params.n * 3 - 1) as u64, 0, 0, 0])));
-
-        let mut ky = C::Scalar::zero();
-        for (exp, input) in inputmap
-            .inputs
-            .iter()
-            .zip(Some(C::Scalar::one()).iter().chain(inputs.iter()))
-        {
-            let mut term = y_cur.pow(&[(*exp) as u64, 0, 0, 0]);
-            term = term * input;
-            ky = ky + &term;
-        }
-        ky = ky * (&y_cur.pow(&[params.n as u64, 0, 0, 0]));
+        let ky = ky_opening * (&y_cur.pow(&[params.n as u64, 0, 0, 0]));
         let lhs = lhs - &ky;
 
         let circuit_satisfied = rhs == lhs;
@@ -608,6 +639,9 @@ impl<C: Curve> Proof<C> {
         let p_opening = p_opening * &z + &self.sx_new_opening;
         let p_opening = p_opening * &z + &gx_old_opening;
 
+        let q_commitment = self.c_commitment + (k_commitment * &z);
+        let qy_opening = self.sx_cur_opening + &(ky_opening * &z);
+
         let mut transcript = transcript;
         let (inner_product_satisfied, challenges_new, g_new) = self.inner_product.verify_proof(
             &mut transcript,
@@ -631,8 +665,8 @@ impl<C: Curve> Proof<C> {
                     right_edge: false,
                 },
                 PolynomialOpening {
-                    commitment: self.c_commitment,
-                    opening: self.sx_cur_opening,
+                    commitment: q_commitment,
+                    opening: qy_opening,
                     point: y_cur,
                     right_edge: false,
                 },

@@ -38,7 +38,7 @@ struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: Circuit<C1::Scalar>> {
     _marker: PhantomData<(C1, C2)>,
     base_case: Option<bool>,
     inner_circuit: &'a CS,
-//    proof: &'a RecursiveProof<C2, C1>,
+    proof: Option<&'a RecursiveProof<C2, C1>>,
     old_payload: &'a [u8],
     new_payload: &'a [u8],
 }
@@ -73,16 +73,6 @@ impl<'a, E1: Curve, E2: Curve<Base=E1::Scalar>, Inner: Circuit<E1::Scalar>> Circ
 }
 
 impl<E1: Curve, E2: Curve<Base=E1::Scalar>> RecursiveProof<E1, E2> {
-    pub fn create_first_proof<CS: Circuit<E1::Scalar> + Circuit<E2::Scalar>>(
-        params: &RecursiveParameters<E1, E2>,
-        circuit: &CS,
-        old_payload: &[u8],
-        new_payload: &[u8],
-    ) -> Result<Self, SynthesisError>
-    {
-        
-    }
-/*
     pub fn create_proof<CS: Circuit<E1::Scalar> + Circuit<E2::Scalar>>(
         params: &RecursiveParameters<E1, E2>,
         old_proof: Option<&RecursiveProof<E2, E1>>,
@@ -93,6 +83,7 @@ impl<E1: Curve, E2: Curve<Base=E1::Scalar>> RecursiveProof<E1, E2> {
         let circuit = VerificationCircuit::<E1, E2, _> {
             _marker: PhantomData,
             base_case: None,
+            proof: None,
             inner_circuit: circuit,
             old_payload,
             new_payload,
@@ -141,7 +132,6 @@ impl<E1: Curve, E2: Curve<Base=E1::Scalar>> RecursiveProof<E1, E2> {
     ) -> Result<bool, SynthesisError> {
         params.a.verify_proof::<_, Basic>(circuit, &self.proof, &[])
     }
-*/
 }
 
 #[derive(Clone)]
