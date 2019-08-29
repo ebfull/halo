@@ -1,5 +1,5 @@
 use crate::*;
-use std::ops::{Add};
+use std::ops::Add;
 
 mod boolean;
 pub use boolean::*;

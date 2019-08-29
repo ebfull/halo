@@ -151,10 +151,13 @@ impl<C: Curve> Proof<C> {
 
             /// Mark y^{_index} as the power of y cooresponding to the public input
             /// coefficient for the next public input, in the k(Y) polynomial.
-            fn new_k_power(&mut self, index: usize, value: Option<F>)
-                -> Result<(), SynthesisError>
-            {
-                self.inputs.push((index, value.ok_or(SynthesisError::AssignmentMissing)?));
+            fn new_k_power(
+                &mut self,
+                index: usize,
+                value: Option<F>,
+            ) -> Result<(), SynthesisError> {
+                self.inputs
+                    .push((index, value.ok_or(SynthesisError::AssignmentMissing)?));
 
                 Ok(())
             }
@@ -726,7 +729,12 @@ fn my_test_circuit() {
 
     // partially verify proof (without doing any linear time procedures)
     let (valid_proof, verifier_new_leftovers) = proof
-        .verify::<_, Basic>(&dummy_leftovers, &params, &verifier_circuit, &[Fq::from(1000)])
+        .verify::<_, Basic>(
+            &dummy_leftovers,
+            &params,
+            &verifier_circuit,
+            &[Fq::from(1000)],
+        )
         .unwrap();
     assert!(valid_proof);
     assert!(verifier_new_leftovers
@@ -743,7 +751,12 @@ fn my_test_circuit() {
         .unwrap());
 
     let (valid_proof, verifier_new_leftovers) = proof
-        .verify::<_, Basic>(&verifier_new_leftovers, &params, &verifier_circuit, &[Fq::from(27)])
+        .verify::<_, Basic>(
+            &verifier_new_leftovers,
+            &params,
+            &verifier_circuit,
+            &[Fq::from(27)],
+        )
         .unwrap();
     assert!(valid_proof);
     assert!(verifier_new_leftovers
