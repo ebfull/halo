@@ -1,3 +1,4 @@
+use crate::gadgets::num::AllocatedNum;
 use crate::*;
 
 #[derive(Clone, Debug)]
@@ -224,7 +225,7 @@ pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
     num: &AllocatedNum<F>,
 ) -> Result<Vec<AllocatedBit>, SynthesisError> {
-    let values = match num.value {
+    let values = match num.get_value() {
         Some(value) => {
             let mut tmp = Vec::with_capacity(F::NUM_BITS as usize);
             let bytes = value.to_bytes();
@@ -255,7 +256,7 @@ pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
         lc = lc + (Coeff::from(cur), b.var);
         cur = cur + cur;
     }
-    cs.enforce_zero(lc - num.var);
+    cs.enforce_zero(lc - num.get_variable());
 
     Ok(bools)
 }
