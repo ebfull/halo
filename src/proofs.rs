@@ -698,7 +698,8 @@ fn my_test_circuit() {
             cs.enforce_zero(LinearCombination::from(x) - a);
             cs.enforce_zero(LinearCombination::from(x2) - b);
 
-            let x3 = cs.alloc_input(|| x3value.ok_or(SynthesisError::AssignmentMissing))?;
+            let x3 =
+                cs.alloc_input(|| "x3", || x3value.ok_or(SynthesisError::AssignmentMissing))?;
 
             cs.enforce_zero(LinearCombination::from(x3) - c);
 

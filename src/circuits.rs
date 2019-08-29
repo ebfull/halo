@@ -21,19 +21,35 @@ pub trait Circuit<F: Field> {
 pub trait ConstraintSystem<FF: Field> {
     const ONE: Variable;
 
-    fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
+    fn alloc<F, A, AR>(&mut self, annotation: A, value: F) -> Result<Variable, SynthesisError>
     where
-        F: FnOnce() -> Result<FF, SynthesisError>;
+        F: FnOnce() -> Result<FF, SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>;
 
-    fn alloc_input<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
+    fn alloc_input<F, A, AR>(
+        &mut self,
+        annotation: A,
+        value: F,
+    ) -> Result<Variable, SynthesisError>
     where
-        F: FnOnce() -> Result<FF, SynthesisError>;
+        F: FnOnce() -> Result<FF, SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>;
 
     fn enforce_zero(&mut self, lc: LinearCombination<FF>);
 
     fn multiply<F>(&mut self, values: F) -> Result<(Variable, Variable, Variable), SynthesisError>
     where
         F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>;
+
+    fn namespace<NR, N>(&mut self, name_fn: N) -> &mut Self
+    where
+        N: FnOnce() -> NR,
+        NR: Into<String>,
+    {
+        self
+    }
 }
 
 // impl Variable {

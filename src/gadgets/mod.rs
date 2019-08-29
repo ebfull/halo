@@ -19,7 +19,7 @@ impl<F: Field> AllocatedNum<F> {
         FF: FnOnce() -> Result<F, SynthesisError>,
     {
         let value = value();
-        let var = cs.alloc(|| value)?;
+        let var = cs.alloc(|| "num", || value)?;
 
         Ok(AllocatedNum {
             value: value.ok(),
@@ -35,7 +35,7 @@ impl<F: Field> AllocatedNum<F> {
         FF: FnOnce() -> Result<F, SynthesisError>,
     {
         let value = value();
-        let var = cs.alloc_input(|| value)?;
+        let var = cs.alloc_input(|| "input variable", || value)?;
 
         Ok(AllocatedNum {
             value: value.ok(),
@@ -47,7 +47,10 @@ impl<F: Field> AllocatedNum<F> {
         &self,
         cs: &mut CS,
     ) -> Result<AllocatedNum<F>, SynthesisError> {
-        let var = cs.alloc_input(|| self.value.ok_or(SynthesisError::AssignmentMissing))?;
+        let var = cs.alloc_input(
+            || "input variable",
+            || self.value.ok_or(SynthesisError::AssignmentMissing),
+        )?;
 
         cs.enforce_zero(LinearCombination::from(self.var) - var);
 
