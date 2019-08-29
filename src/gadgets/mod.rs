@@ -2,6 +2,7 @@ use crate::*;
 use std::ops::Add;
 
 mod boolean;
+pub mod sha256;
 mod uint32;
 
 pub use boolean::*;
