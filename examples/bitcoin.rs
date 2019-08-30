@@ -2,8 +2,8 @@
 extern crate hex_literal;
 
 use subsonic::{
-    is_satisfied, sha256::sha256, AllocatedBit, Basic, Boolean, Circuit, Coeff, ConstraintSystem,
-    Fp, LinearCombination, SynthesisError,
+    is_satisfied, sha256::sha256, AllocatedBit, AllocatedNum, Basic, Boolean, Circuit, Coeff,
+    ConstraintSystem, Fp, LinearCombination, SynthesisError,
 };
 
 fn bytes_to_bits<CS: ConstraintSystem<Fp>>(
@@ -38,24 +38,41 @@ fn enforce_equality<CS: ConstraintSystem<Fp>>(cs: &mut CS, a: &[Boolean], b: &[B
 }
 
 struct BitcoinHeaderCircuit {
+    height: Fp,
     header: [u8; 80],
     hash: [u8; 32],
-    prev: [u8; 32],
+    prev_height: Fp,
+    prev_hash: [u8; 32],
 }
 
 impl BitcoinHeaderCircuit {
-    fn new(header: [u8; 80], hash: [u8; 32], prev: [u8; 32]) -> Self {
-        BitcoinHeaderCircuit { header, hash, prev }
+    fn new(height: Fp, header: [u8; 80], hash: [u8; 32], prev: (Fp, [u8; 32])) -> Self {
+        BitcoinHeaderCircuit {
+            height,
+            header,
+            hash,
+            prev_height: prev.0,
+            prev_hash: prev.1,
+        }
     }
 }
 
 impl Circuit<Fp> for BitcoinHeaderCircuit {
     fn synthesize<CS: ConstraintSystem<Fp>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
+        // Witness the previous height
+        let prev_height = AllocatedNum::alloc(cs, || Ok(self.prev_height))?;
+
+        // Bring the block height in as an input
+        let height = AllocatedNum::alloc_input(cs, || Ok(self.height))?;
+
+        // Enforce that the heights are sequential
+        cs.enforce_zero(height.lc() - &prev_height.lc() - CS::ONE);
+
         // Witness the header
         let header_bits = bytes_to_bits(cs.namespace(|| "header"), &self.header)?;
 
         // Witness the previous hash
-        let prev_bits = bytes_to_bits(cs.namespace(|| "prev"), &self.prev)?;
+        let prev_bits = bytes_to_bits(cs.namespace(|| "prev"), &self.prev_hash)?;
 
         // Enforce that header contains the previous hash
         enforce_equality(cs, &header_bits[32..32 + 256], &prev_bits);
@@ -106,23 +123,25 @@ fn main() {
         hex!("000000002c05cc2e78923c34df87fd108b22221ac6076c18f3ade378a4d915e9"),
     ];
 
-    for (i, header) in headers.into_iter().enumerate() {
-        let mut hash = hashes[i];
+    let mut prev = (
+        -Fp::one(),
+        hex!("0000000000000000000000000000000000000000000000000000000000000000"),
+    );
+
+    for (i, (header, mut hash)) in headers.into_iter().zip(hashes.into_iter()).enumerate() {
         hash.reverse();
 
-        let prev = if i > 0 {
-            let mut prev = hashes[i - 1];
-            prev.reverse();
-            prev
-        } else {
-            // Genesis block's prevHash is the null uint256
-            hex!("0000000000000000000000000000000000000000000000000000000000000000")
-        };
+        let height = Fp::from(i as u64);
 
         assert_eq!(
-            is_satisfied::<_, _, Basic>(&BitcoinHeaderCircuit::new(header, hash, prev), &[]),
+            is_satisfied::<_, _, Basic>(
+                &BitcoinHeaderCircuit::new(height, header, hash, prev),
+                &[height]
+            ),
             Ok(true)
         );
+
+        prev = (height, hash);
     }
     println!("Valid!");
 }
