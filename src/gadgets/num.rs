@@ -220,3 +220,85 @@ impl<F: Field> Combination<F> {
         Ok(AllocatedNum { value, var: o })
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::AllocatedNum;
+    use crate::{
+        circuits::{is_satisfied, Circuit, ConstraintSystem, SynthesisError},
+        fields::Fp,
+        Basic,
+    };
+
+    #[test]
+    fn test_allocated_num() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let _ = AllocatedNum::alloc(cs, || Ok(Fp::one()))?;
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn test_num_alloc_and_square() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let (n, n2) = AllocatedNum::alloc_and_square(cs, || Ok(Fp::from(3)))?;
+
+                assert!(n.value.unwrap() == Fp::from(3));
+                assert!(n2.value.unwrap() == Fp::from(9));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn test_num_multiplication() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let n = AllocatedNum::alloc(cs.namespace(|| "a"), || Ok(Fp::from(12)))?;
+                let n2 = AllocatedNum::alloc(cs.namespace(|| "b"), || Ok(Fp::from(10)))?;
+                let n3 = n.mul(cs, &n2)?;
+                assert!(n3.value.unwrap() == Fp::from(120));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+}
