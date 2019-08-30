@@ -9,15 +9,24 @@ pub struct Leftovers<C: Curve> {
 }
 
 impl<C: Curve> Leftovers<C> {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut ret = vec![];
+
+        ret.extend(self.s_new_commitment.to_bytes()[..].iter().cloned());
+        ret.extend(self.y_new.to_bytes()[..].iter().cloned());
+        ret.extend(self.g_new.to_bytes()[..].iter().cloned());
+        for challenge in &self.challenges_new {
+            ret.extend(challenge.to_bytes()[..].iter().cloned());
+        }
+
+        ret
+    }
+
     /// Creates a phony instance of metadata from a "previous"
     /// proof that never existed; used to bootstrap the cycle.
-    pub fn dummy<CS: Circuit<C::Scalar>, S: SynthesisDriver>(
-        params: &Params<C>,
-        circuit: &CS,
-    ) -> Result<Leftovers<C>, SynthesisError> {
-        let y_new = C::Scalar::one();
-        let sx = params.compute_sx::<_, S>(circuit, y_new)?;
-        let s_new_commitment = params.commit(&sx, false);
+    pub fn dummy(params: &Params<C>) -> Result<Leftovers<C>, SynthesisError> {
+        let y_new = C::Scalar::zero();
+        let s_new_commitment = C::zero();
         let challenges_new = vec![C::Scalar::one(); params.k];
         let g_new =
             compute_g_for_inner_product(&params.generators, &challenges_new, C::Scalar::one());
@@ -52,8 +61,7 @@ impl<C: Curve> Leftovers<C> {
     }
 }
 
-// curve points: 10k + 9
-// scalars: 11k + 13
+#[derive(Clone)]
 pub struct Proof<C: Curve> {
     // Commitments
     pub r_commitment: C,
@@ -77,6 +85,27 @@ pub struct Proof<C: Curve> {
 }
 
 impl<C: Curve> Proof<C> {
+    pub fn dummy(params: &Params<C>) -> Proof<C> {
+        Proof {
+            r_commitment: C::one(),
+            s_cur_commitment: C::one(),
+            t_positive_commitment: C::one(),
+            t_negative_commitment: C::one(),
+            c_commitment: C::one(),
+            s_new_commitment: C::one(),
+
+            rx_opening: C::Scalar::one(),
+            rxy_opening: C::Scalar::one(),
+            sx_old_opening: C::Scalar::one(),
+            sx_cur_opening: C::Scalar::one(),
+            tx_positive_opening: C::Scalar::one(),
+            tx_negative_opening: C::Scalar::one(),
+            sx_new_opening: C::Scalar::one(),
+
+            inner_product: MultiPolynomialOpening::dummy(params),
+        }
+    }
+
     pub fn new<CS: Circuit<C::Scalar>, S: SynthesisDriver>(
         params: &Params<C>,
         circuit: &CS,
@@ -715,7 +744,7 @@ fn my_test_circuit() {
     let verifier_circuit: CubingCircuit<Fq> = CubingCircuit { x: None };
 
     // bootstrap the cycle with phony inputs
-    let dummy_leftovers = Leftovers::dummy::<_, Basic>(&params, &verifier_circuit).unwrap();
+    let dummy_leftovers = Leftovers::dummy(&params).unwrap();
     assert!(dummy_leftovers
         .verify::<_, Basic>(&params, &verifier_circuit)
         .unwrap());
@@ -863,12 +892,14 @@ pub struct PolynomialOpening<C: Curve> {
     right_edge: bool,
 }
 
+#[derive(Clone)]
 pub struct MultiPolynomialOpening<C: Curve> {
     rounds: Vec<InnerProductRound<C>>,
     a: Vec<C::Scalar>,
     g: C,
 }
 
+#[derive(Clone)]
 #[allow(non_snake_case)]
 pub struct InnerProductRound<C: Curve> {
     L: Vec<C>,
@@ -877,7 +908,26 @@ pub struct InnerProductRound<C: Curve> {
     r: Vec<C::Scalar>,
 }
 
+impl<C: Curve> InnerProductRound<C> {
+    fn dummy() -> Self {
+        InnerProductRound {
+            L: vec![C::one(); 5],
+            R: vec![C::one(); 5],
+            l: vec![C::Scalar::one(); 5],
+            r: vec![C::Scalar::one(); 5],
+        }
+    }
+}
+
 impl<C: Curve> MultiPolynomialOpening<C> {
+    pub fn dummy(params: &Params<C>) -> Self {
+        MultiPolynomialOpening {
+            rounds: vec![InnerProductRound::dummy(); params.k],
+            a: vec![C::Scalar::one(); 5],
+            g: C::one(),
+        }
+    }
+
     pub fn verify_proof(
         &self,
         transcript: &mut C::Base,
