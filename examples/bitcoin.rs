@@ -23,14 +23,29 @@ fn bytes_to_bits<CS: ConstraintSystem<Fp>>(
     Ok(bits)
 }
 
+fn enforce_equality<CS: ConstraintSystem<Fp>>(cs: &mut CS, a: &[Boolean], b: &[Boolean]) {
+    assert_eq!(a.len(), b.len());
+
+    let mut a_lc = LinearCombination::zero();
+    let mut b_lc = LinearCombination::zero();
+    let mut coeff = Coeff::One;
+    for (a_bit, b_bit) in a.into_iter().zip(b.into_iter()) {
+        a_lc = a_lc + &a_bit.lc(CS::ONE, coeff);
+        b_lc = b_lc + &b_bit.lc(CS::ONE, coeff);
+        coeff = coeff.double();
+    }
+    cs.enforce_zero(a_lc - &b_lc);
+}
+
 struct BitcoinHeaderCircuit {
     header: [u8; 80],
     hash: [u8; 32],
+    prev: [u8; 32],
 }
 
 impl BitcoinHeaderCircuit {
-    fn new(header: [u8; 80], hash: [u8; 32]) -> Self {
-        BitcoinHeaderCircuit { header, hash }
+    fn new(header: [u8; 80], hash: [u8; 32], prev: [u8; 32]) -> Self {
+        BitcoinHeaderCircuit { header, hash, prev }
     }
 }
 
@@ -38,6 +53,12 @@ impl Circuit<Fp> for BitcoinHeaderCircuit {
     fn synthesize<CS: ConstraintSystem<Fp>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
         // Witness the header
         let header_bits = bytes_to_bits(cs.namespace(|| "header"), &self.header)?;
+
+        // Witness the previous hash
+        let prev_bits = bytes_to_bits(cs.namespace(|| "prev"), &self.prev)?;
+
+        // Enforce that header contains the previous hash
+        enforce_equality(cs, &header_bits[32..32 + 256], &prev_bits);
 
         // Compute SHA256d(header)
         let result = {
@@ -50,15 +71,7 @@ impl Circuit<Fp> for BitcoinHeaderCircuit {
         assert_eq!(result.len(), hash_bits.len());
 
         // Enforce equality between the computed and expected hash
-        let mut result_lc = LinearCombination::zero();
-        let mut hash_lc = LinearCombination::zero();
-        let mut coeff = Coeff::One;
-        for (result_bit, hash_bit) in result.into_iter().zip(hash_bits.into_iter()) {
-            result_lc = result_lc + &result_bit.lc(CS::ONE, coeff);
-            hash_lc = hash_lc + &hash_bit.lc(CS::ONE, coeff);
-            coeff = coeff.double();
-        }
-        cs.enforce_zero(result_lc - &hash_lc);
+        enforce_equality(cs, &result, &hash_bits);
 
         Ok(())
     }
@@ -70,9 +83,12 @@ fn main() {
     let mut genesis_hash = hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f");
     genesis_hash.reverse();
 
+    let mut prev_hash = hex!("0000000000000000000000000000000000000000000000000000000000000000");
+    prev_hash.reverse();
+
     assert_eq!(
         is_satisfied::<_, _, Basic>(
-            &BitcoinHeaderCircuit::new(genesis_header, genesis_hash),
+            &BitcoinHeaderCircuit::new(genesis_header, genesis_hash, prev_hash),
             &[]
         ),
         Ok(true)
