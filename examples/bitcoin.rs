@@ -23,6 +23,38 @@ fn bytes_to_bits<CS: ConstraintSystem<Fp>>(
     Ok(bits)
 }
 
+fn input_bytes_to_bits<CS: ConstraintSystem<Fp>>(
+    cs: &mut CS,
+    data: &[u8],
+) -> Result<Vec<Boolean>, SynthesisError> {
+    let mut bits = vec![];
+
+    for (byte_i, byte) in data.iter().enumerate() {
+        for bit_i in (0..8).rev() {
+            let cs = cs.namespace(|| format!("input bit {} {}", byte_i, bit_i));
+
+            let value = (byte >> bit_i) & 1u8 == 1u8;
+            let alloc_bit = AllocatedBit::alloc(cs, || Ok(value))?;
+            let input_bit =
+                AllocatedNum::alloc_input(cs, || Ok(if value { Fp::one() } else { Fp::zero() }))?;
+            cs.enforce_zero(input_bit.lc() - alloc_bit.get_variable());
+
+            bits.push(alloc_bit.into());
+        }
+    }
+
+    Ok(bits)
+}
+
+fn add_input_bits_for_bytes(input: &mut Vec<Fp>, data: &[u8]) {
+    for byte in data.iter() {
+        for bit_i in (0..8).rev() {
+            let value = (byte >> bit_i) & 1u8 == 1u8;
+            input.push(if value { Fp::one() } else { Fp::zero() });
+        }
+    }
+}
+
 fn enforce_equality<CS: ConstraintSystem<Fp>>(cs: &mut CS, a: &[Boolean], b: &[Boolean]) {
     assert_eq!(a.len(), b.len());
 
@@ -83,8 +115,8 @@ impl Circuit<Fp> for BitcoinHeaderCircuit {
             sha256(cs, &mid)?
         };
 
-        // Witness the expected hash
-        let hash_bits = bytes_to_bits(cs.namespace(|| "hash"), &self.hash)?;
+        // Bring the expected hash in as an input
+        let hash_bits = input_bytes_to_bits(cs.namespace(|| "hash"), &self.hash)?;
         assert_eq!(result.len(), hash_bits.len());
 
         // Enforce equality between the computed and expected hash
@@ -133,10 +165,13 @@ fn main() {
 
         let height = Fp::from(i as u64);
 
+        let mut input = vec![height];
+        add_input_bits_for_bytes(&mut input, &hash);
+
         assert_eq!(
             is_satisfied::<_, _, Basic>(
                 &BitcoinHeaderCircuit::new(height, header, hash, prev),
-                &[height]
+                &input,
             ),
             Ok(true)
         );
