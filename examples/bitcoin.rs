@@ -3,7 +3,7 @@ extern crate hex_literal;
 
 use subsonic::{
     is_satisfied, sha256::sha256, AllocatedBit, AllocatedNum, Basic, Boolean, Circuit, Coeff,
-    ConstraintSystem, Fp, LinearCombination, SynthesisError,
+    ConstraintSystem, Field, Fp, LinearCombination, SynthesisError,
 };
 
 fn bytes_to_bits<CS: ConstraintSystem<Fp>>(
@@ -73,18 +73,28 @@ struct BitcoinHeaderCircuit {
     height: Fp,
     header: [u8; 80],
     hash: [u8; 32],
+    block_work: Fp,
     prev_height: Fp,
     prev_hash: [u8; 32],
+    prev_chain_work: Fp,
 }
 
 impl BitcoinHeaderCircuit {
-    fn new(height: Fp, header: [u8; 80], hash: [u8; 32], prev: (Fp, [u8; 32])) -> Self {
+    fn new(
+        height: Fp,
+        header: [u8; 80],
+        hash: [u8; 32],
+        block_work: Fp,
+        prev: (Fp, [u8; 32], Fp),
+    ) -> Self {
         BitcoinHeaderCircuit {
             height,
             header,
             hash,
+            block_work,
             prev_height: prev.0,
             prev_hash: prev.1,
+            prev_chain_work: prev.2,
         }
     }
 }
@@ -122,6 +132,23 @@ impl Circuit<Fp> for BitcoinHeaderCircuit {
         // Enforce equality between the computed and expected hash
         enforce_equality(cs, &result, &hash_bits);
 
+        // Witness the work for this block
+        let block_work = AllocatedNum::alloc(cs, || Ok(self.block_work))?;
+
+        // TODO: Check that block_work correctly matches the nBits header field
+
+        // Witness the previous block's chain work
+        let prev_chain_work = AllocatedNum::alloc(cs, || Ok(self.prev_chain_work))?;
+
+        // Compute this block's chain work and expose it as an input
+        let chain_work_value = prev_chain_work
+            .get_value()
+            .and_then(|a| block_work.get_value().and_then(|b| Some(a + b)));
+        let chain_work = AllocatedNum::alloc_input(cs, || {
+            chain_work_value.ok_or(SynthesisError::AssignmentMissing)
+        })?;
+        cs.enforce_zero(chain_work.lc() - &prev_chain_work.lc() - &block_work.lc());
+
         Ok(())
     }
 }
@@ -155,28 +182,58 @@ fn main() {
         hex!("000000002c05cc2e78923c34df87fd108b22221ac6076c18f3ade378a4d915e9"),
     ];
 
+    let chain_work = vec![
+        hex!("0000000000000000000000000000000000000000000000000000000100010001"),
+        hex!("0000000000000000000000000000000000000000000000000000000200020002"),
+        hex!("0000000000000000000000000000000000000000000000000000000300030003"),
+        hex!("0000000000000000000000000000000000000000000000000000000400040004"),
+        hex!("0000000000000000000000000000000000000000000000000000000500050005"),
+        hex!("0000000000000000000000000000000000000000000000000000000600060006"),
+        hex!("0000000000000000000000000000000000000000000000000000000700070007"),
+        hex!("0000000000000000000000000000000000000000000000000000000800080008"),
+        hex!("0000000000000000000000000000000000000000000000000000000900090009"),
+        hex!("0000000000000000000000000000000000000000000000000000000a000a000a"),
+        hex!("0000000000000000000000000000000000000000000000000000000b000b000b"),
+    ];
+
+    // Block work is fixed within each difficulty adjustment period
+    let block_work = {
+        let mut first_work = chain_work[0];
+        first_work.reverse();
+        Fp::from_bytes(&first_work).unwrap()
+    };
+
     let mut prev = (
         -Fp::one(),
         hex!("0000000000000000000000000000000000000000000000000000000000000000"),
+        Fp::zero(),
     );
 
-    for (i, (header, mut hash)) in headers.into_iter().zip(hashes.into_iter()).enumerate() {
+    for (i, ((header, mut hash), mut chain_work)) in headers
+        .into_iter()
+        .zip(hashes.into_iter())
+        .zip(chain_work.into_iter())
+        .enumerate()
+    {
         hash.reverse();
+        chain_work.reverse();
 
         let height = Fp::from(i as u64);
+        let chain_work = Fp::from_bytes(&chain_work).unwrap();
 
         let mut input = vec![height];
         add_input_bits_for_bytes(&mut input, &hash);
+        input.push(chain_work);
 
         assert_eq!(
             is_satisfied::<_, _, Basic>(
-                &BitcoinHeaderCircuit::new(height, header, hash, prev),
+                &BitcoinHeaderCircuit::new(height, header, hash, block_work, prev),
                 &input,
             ),
             Ok(true)
         );
 
-        prev = (height, hash);
+        prev = (height, hash, chain_work);
     }
     println!("Valid!");
 }
