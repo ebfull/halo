@@ -1,9 +1,10 @@
 #[macro_use]
 extern crate hex_literal;
 
+use std::iter;
 use subsonic::{
-    is_satisfied, sha256::sha256, AllocatedBit, AllocatedNum, Basic, Boolean, Circuit, Coeff,
-    ConstraintSystem, Field, Fp, LinearCombination, SynthesisError,
+    is_satisfied, sha256::sha256, unpack_fe, AllocatedBit, AllocatedNum, Basic, Boolean, Circuit,
+    Coeff, ConstraintSystem, Field, Fp, LinearCombination, SynthesisError, UInt64,
 };
 
 fn bytes_to_bits<CS: ConstraintSystem<Fp>>(
@@ -74,6 +75,7 @@ struct BitcoinHeaderCircuit {
     header: [u8; 80],
     hash: [u8; 32],
     block_work: Fp,
+    remainder: Fp,
     prev_height: Fp,
     prev_hash: [u8; 32],
     prev_chain_work: Fp,
@@ -85,6 +87,7 @@ impl BitcoinHeaderCircuit {
         header: [u8; 80],
         hash: [u8; 32],
         block_work: Fp,
+        remainder: Fp,
         prev: (Fp, [u8; 32], Fp),
     ) -> Self {
         BitcoinHeaderCircuit {
@@ -92,6 +95,7 @@ impl BitcoinHeaderCircuit {
             header,
             hash,
             block_work,
+            remainder,
             prev_height: prev.0,
             prev_hash: prev.1,
             prev_chain_work: prev.2,
@@ -132,10 +136,100 @@ impl Circuit<Fp> for BitcoinHeaderCircuit {
         // Enforce equality between the computed and expected hash
         enforce_equality(cs, &result, &hash_bits);
 
+        // TODO: Unpack nBits as the block target
+        // Assert that the size is at least 4, so the mantissa doesn't collide with the
+        // lowest byte, and we can just set the lowest bit to get (target + 1)
+        let target = {
+            let mut bytes =
+                hex!("00000000ffff0000000000000000000000000000000000000000000000000000");
+            bytes.reverse();
+            bytes_to_bits(cs.namespace(|| "target"), &bytes)?
+        };
+
+        // TODO: Range check hash <= target
+
+        // Next, we want to enforce that the witnessed work is correct for this block.
+        // We need to compute block_work = 2^256 / (target+1), but there are two problems:
+        //
+        // - We can't represent 2^256 as it's too large for a field element.
+        // - This is integer division, so we can't simply witness block_work and constrain
+        //   the multiplication.
+        //
+        // Our strategy is to use 64-bit limbs and full-width u256 x u256 -> u512
+        // multiplication to ensure that (target + 1) * block_work does not wrap, and then
+        // constrain (target + 1) * block_work + remainder = 2^256 with remainder <= target.
+
+        // Construct (target + 1) by setting the lowest bit of target to 1
+        let target_p1_bits: Vec<_> = iter::once(Boolean::Constant(true))
+            .chain(target.iter().skip(1).cloned())
+            .collect();
+
+        // Load (target + 1) into four 64-bit limbs
+        let target_p1_limbs = [
+            UInt64::from_bits(&target_p1_bits[0..64]),
+            UInt64::from_bits(&target_p1_bits[64..128]),
+            UInt64::from_bits(&target_p1_bits[128..192]),
+            UInt64::from_bits(&target_p1_bits[192..256]),
+        ];
+
         // Witness the work for this block
         let block_work = AllocatedNum::alloc(cs, || Ok(self.block_work))?;
 
-        // TODO: Check that block_work correctly matches the nBits header field
+        // Load block_work into four 64-bit limbs
+        let work_bits: Vec<_> = unpack_fe(cs, &block_work)?
+            .into_iter()
+            .map(Boolean::from)
+            .collect();
+        let work_limbs = [
+            UInt64::from_bits(&work_bits[0..64]),
+            UInt64::from_bits(&work_bits[64..128]),
+            UInt64::from_bits(&work_bits[128..192]),
+            UInt64::from_bits(&work_bits[192..256]),
+        ];
+
+        // Witness the remainder for this block
+        let remainder = AllocatedNum::alloc(cs, || Ok(self.remainder))?;
+
+        // TODO: Range check remainder <= target
+
+        // Prepare the 64-bit output limbs, loading remainder into the lower four limbs
+        // (so that it is added via UInt64::mul_acc2).
+        let remainder_bits: Vec<_> = unpack_fe(cs, &remainder)?
+            .into_iter()
+            .map(Boolean::from)
+            .collect();
+        let mut w = [
+            UInt64::from_bits(&remainder_bits[0..64]),
+            UInt64::from_bits(&remainder_bits[64..128]),
+            UInt64::from_bits(&remainder_bits[128..192]),
+            UInt64::from_bits(&remainder_bits[192..256]),
+            UInt64::constant(0),
+            UInt64::constant(0),
+            UInt64::constant(0),
+            UInt64::constant(0),
+        ];
+
+        // u256 x u256 -> u512
+        for j in 0..4 {
+            let mut k = UInt64::constant(0);
+            for i in 0..4 {
+                let (t_low, t_high) =
+                    target_p1_limbs[i].mul_acc2(cs, &work_limbs[j], &w[i + j], &k)?;
+                w[i + j] = t_low;
+                k = t_high;
+            }
+            w[j + 4] = k;
+        }
+
+        // Enforce that the result equals 2^256
+        cs.enforce_zero(w[0].lc::<_, CS>());
+        cs.enforce_zero(w[1].lc::<_, CS>());
+        cs.enforce_zero(w[2].lc::<_, CS>());
+        cs.enforce_zero(w[3].lc::<_, CS>());
+        cs.enforce_zero(w[4].lc::<_, CS>() - CS::ONE);
+        cs.enforce_zero(w[5].lc::<_, CS>());
+        cs.enforce_zero(w[6].lc::<_, CS>());
+        cs.enforce_zero(w[7].lc::<_, CS>());
 
         // Witness the previous block's chain work
         let prev_chain_work = AllocatedNum::alloc(cs, || Ok(self.prev_chain_work))?;
@@ -203,6 +297,13 @@ fn main() {
         Fp::from_bytes(&first_work).unwrap()
     };
 
+    // Remainder is fixed for a given block target
+    let remainder = {
+        let mut r = hex!("000000000000fffffffffffffffffffffffffffffffffffffffffffefffeffff");
+        r.reverse();
+        Fp::from_bytes(&r).unwrap()
+    };
+
     let mut prev = (
         -Fp::one(),
         hex!("0000000000000000000000000000000000000000000000000000000000000000"),
@@ -227,7 +328,7 @@ fn main() {
 
         assert_eq!(
             is_satisfied::<_, _, Basic>(
-                &BitcoinHeaderCircuit::new(height, header, hash, block_work, prev),
+                &BitcoinHeaderCircuit::new(height, header, hash, block_work, remainder, prev),
                 &input,
             ),
             Ok(true)

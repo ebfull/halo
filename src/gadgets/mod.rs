@@ -4,9 +4,11 @@ mod boolean;
 mod num;
 pub mod sha256;
 mod uint32;
+mod uint64;
 
 pub use boolean::*;
 pub use num::*;
+pub use uint64::*;
 
 pub fn rescue_gadget<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,

@@ -249,6 +249,30 @@ impl<'a, F: Field> Sub<&'a LinearCombination<F>> for LinearCombination<F> {
     }
 }
 
+impl<'a, F: Field> Add<(Coeff<F>, &'a LinearCombination<F>)> for LinearCombination<F> {
+    type Output = LinearCombination<F>;
+
+    fn add(mut self, (coeff, other): (Coeff<F>, &'a LinearCombination<F>)) -> LinearCombination<F> {
+        for s in &other.0 {
+            self = self + (s.1 * coeff, s.0);
+        }
+
+        self
+    }
+}
+
+impl<'a, F: Field> Sub<(Coeff<F>, &'a LinearCombination<F>)> for LinearCombination<F> {
+    type Output = LinearCombination<F>;
+
+    fn sub(mut self, (coeff, other): (Coeff<F>, &'a LinearCombination<F>)) -> LinearCombination<F> {
+        for s in &other.0 {
+            self = self - (s.1 * coeff, s.0);
+        }
+
+        self
+    }
+}
+
 /// Checks if the circuit produces a satisfying assignment for the
 /// constraint system, given the particular public inputs.
 pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
