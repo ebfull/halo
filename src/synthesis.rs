@@ -73,9 +73,15 @@ impl SynthesisDriver for Basic {
         impl<FF: Field, B: Backend<FF>> ConstraintSystem<FF> for Synthesizer<FF, B> {
             const ONE: Variable = Variable::A(1);
 
-            fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
+            fn alloc<F, A, AR>(
+                &mut self,
+                annotation: A,
+                value: F,
+            ) -> Result<Variable, SynthesisError>
             where
                 F: FnOnce() -> Result<FF, SynthesisError>,
+                A: FnOnce() -> AR,
+                AR: Into<String>,
             {
                 match self.current_variable.take() {
                     Some(index) => {
@@ -120,12 +126,18 @@ impl SynthesisDriver for Basic {
                 }
             }
 
-            fn alloc_input<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
+            fn alloc_input<F, A, AR>(
+                &mut self,
+                annotation: A,
+                value: F,
+            ) -> Result<Variable, SynthesisError>
             where
                 F: FnOnce() -> Result<FF, SynthesisError>,
+                A: FnOnce() -> AR,
+                AR: Into<String>,
             {
                 let value = value();
-                let input_var = self.alloc(|| value)?;
+                let input_var = self.alloc(annotation, || value)?;
 
                 self.enforce_zero(LinearCombination::zero() + input_var);
                 self.backend.new_k_power(self.q, value.ok())?;
@@ -188,7 +200,7 @@ impl SynthesisDriver for Basic {
         };
 
         let one = tmp
-            .alloc_input(|| Ok(F::one()))
+            .alloc_input(|| "one", || Ok(F::one()))
             .expect("should have no issues");
 
         match (one, <Synthesizer<F, B> as ConstraintSystem<F>>::ONE) {

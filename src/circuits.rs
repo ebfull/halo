@@ -8,9 +8,10 @@ pub enum Variable {
     C(usize),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SynthesisError {
     AssignmentMissing,
+    Unsatisfiable,
     Violation,
 }
 
@@ -21,19 +22,35 @@ pub trait Circuit<F: Field> {
 pub trait ConstraintSystem<FF: Field> {
     const ONE: Variable;
 
-    fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
+    fn alloc<F, A, AR>(&mut self, annotation: A, value: F) -> Result<Variable, SynthesisError>
     where
-        F: FnOnce() -> Result<FF, SynthesisError>;
+        F: FnOnce() -> Result<FF, SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>;
 
-    fn alloc_input<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
+    fn alloc_input<F, A, AR>(
+        &mut self,
+        annotation: A,
+        value: F,
+    ) -> Result<Variable, SynthesisError>
     where
-        F: FnOnce() -> Result<FF, SynthesisError>;
+        F: FnOnce() -> Result<FF, SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>;
 
     fn enforce_zero(&mut self, lc: LinearCombination<FF>);
 
     fn multiply<F>(&mut self, values: F) -> Result<(Variable, Variable, Variable), SynthesisError>
     where
         F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>;
+
+    fn namespace<NR, N>(&mut self, name_fn: N) -> &mut Self
+    where
+        N: FnOnce() -> NR,
+        NR: Into<String>,
+    {
+        self
+    }
 }
 
 // impl Variable {
@@ -99,6 +116,15 @@ impl<F: Field> Coeff<F> {
             Coeff::Full(val) => {
                 *with = *with * (*val);
             }
+        }
+    }
+
+    pub fn double(self) -> Self {
+        match self {
+            Coeff::Zero => Coeff::Zero,
+            Coeff::One => Coeff::Full(F::one() + F::one()),
+            Coeff::NegativeOne => Coeff::Full(-(F::one() + F::one())),
+            Coeff::Full(val) => Coeff::Full(val + val),
         }
     }
 
@@ -217,6 +243,30 @@ impl<'a, F: Field> Sub<&'a LinearCombination<F>> for LinearCombination<F> {
     fn sub(mut self, other: &'a LinearCombination<F>) -> LinearCombination<F> {
         for s in &other.0 {
             self = self - (s.1, s.0);
+        }
+
+        self
+    }
+}
+
+impl<'a, F: Field> Add<(Coeff<F>, &'a LinearCombination<F>)> for LinearCombination<F> {
+    type Output = LinearCombination<F>;
+
+    fn add(mut self, (coeff, other): (Coeff<F>, &'a LinearCombination<F>)) -> LinearCombination<F> {
+        for s in &other.0 {
+            self = self + (s.1 * coeff, s.0);
+        }
+
+        self
+    }
+}
+
+impl<'a, F: Field> Sub<(Coeff<F>, &'a LinearCombination<F>)> for LinearCombination<F> {
+    type Output = LinearCombination<F>;
+
+    fn sub(mut self, (coeff, other): (Coeff<F>, &'a LinearCombination<F>)) -> LinearCombination<F> {
+        for s in &other.0 {
+            self = self - (s.1 * coeff, s.0);
         }
 
         self

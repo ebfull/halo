@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[macro_use]
+extern crate hex_literal;
+
 #[macro_use]
 mod util;
 
