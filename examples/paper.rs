@@ -16,39 +16,28 @@ struct MyCircuit;
 
 impl<F: Field> Circuit<F> for MyCircuit {
     fn synthesize<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
-        cs.multiply(|| {
-            Ok((F::from_u64(10),
-            F::from_u64(10),
-            F::from_u64(100)))
-        })?;
+        cs.multiply(|| Ok((F::from_u64(10), F::from_u64(10), F::from_u64(100))))?;
 
         Ok(())
     }
 }
 
 fn main() {
-    let params1: RecursiveParameters<Ec1, Ec0> = RecursiveParameters::new(15);
-    let params2: RecursiveParameters<Ec0, Ec1> = params1.clone().switch();
+    println!("Making parameters");
+    let params0: Params<Ec0> = Params::new(15);
+    let params1: Params<Ec1> = Params::new(15);
+    println!("done");
 
     let mycircuit = MyCircuit;
 
-    let proof1 = RecursiveProof::<Ec1, Ec0>::create_proof(
-        &params1,
-        None,
-        &mycircuit,
-        &[],
-    ).unwrap();
+    let proof1 = RecursiveProof::<Ec1, Ec0>::create_proof(&params1, &params0, None, &mycircuit, &[]).unwrap();
 
-    assert!(proof1.verify(&params1, &mycircuit).unwrap());
+    assert!(proof1.verify(&params1, &params0, &mycircuit).unwrap());
 
-    let proof2 = RecursiveProof::<Ec0, Ec1>::create_proof(
-        &params2,
-        Some(&proof1),
-        &mycircuit,
-        &[],
-    ).unwrap();
+    let proof2 =
+        RecursiveProof::<Ec0, Ec1>::create_proof(&params0, &params1, Some(&proof1), &mycircuit, &[]).unwrap();
 
-    assert!(proof2.verify(&params2, &mycircuit).unwrap());
+    assert!(proof2.verify(&params0, &params1, &mycircuit).unwrap());
 
     // let proof3 = RecursiveProof::<Ec1, Ec0>::create_proof(
     //     &params1,
