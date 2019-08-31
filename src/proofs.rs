@@ -24,19 +24,19 @@ impl<C: Curve> Leftovers<C> {
 
     /// Creates a phony instance of metadata from a "previous"
     /// proof that never existed; used to bootstrap the cycle.
-    pub fn dummy(params: &Params<C>) -> Result<Leftovers<C>, SynthesisError> {
+    pub fn dummy(params: &Params<C>) -> Leftovers<C> {
         let y_new = C::Scalar::zero();
         let s_new_commitment = C::zero();
         let challenges_new = vec![C::Scalar::one(); params.k];
         let g_new =
             compute_g_for_inner_product(&params.generators, &challenges_new, C::Scalar::one());
 
-        Ok(Leftovers {
+        Leftovers {
             s_new_commitment,
             y_new,
             g_new,
             challenges_new,
-        })
+        }
     }
 
     /// Fully verifies the proof cycle
@@ -85,27 +85,6 @@ pub struct Proof<C: Curve> {
 }
 
 impl<C: Curve> Proof<C> {
-    pub fn dummy(params: &Params<C>) -> Proof<C> {
-        Proof {
-            r_commitment: C::one(),
-            s_cur_commitment: C::one(),
-            t_positive_commitment: C::one(),
-            t_negative_commitment: C::one(),
-            c_commitment: C::one(),
-            s_new_commitment: C::one(),
-
-            rx_opening: C::Scalar::one(),
-            rxy_opening: C::Scalar::one(),
-            sx_old_opening: C::Scalar::one(),
-            sx_cur_opening: C::Scalar::one(),
-            tx_positive_opening: C::Scalar::one(),
-            tx_negative_opening: C::Scalar::one(),
-            sx_new_opening: C::Scalar::one(),
-
-            inner_product: MultiPolynomialOpening::dummy(params),
-        }
-    }
-
     pub fn new<CS: Circuit<C::Scalar>, S: SynthesisDriver>(
         params: &Params<C>,
         circuit: &CS,
@@ -744,7 +723,7 @@ fn my_test_circuit() {
     let verifier_circuit: CubingCircuit<Fq> = CubingCircuit { x: None };
 
     // bootstrap the cycle with phony inputs
-    let dummy_leftovers = Leftovers::dummy(&params).unwrap();
+    let dummy_leftovers = Leftovers::dummy(&params);
     assert!(dummy_leftovers
         .verify::<_, Basic>(&params, &verifier_circuit)
         .unwrap());

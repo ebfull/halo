@@ -27,35 +27,28 @@ impl<F: Field> Circuit<F> for MyCircuit {
 }
 
 fn main() {
-    let params1: RecursiveParameters<Ec1, Ec0> = RecursiveParameters::new(11);
+    let params1: RecursiveParameters<Ec1, Ec0> = RecursiveParameters::new(15);
     let params2: RecursiveParameters<Ec0, Ec1> = params1.clone().switch();
 
     let mycircuit = MyCircuit;
 
-    let proof0 = RecursiveProof::<Ec0, Ec1>::create_false_proof(&params2);
-
-    // will fail eventually
-    assert!(proof0.verify_proof(&params2, &mycircuit, &[]).unwrap());
-
     let proof1 = RecursiveProof::<Ec1, Ec0>::create_proof(
         &params1,
-        &proof0,
+        None,
         &mycircuit,
         &[],
-        &[]
     ).unwrap();
 
-    // assert!(proof1.verify_proof(&params1, &mycircuit, &[]).unwrap());
+    assert!(proof1.verify(&params1, &mycircuit).unwrap());
 
-    // let proof2 = RecursiveProof::<Ec0, Ec1>::create_proof(
-    //     &params2,
-    //     &proof1,
-    //     &mycircuit,
-    //     &[],
-    //     &[]
-    // ).unwrap();
+    let proof2 = RecursiveProof::<Ec0, Ec1>::create_proof(
+        &params2,
+        Some(&proof1),
+        &mycircuit,
+        &[],
+    ).unwrap();
 
-    // assert!(proof2.verify_proof(&params2, &mycircuit, &[]).unwrap());
+    assert!(proof2.verify(&params2, &mycircuit).unwrap());
 
     // let proof3 = RecursiveProof::<Ec1, Ec0>::create_proof(
     //     &params1,
