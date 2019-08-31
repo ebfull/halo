@@ -70,6 +70,163 @@ fn enforce_equality<CS: ConstraintSystem<Fp>>(cs: &mut CS, a: &[Boolean], b: &[B
     cs.enforce_zero(a_lc - &b_lc);
 }
 
+fn lc_from_bits<CS: ConstraintSystem<Fp>>(bits: &[Boolean]) -> LinearCombination<Fp> {
+    let mut lc = LinearCombination::zero();
+    let mut coeff = Coeff::One;
+    for bit in bits {
+        lc = lc + &bit.lc(CS::ONE, coeff);
+        coeff = coeff.double();
+    }
+    lc
+}
+
+struct CompactBits {
+    mantissa: [u8; 3],
+    size: usize,
+    mantissa_bits: Vec<Boolean>,
+    size_bits: Vec<Boolean>,
+}
+
+impl CompactBits {
+    fn from_header(bytes: &[u8], bits: &[Boolean]) -> Self {
+        const NBITS_START: usize = 4 + 32 + 32 + 4;
+
+        let mut mantissa = [0; 3];
+        mantissa.copy_from_slice(&bytes[NBITS_START..NBITS_START + 3]);
+        mantissa[2] &= 0xfe; // TODO or 0x7f?
+        let size = bytes[NBITS_START + 3] as usize;
+
+        // Assert that the size is at least 4, so the mantissa doesn't collide with the
+        // lowest byte, and we can just set the lowest bit to get (target + 1)
+        assert!(size >= 4);
+
+        let mantissa_bits = bits[8 * NBITS_START..(8 * NBITS_START) + 23]
+            .iter()
+            .cloned()
+            .collect();
+        let size_bits = bits[(8 * NBITS_START) + 24..(8 * NBITS_START) + 32]
+            .iter()
+            .cloned()
+            .collect();
+
+        CompactBits {
+            mantissa,
+            size,
+            mantissa_bits,
+            size_bits,
+        }
+    }
+
+    fn unpack<CS: ConstraintSystem<Fp>>(self, cs: &mut CS) -> Result<Vec<Boolean>, SynthesisError> {
+        let target = {
+            let mut bytes = [0; 32];
+            bytes[self.size - 3] = self.mantissa[0];
+            bytes[self.size - 2] = self.mantissa[1];
+            bytes[self.size - 1] = self.mantissa[2];
+            bytes_to_bits(cs.namespace(|| "target"), &bytes)?
+        };
+
+        // We enforce that target is correctly derived from nBits:
+        //   mantissa * 256^(size - 3) = target
+        //
+        // with the following constraints:
+        //   a * b = c
+        //   a = mantissa
+        //   c = target
+        //
+        //   d * e = f
+        //   d = b
+        //   e = 256^3
+        //   f = 256^size
+
+        let base_val = Fp::from_u64(256);
+        let base = AllocatedNum::alloc(cs, || Ok(base_val))?;
+        cs.enforce_zero(base.lc() - (Coeff::Full(base_val), CS::ONE));
+
+        let mut pow_size = AllocatedNum::alloc(cs, || Ok(Fp::one()))?;
+        for bit in self.size_bits.iter() {
+            // Square, then conditionally multiply by 256 by multiplying 256*bit
+            //
+            // sq = cur^2
+            // sq_m256 = sq * 256
+            // next = (1 - x)*sq + x*sq_m256
+            // next = sq - x*sq + x*sq_m256
+            // next - sq = x * (sq_m256 - sq)
+            //
+            // a * b = c
+            // a = x
+            // b = sq_m256 - sq
+            // c = next - sq
+
+            let sq = pow_size.mul(cs, &pow_size)?;
+            let sq_m256 = sq.mul(cs, &base)?;
+            pow_size = AllocatedNum::alloc(cs, || {
+                match (bit.get_value(), sq.get_value(), sq_m256.get_value()) {
+                    (Some(b), Some(sq), Some(sq_m256)) => Ok(if b { sq_m256 } else { sq }),
+                    _ => Err(SynthesisError::AssignmentMissing),
+                }
+            })?;
+
+            let (a_var, b_var, c_var) = cs.multiply(|| {
+                match (
+                    bit.get_value(),
+                    sq.get_value(),
+                    sq_m256.get_value(),
+                    pow_size.get_value(),
+                ) {
+                    (Some(b), Some(sq), Some(sq_m256), Some(next)) => {
+                        let a_val = if b { Fp::one() } else { Fp::zero() };
+                        let b_val = sq_m256 - sq;
+                        let c_val = next - sq;
+
+                        Ok((a_val, b_val, c_val))
+                    }
+                    _ => Err(SynthesisError::AssignmentMissing),
+                }
+            })?;
+
+            cs.enforce_zero(bit.lc(CS::ONE, Coeff::One) - a_var);
+            cs.enforce_zero(sq_m256.lc() - &sq.lc() - b_var);
+            cs.enforce_zero(pow_size.lc() - &sq.lc() - c_var);
+        }
+
+        let b_val = base_val.pow(&[self.size as u64 - 3, 0, 0, 0]);
+        let (a_var, b_var, c_var) = cs.multiply(|| {
+            let mantissa_val = {
+                let mut bytes = [0; 8];
+                bytes[0..3].copy_from_slice(&self.mantissa);
+                Fp::from_u64(u64::from_le_bytes(bytes))
+            };
+
+            // Build target value with double-and-add
+            let mut target_val = Fp::zero();
+            for bit in target.iter().rev() {
+                target_val = target_val.double();
+                if bit.get_value().ok_or(SynthesisError::AssignmentMissing)? {
+                    target_val = target_val + Fp::one();
+                }
+            }
+
+            Ok((mantissa_val, b_val, target_val))
+        })?;
+
+        // 256^3
+        let base_pow3 = Fp::from_u64(0x01000000);
+        let (d_var, e_var, f_var) =
+            cs.multiply(|| Ok((b_val, base_pow3, base_val.pow(&[self.size as u64, 0, 0, 0]))))?;
+
+        let mantissa_lc = lc_from_bits::<CS>(&self.mantissa_bits);
+        let target_lc = lc_from_bits::<CS>(&target);
+        cs.enforce_zero(mantissa_lc - a_var);
+        cs.enforce_zero(target_lc - c_var);
+        cs.enforce_zero(LinearCombination::from(b_var) - d_var);
+        cs.enforce_zero(LinearCombination::from(e_var) - (Coeff::Full(base_pow3), CS::ONE));
+        cs.enforce_zero(pow_size.lc() - f_var);
+
+        Ok(target)
+    }
+}
+
 struct BitcoinHeaderCircuit {
     height: Fp,
     header: [u8; 80],
@@ -136,15 +293,8 @@ impl Circuit<Fp> for BitcoinHeaderCircuit {
         // Enforce equality between the computed and expected hash
         enforce_equality(cs, &result, &hash_bits);
 
-        // TODO: Unpack nBits as the block target
-        // Assert that the size is at least 4, so the mantissa doesn't collide with the
-        // lowest byte, and we can just set the lowest bit to get (target + 1)
-        let target = {
-            let mut bytes =
-                hex!("00000000ffff0000000000000000000000000000000000000000000000000000");
-            bytes.reverse();
-            bytes_to_bits(cs.namespace(|| "target"), &bytes)?
-        };
+        // Unpack nBits as the block target
+        let target = CompactBits::from_header(&self.header, &header_bits).unpack(cs)?;
 
         // TODO: Range check hash <= target
 
