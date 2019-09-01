@@ -225,62 +225,77 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
         // + 256 * deferred.len()
 
         let mut payload_bits = vec![];
-        for byte in self.new_payload {
+        for (j, byte) in self.new_payload.into_iter().enumerate() {
             for i in 0..8 {
                 let bit = (*byte >> i) & 1 == 1;
-                payload_bits.push(cs.alloc_input(|| {
-                    Ok(if bit {
-                        E1::Scalar::one()
-                    } else {
-                        E1::Scalar::zero()
-                    })
-                })?);
+                payload_bits.push(cs.alloc_input(
+                    || format!("payload bit {}", 8 * j + i),
+                    || {
+                        Ok(if bit {
+                            E1::Scalar::one()
+                        } else {
+                            E1::Scalar::zero()
+                        })
+                    },
+                )?);
             }
         }
 
         let mut leftovers1 = vec![];
         if let Some(l) = &self.old_leftovers {
             let bytes = l.to_bytes();
-            for byte in bytes {
+            for (j, byte) in bytes.into_iter().enumerate() {
                 for i in 0..8 {
                     let bit = (byte >> i) & 1 == 1;
-                    leftovers1.push(cs.alloc_input(|| {
-                        Ok(if bit {
-                            E1::Scalar::one()
-                        } else {
-                            E1::Scalar::zero()
-                        })
-                    })?);
+                    leftovers1.push(cs.alloc_input(
+                        || format!("old leftovers bit {}", 8 * j + i),
+                        || {
+                            Ok(if bit {
+                                E1::Scalar::one()
+                            } else {
+                                E1::Scalar::zero()
+                            })
+                        },
+                    )?);
                 }
             }
         } else {
             // 256 * (3 + k)
             let num_bits = 256 * (3 + self.params.k);
-            for _ in 0..num_bits {
-                leftovers1.push(cs.alloc_input(|| Ok(E1::Scalar::zero()))?);
+            for i in 0..num_bits {
+                leftovers1.push(cs.alloc_input(
+                    || format!("old leftovers bit {}", i),
+                    || Ok(E1::Scalar::zero()),
+                )?);
             }
         }
 
         let mut leftovers2 = vec![];
         if let Some(l) = &self.new_leftovers {
             let bytes = l.to_bytes();
-            for byte in bytes {
+            for (j, byte) in bytes.into_iter().enumerate() {
                 for i in 0..8 {
                     let bit = (byte >> i) & 1 == 1;
-                    leftovers2.push(cs.alloc_input(|| {
-                        Ok(if bit {
-                            E1::Scalar::one()
-                        } else {
-                            E1::Scalar::zero()
-                        })
-                    })?);
+                    leftovers2.push(cs.alloc_input(
+                        || format!("new leftovers bit {}", 8 * j + i),
+                        || {
+                            Ok(if bit {
+                                E1::Scalar::one()
+                            } else {
+                                E1::Scalar::zero()
+                            })
+                        },
+                    )?);
                 }
             }
         } else {
             // 256 * (3 + k)
             let num_bits = 256 * (3 + self.params.k);
-            for _ in 0..num_bits {
-                leftovers2.push(cs.alloc_input(|| Ok(E1::Scalar::zero()))?);
+            for i in 0..num_bits {
+                leftovers2.push(cs.alloc_input(
+                    || format!("old leftovers bit {}", i),
+                    || Ok(E1::Scalar::zero()),
+                )?);
             }
         }
 
