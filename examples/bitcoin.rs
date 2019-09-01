@@ -7,7 +7,7 @@ use subsonic::{
     Coeff, ConstraintSystem, Field, Fp, LinearCombination, SynthesisError, UInt64,
 };
 
-fn bytes_to_bits<CS: ConstraintSystem<Fp>>(
+fn bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
     data: &[u8],
 ) -> Result<Vec<Boolean>, SynthesisError> {
@@ -24,7 +24,7 @@ fn bytes_to_bits<CS: ConstraintSystem<Fp>>(
     Ok(bits)
 }
 
-fn input_bytes_to_bits<CS: ConstraintSystem<Fp>>(
+fn input_bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
     data: &[u8],
 ) -> Result<Vec<Boolean>, SynthesisError> {
@@ -37,7 +37,7 @@ fn input_bytes_to_bits<CS: ConstraintSystem<Fp>>(
             let value = (byte >> bit_i) & 1u8 == 1u8;
             let alloc_bit = AllocatedBit::alloc(cs, || Ok(value))?;
             let input_bit =
-                AllocatedNum::alloc_input(cs, || Ok(if value { Fp::one() } else { Fp::zero() }))?;
+                AllocatedNum::alloc_input(cs, || Ok(if value { F::one() } else { F::zero() }))?;
             cs.enforce_zero(input_bit.lc() - alloc_bit.get_variable());
 
             bits.push(alloc_bit.into());
@@ -47,16 +47,16 @@ fn input_bytes_to_bits<CS: ConstraintSystem<Fp>>(
     Ok(bits)
 }
 
-fn add_input_bits_for_bytes(input: &mut Vec<Fp>, data: &[u8]) {
+fn add_input_bits_for_bytes<F: Field>(input: &mut Vec<F>, data: &[u8]) {
     for byte in data.iter() {
         for bit_i in (0..8).rev() {
             let value = (byte >> bit_i) & 1u8 == 1u8;
-            input.push(if value { Fp::one() } else { Fp::zero() });
+            input.push(if value { F::one() } else { F::zero() });
         }
     }
 }
 
-fn enforce_equality<CS: ConstraintSystem<Fp>>(cs: &mut CS, a: &[Boolean], b: &[Boolean]) {
+fn enforce_equality<F: Field, CS: ConstraintSystem<F>>(cs: &mut CS, a: &[Boolean], b: &[Boolean]) {
     assert_eq!(a.len(), b.len());
 
     let mut a_lc = LinearCombination::zero();
@@ -70,7 +70,7 @@ fn enforce_equality<CS: ConstraintSystem<Fp>>(cs: &mut CS, a: &[Boolean], b: &[B
     cs.enforce_zero(a_lc - &b_lc);
 }
 
-fn lc_from_bits<CS: ConstraintSystem<Fp>>(bits: &[Boolean]) -> LinearCombination<Fp> {
+fn lc_from_bits<F: Field, CS: ConstraintSystem<F>>(bits: &[Boolean]) -> LinearCombination<F> {
     let mut lc = LinearCombination::zero();
     let mut coeff = Coeff::One;
     for bit in bits {
@@ -117,7 +117,10 @@ impl CompactBits {
         }
     }
 
-    fn unpack<CS: ConstraintSystem<Fp>>(self, cs: &mut CS) -> Result<Vec<Boolean>, SynthesisError> {
+    fn unpack<F: Field, CS: ConstraintSystem<F>>(
+        self,
+        cs: &mut CS,
+    ) -> Result<Vec<Boolean>, SynthesisError> {
         let target = {
             let mut bytes = [0; 32];
             bytes[self.size - 3] = self.mantissa[0];
@@ -139,11 +142,11 @@ impl CompactBits {
         //   e = 256^3
         //   f = 256^size
 
-        let base_val = Fp::from_u64(256);
+        let base_val = F::from_u64(256);
         let base = AllocatedNum::alloc(cs, || Ok(base_val))?;
         cs.enforce_zero(base.lc() - (Coeff::Full(base_val), CS::ONE));
 
-        let mut pow_size = AllocatedNum::alloc(cs, || Ok(Fp::one()))?;
+        let mut pow_size = AllocatedNum::alloc(cs, || Ok(F::one()))?;
         for bit in self.size_bits.iter() {
             // Square, then conditionally multiply by 256 by multiplying 256*bit
             //
@@ -175,7 +178,7 @@ impl CompactBits {
                     pow_size.get_value(),
                 ) {
                     (Some(b), Some(sq), Some(sq_m256), Some(next)) => {
-                        let a_val = if b { Fp::one() } else { Fp::zero() };
+                        let a_val = if b { F::one() } else { F::zero() };
                         let b_val = sq_m256 - sq;
                         let c_val = next - sq;
 
@@ -195,15 +198,15 @@ impl CompactBits {
             let mantissa_val = {
                 let mut bytes = [0; 8];
                 bytes[0..3].copy_from_slice(&self.mantissa);
-                Fp::from_u64(u64::from_le_bytes(bytes))
+                F::from_u64(u64::from_le_bytes(bytes))
             };
 
             // Build target value with double-and-add
-            let mut target_val = Fp::zero();
+            let mut target_val = F::zero();
             for bit in target.iter().rev() {
-                target_val = target_val.double();
+                target_val = target_val + target_val;
                 if bit.get_value().ok_or(SynthesisError::AssignmentMissing)? {
-                    target_val = target_val + Fp::one();
+                    target_val = target_val + F::one();
                 }
             }
 
@@ -211,12 +214,12 @@ impl CompactBits {
         })?;
 
         // 256^3
-        let base_pow3 = Fp::from_u64(0x01000000);
+        let base_pow3 = F::from_u64(0x01000000);
         let (d_var, e_var, f_var) =
             cs.multiply(|| Ok((b_val, base_pow3, base_val.pow(&[self.size as u64, 0, 0, 0]))))?;
 
-        let mantissa_lc = lc_from_bits::<CS>(&self.mantissa_bits);
-        let target_lc = lc_from_bits::<CS>(&target);
+        let mantissa_lc = lc_from_bits::<F, CS>(&self.mantissa_bits);
+        let target_lc = lc_from_bits::<F, CS>(&target);
         cs.enforce_zero(mantissa_lc - a_var);
         cs.enforce_zero(target_lc - c_var);
         cs.enforce_zero(LinearCombination::from(b_var) - d_var);
@@ -227,25 +230,25 @@ impl CompactBits {
     }
 }
 
-struct BitcoinHeaderCircuit {
-    height: Fp,
+struct BitcoinHeaderCircuit<F: Field> {
+    height: F,
     header: [u8; 80],
     hash: [u8; 32],
-    block_work: Fp,
-    remainder: Fp,
-    prev_height: Fp,
+    block_work: F,
+    remainder: F,
+    prev_height: F,
     prev_hash: [u8; 32],
-    prev_chain_work: Fp,
+    prev_chain_work: F,
 }
 
-impl BitcoinHeaderCircuit {
+impl<F: Field> BitcoinHeaderCircuit<F> {
     fn new(
-        height: Fp,
+        height: F,
         header: [u8; 80],
         hash: [u8; 32],
-        block_work: Fp,
-        remainder: Fp,
-        prev: (Fp, [u8; 32], Fp),
+        block_work: F,
+        remainder: F,
+        prev: (F, [u8; 32], F),
     ) -> Self {
         BitcoinHeaderCircuit {
             height,
@@ -260,8 +263,8 @@ impl BitcoinHeaderCircuit {
     }
 }
 
-impl Circuit<Fp> for BitcoinHeaderCircuit {
-    fn synthesize<CS: ConstraintSystem<Fp>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
+impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
+    fn synthesize<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
         // Witness the previous height
         let prev_height = AllocatedNum::alloc(cs, || Ok(self.prev_height))?;
 
