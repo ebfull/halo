@@ -123,6 +123,10 @@ impl Curve for Ec1 {
         })
     }
 
+    fn get_xyz(&self) -> (Self::Base, Self::Base, Self::Base) {
+        (self.x, self.y, self.z)
+    }
+
     fn from_xy(x: Self::Base, y: Self::Base) -> CtOption<Self> {
         // TODO: not constant time yet
         let tmp = Self {

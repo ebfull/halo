@@ -781,12 +781,13 @@ fn my_test_circuit() {
 }
 
 #[derive(Clone)]
-pub struct Params<C> {
+pub struct Params<C: Curve> {
     pub g: C,
     pub d: usize,
     pub n: usize,
     pub k: usize,
     pub generators: Vec<C>,
+    pub generators_xy: Vec<(C::Base, C::Base)>
 }
 
 impl<C: Curve> Params<C> {
@@ -796,6 +797,7 @@ impl<C: Curve> Params<C> {
         let n = d / 4;
 
         let mut generators = Vec::with_capacity(d);
+        let mut generators_xy = Vec::with_capacity(d);
         // TODO: use public source of randomness
         while generators.len() < d {
             use rand_core::{OsRng, RngCore};
@@ -803,7 +805,11 @@ impl<C: Curve> Params<C> {
             OsRng.fill_bytes(&mut attempt);
             let attempt = C::from_bytes(&attempt);
             if bool::from(attempt.is_some()) {
-                generators.push(attempt.unwrap());
+                let attempt = attempt.unwrap();
+                generators.push(attempt);
+                let (x, y, z) = attempt.get_xyz();
+                assert!(z == C::Base::one());
+                generators_xy.push((x, y));
             }
         }
 
@@ -813,6 +819,7 @@ impl<C: Curve> Params<C> {
             d,
             n,
             generators,
+            generators_xy,
         }
     }
 
