@@ -84,6 +84,7 @@ struct CompactBits {
     mantissa: [u8; 3],
     size: usize,
     mantissa_bits: Vec<Boolean>,
+    mantissa_sign_bit: Boolean,
     size_bits: Vec<Boolean>,
 }
 
@@ -104,6 +105,7 @@ impl CompactBits {
             .iter()
             .cloned()
             .collect();
+        let mantissa_sign_bit = bits[(8 * NBITS_START) + 23].clone();
         let size_bits = bits[(8 * NBITS_START) + 24..(8 * NBITS_START) + 32]
             .iter()
             .cloned()
@@ -113,6 +115,7 @@ impl CompactBits {
             mantissa,
             size,
             mantissa_bits,
+            mantissa_sign_bit,
             size_bits,
         }
     }
@@ -121,6 +124,11 @@ impl CompactBits {
         self,
         cs: &mut CS,
     ) -> Result<Vec<Boolean>, SynthesisError> {
+        // Enforce that the mantissa sign bit is zero. A negative target is invalid under
+        // the Bitcoin consensus rules.
+        cs.enforce_zero(self.mantissa_sign_bit.lc(CS::ONE, Coeff::One));
+
+        // Construct the target from the size and mantissa, and witness it
         let target = {
             let mut bytes = [0; 32];
             bytes[self.size - 3] = self.mantissa[0];
@@ -146,9 +154,17 @@ impl CompactBits {
         let base = AllocatedNum::alloc(cs, || Ok(base_val))?;
         cs.enforce_zero(base.lc() - (Coeff::Full(base_val), CS::ONE));
 
+        // Enforce that the top three bits of size are zero, so that 256^size does not
+        // overflow a field element. This allows a maximum size of 31, which is larger
+        // than the largest possible size that will occur in the nBits field in Bitcoin.
+        assert!(F::CAPACITY >= ((8 * 31) + 1));
+        cs.enforce_zero(self.size_bits[0].lc(CS::ONE, Coeff::One));
+        cs.enforce_zero(self.size_bits[1].lc(CS::ONE, Coeff::One));
+        cs.enforce_zero(self.size_bits[2].lc(CS::ONE, Coeff::One));
+
         let mut pow_size = AllocatedNum::alloc(cs, || Ok(F::one()))?;
-        for bit in self.size_bits.iter() {
-            // Square, then conditionally multiply by 256 by multiplying 256*bit
+        for bit in self.size_bits.iter().skip(3) {
+            // Square, then conditionally multiply by 256
             //
             // sq = cur^2
             // sq_m256 = sq * 256
