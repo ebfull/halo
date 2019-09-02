@@ -456,6 +456,13 @@ impl Field for Fq {
     const CAPACITY: u32 = 254;
     const S: u32 = 32;
     const ALPHA: Self = ROOT_OF_UNITY;
+    const RESCUE_ALPHA: u64 = 5;
+    const RESCUE_INVALPHA: [u64; 4] = [
+        0x3d9998fecccccccd,
+        0xa49b7206099a359b,
+        0x4ab442efc8114a13,
+        0x24f282841580762a,
+    ];
 
     fn is_zero(&self) -> Choice {
         self.ct_eq(&Self::zero())

@@ -456,6 +456,13 @@ impl Field for Fp {
     const CAPACITY: u32 = 254;
     const S: u32 = 32;
     const ALPHA: Self = ROOT_OF_UNITY;
+    const RESCUE_ALPHA: u64 = 5;
+    const RESCUE_INVALPHA: [u64; 4] = [
+        0xf5ffff17cccccccd,
+        0x1aa590dc846715e7,
+        0x700e6467ac19ef1d,
+        0x376bc3c62040b13f,
+    ];
 
     fn is_zero(&self) -> Choice {
         self.ct_eq(&Self::zero())
