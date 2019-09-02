@@ -9,6 +9,7 @@ use crate::{
     },
 };
 
+/*
 pub fn rescue_gadget<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
     inputs: &[AllocatedNum<F>],
@@ -23,7 +24,7 @@ pub fn rescue_gadget<F: Field, CS: ConstraintSystem<F>>(
 
     cur.square(cs)
 }
-
+*/
 pub fn rescue<F: Field>(inputs: &[F]) -> F {
     let mut cur = F::ALPHA;
     for input in inputs {
@@ -35,7 +36,7 @@ pub fn rescue<F: Field>(inputs: &[F]) -> F {
 
     cur.square()
 }
-
+/*
 pub fn append_point<C: Curve, CS: ConstraintSystem<C::Base>>(
     cs: &mut CS,
     transcript: &AllocatedNum<C::Base>,
@@ -57,3 +58,4 @@ pub fn obtain_challenge<F: Field, CS: ConstraintSystem<F>>(
 
     Ok((new_transcript, bits))
 }
+*/

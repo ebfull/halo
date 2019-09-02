@@ -123,6 +123,19 @@ impl Curve for Ec0 {
         })
     }
 
+    fn from_xy(x: Self::Base, y: Self::Base) -> CtOption<Self> {
+        // TODO: not constant time yet
+        let tmp = Self {
+            x, y, z: Self::Base::one()
+        };
+
+        if tmp.is_on_curve() {
+            CtOption::new(tmp, Choice::from(1u8))
+        } else {
+            CtOption::new(Self::zero(), Choice::from(0u8))
+        }
+    }
+
     fn double(&self) -> Self {
         // Algorithm 9, https://eprint.iacr.org/2015/1060.pdf
 

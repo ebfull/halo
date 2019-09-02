@@ -41,6 +41,7 @@ pub trait Curve:
     fn from_bytes(bytes: &[u8; 32]) -> CtOption<Self>;
     fn to_bytes(&self) -> [u8; 32];
     fn get_xy(&self) -> CtOption<(Self::Base, Self::Base)>;
+    fn from_xy(x: Self::Base, y: Self::Base) -> CtOption<Self>;
 
     fn double(&self) -> Self;
 

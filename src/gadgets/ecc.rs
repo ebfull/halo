@@ -3,44 +3,66 @@ use crate::{
     circuits::{Coeff, ConstraintSystem, LinearCombination, SynthesisError},
     Curve,
 };
+use super::{Num, Boolean};
 
 pub struct CurvePoint<C: Curve> {
-    x: AllocatedNum<C::Base>,
-    y: AllocatedNum<C::Base>,
+    x: Num<C::Base>,
+    y: Num<C::Base>
 }
 
 impl<C: Curve> CurvePoint<C> {
-    pub fn alloc<FF, CS: ConstraintSystem<C::Base>>(
+    pub fn constant(x: C::Base, y: C::Base) -> Self {
+        CurvePoint {
+            x: Num::constant(x), y: Num::constant(y)
+        }
+    }
+
+    pub fn add_conditionally<CS: ConstraintSystem<C::Base>>(
+        &self,
         cs: &mut CS,
-        value: FF,
+        other: &Self,
+        condition: Boolean
     ) -> Result<Self, SynthesisError>
-    where
-        FF: FnOnce() -> Result<(C::Base, C::Base), SynthesisError>,
     {
-        let mut y_value = None;
-        let (x, x2) = AllocatedNum::alloc_and_square(cs, || {
-            let (x, y) = value()?;
-            y_value = Some(y);
-            Ok(x)
+        let p1 = self.x.value().and_then(|x| {
+            self.y.value().and_then(|y| {
+                Some(C::from_xy(x, y).unwrap())
+            })
+        });
+
+        let p2 = other.x.value().and_then(|x| {
+            other.y.value().and_then(|y| {
+                Some(C::from_xy(x, y).unwrap())
+            })
+        });
+
+        let p3 = p1.and_then(|p1| {
+            p2.and_then(|p2| {
+                condition.get_value().and_then(|b| {
+                    if b {
+                        Some((p1 + p2).get_xy().unwrap())
+                    } else {
+                        self.x.value().and_then(|x| {
+                            self.y.value().and_then(|y| {
+                                Some((x, y))
+                            })
+                        })
+                    }
+                })
+            })
+        });
+
+        let x3 = AllocatedNum::alloc(cs, || {
+            Ok(p3.ok_or(SynthesisError::AssignmentMissing)?.0)
         })?;
-        let (y, y2) = AllocatedNum::alloc_and_square(cs, || {
-            y_value.ok_or(SynthesisError::AssignmentMissing)
+
+        let y3 = AllocatedNum::alloc(cs, || {
+            Ok(p3.ok_or(SynthesisError::AssignmentMissing)?.1)
         })?;
-        let x3 = x2.mul(cs, &x)?;
-        cs.enforce_zero(
-            LinearCombination::from(y2.get_variable())
-                - x3.get_variable()
-                - (Coeff::from(C::b()), CS::ONE),
-        );
 
-        Ok(CurvePoint { x, y })
-    }
-
-    pub fn x(&self) -> AllocatedNum<C::Base> {
-        self.x
-    }
-
-    pub fn y(&self) -> AllocatedNum<C::Base> {
-        self.y
+        Ok(CurvePoint {
+            x: Num::from(x3),
+            y: Num::from(y3)
+        })
     }
 }

@@ -299,6 +299,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
             }
         }
 
+        // Compute k(Y) commitment
+
         // TODO
         {
             *self.deferred.borrow_mut() = Some(Deferred::dummy())
