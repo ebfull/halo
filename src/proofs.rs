@@ -795,12 +795,16 @@ impl<C: Curve> Params<C> {
         let d = 1 << k;
         let n = d / 4;
 
-        // TODO
         let mut generators = Vec::with_capacity(d);
-        let mut cur = C::Scalar::from_u64(1239847893);
-        for _ in 0..d {
-            generators.push(C::one() * cur);
-            cur = cur * &C::Scalar::from_u64(1239847893);
+        // TODO: use public source of randomness
+        while generators.len() < d {
+            use rand_core::{OsRng, RngCore};
+            let mut attempt = [0u8; 32];
+            OsRng.fill_bytes(&mut attempt);
+            let attempt = C::from_bytes(&attempt);
+            if bool::from(attempt.is_some()) {
+                generators.push(attempt.unwrap());
+            }
         }
 
         Params {
