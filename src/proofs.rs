@@ -511,6 +511,7 @@ impl<C: Curve> Proof<C> {
         params: &Params<C>,
         circuit: &CS,
         inputs: &[C::Scalar],
+        k_commitment: Option<C>,
     ) -> Result<(bool, Leftovers<C>), SynthesisError> {
         struct InputMap {
             inputs: Vec<usize>,
@@ -550,7 +551,10 @@ impl<C: Curve> Proof<C> {
             ky.resize(index + 1, C::Scalar::zero());
             ky[*index] = *value;
         }
-        let k_commitment = params.commit(&ky, false);
+        let k_commitment = match k_commitment {
+            Some(c) => c,
+            None => params.commit(&ky, false),
+        };
         let transcript = append_point::<C>(transcript, &k_commitment);
         let transcript = append_point::<C>(transcript, &self.r_commitment);
         let (transcript, y_cur) = get_challenge::<_, C::Scalar>(transcript);
@@ -743,6 +747,7 @@ fn my_test_circuit() {
             &params,
             &verifier_circuit,
             &[Fq::from(1000)],
+            None,
         )
         .unwrap();
     assert!(valid_proof);
@@ -765,6 +770,7 @@ fn my_test_circuit() {
             &params,
             &verifier_circuit,
             &[Fq::from(27)],
+            None,
         )
         .unwrap();
     assert!(valid_proof);

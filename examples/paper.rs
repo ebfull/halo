@@ -32,22 +32,36 @@ fn main() {
 
     let mycircuit = MyCircuit;
 
-    let proof1 = RecursiveProof::<Ec1, Ec0>::create_proof(&params1, &params0, None, &mycircuit, &[]).unwrap();
+    let proof1 =
+        RecursiveProof::<Ec1, Ec0>::create_proof(&params1, &params0, None, &mycircuit, &[])
+            .unwrap();
 
     assert!(proof1.verify(&params1, &params0, &mycircuit).unwrap());
 
-    let proof2 =
-        RecursiveProof::<Ec0, Ec1>::create_proof(&params0, &params1, Some(&proof1), &mycircuit, &[]).unwrap();
+    let proof2 = RecursiveProof::<Ec0, Ec1>::create_proof(
+        &params0,
+        &params1,
+        Some(&proof1),
+        &mycircuit,
+        &[],
+    )
+    .unwrap();
 
     println!("verifying...");
-    
+
     let start = Instant::now();
     assert!(proof2.verify(&params0, &params1, &mycircuit).unwrap());
     println!("done, took {:?}", start.elapsed());
 
-    let proof3 =
-        RecursiveProof::<Ec1, Ec0>::create_proof(&params1, &params0, Some(&proof2), &mycircuit, &[]).unwrap();
-    
+    let proof3 = RecursiveProof::<Ec1, Ec0>::create_proof(
+        &params1,
+        &params0,
+        Some(&proof2),
+        &mycircuit,
+        &[],
+    )
+    .unwrap();
+
     println!("verifying...");
     let start = Instant::now();
     assert!(proof3.verify(&params1, &params0, &mycircuit).unwrap());

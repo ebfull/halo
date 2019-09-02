@@ -126,7 +126,9 @@ impl Curve for Ec0 {
     fn from_xy(x: Self::Base, y: Self::Base) -> CtOption<Self> {
         // TODO: not constant time yet
         let tmp = Self {
-            x, y, z: Self::Base::one()
+            x,
+            y,
+            z: Self::Base::one(),
         };
 
         if tmp.is_on_curve() {
@@ -138,7 +140,9 @@ impl Curve for Ec0 {
 
     fn from_xy_unchecked(x: Self::Base, y: Self::Base) -> Self {
         Self {
-            x, y, z: Self::Base::one()
+            x,
+            y,
+            z: Self::Base::one(),
         }
     }
 

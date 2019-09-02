@@ -32,10 +32,8 @@ where
                 let (_, l1, l2) = old_proof.verify_inner(e2params, e1params, circuit)?;
 
                 (l1, l2)
-            },
-            None => {
-                (Leftovers::dummy(e2params), Leftovers::dummy(e1params))
             }
+            None => (Leftovers::dummy(e2params), Leftovers::dummy(e1params)),
         };
 
         let mut circuit = VerificationCircuit::<E1, E2, _> {
@@ -74,8 +72,7 @@ where
         e1params: &Params<E1>,
         e2params: &Params<E2>,
         circuit: &CS,
-    ) -> Result<(bool, Leftovers<E1>, Leftovers<E2>), SynthesisError>
-    {
+    ) -> Result<(bool, Leftovers<E1>, Leftovers<E2>), SynthesisError> {
         let circuit1 = VerificationCircuit::<E1, E2, _> {
             _marker: PhantomData,
             params: e2params,
@@ -114,21 +111,29 @@ where
         inputs.extend(self.oldproof2.to_bytes());
         inputs.extend(self.deferred.to_bytes());
 
+        let mut k_commitment = e1params.generators[1];
+        let mut iter_gens = e1params.generators[2..].iter();
         let mut bitinputs = vec![];
         for byte in inputs {
             for i in 0..8 {
                 let b = ((byte >> i) & 1) == 1;
                 if b {
                     bitinputs.push(E1::Scalar::one());
+                    k_commitment = k_commitment + iter_gens.next().unwrap();
                 } else {
+                    iter_gens.next();
                     bitinputs.push(E1::Scalar::zero());
                 }
             }
         }
 
-        let (worked, leftovers) =
-            self.proof
-                .verify::<_, Basic>(&self.oldproof1, e1params, &circuit1, &bitinputs)?;
+        let (worked, leftovers) = self.proof.verify::<_, Basic>(
+            &self.oldproof1,
+            e1params,
+            &circuit1,
+            &bitinputs,
+            Some(k_commitment),
+        )?;
 
         let worked = worked & self.oldproof2.verify::<_, Basic>(e2params, &circuit2)?;
 
@@ -140,8 +145,7 @@ where
         e1params: &Params<E1>,
         e2params: &Params<E2>,
         circuit: &CS,
-    ) -> Result<bool, SynthesisError>
-    {
+    ) -> Result<bool, SynthesisError> {
         let circuit1 = VerificationCircuit::<E1, E2, _> {
             _marker: PhantomData,
             params: e2params,
@@ -168,9 +172,9 @@ where
 
         let (worked, a, b) = self.verify_inner(e1params, e2params, circuit)?;
 
-        Ok(worked &
-            a.verify::<_, Basic>(e1params, &circuit1)? &
-            b.verify::<_, Basic>(e2params, &circuit2)?)
+        Ok(worked
+            & a.verify::<_, Basic>(e1params, &circuit1)?
+            & b.verify::<_, Basic>(e2params, &circuit2)?)
     }
 }
 

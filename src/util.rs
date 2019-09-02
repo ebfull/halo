@@ -46,7 +46,7 @@ pub fn multiexp<F: Field, C: Curve<Scalar = F>>(coeffs: &[C::Scalar], bases: &[C
                         if skip_bytes >= 32 {
                             return 0;
                         }
-                        
+
                         let mut v = [0; 8];
                         for (v, o) in v.iter_mut().zip(bytes[skip_bytes..].iter()) {
                             *v = *o;
