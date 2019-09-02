@@ -5,6 +5,7 @@ use crate::{
     Curve,
 };
 
+#[derive(Debug)]
 pub struct CurvePoint<C: Curve> {
     x: Num<C::Base>,
     y: Num<C::Base>,
@@ -22,8 +23,10 @@ impl<C: Curve> CurvePoint<C> {
         &self,
         cs: &mut CS,
         other: &Self,
-        condition: Boolean,
+        condition: &Boolean,
     ) -> Result<Self, SynthesisError> {
+        // TODO: this function doesn't actually do anything yet!
+
         let p1 = self
             .x
             .value()

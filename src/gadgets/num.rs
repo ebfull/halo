@@ -1,7 +1,7 @@
 use crate::{fields::Field, Coeff, ConstraintSystem, LinearCombination, SynthesisError, Variable};
 use std::ops::Add;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct AllocatedNum<F: Field> {
     value: Option<F>,
     var: Variable,
@@ -118,7 +118,7 @@ impl<F: Field> AllocatedNum<F> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Num<F: Field> {
     Constant(Coeff<F>),
     Allocated(Coeff<F>, AllocatedNum<F>),

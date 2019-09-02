@@ -16,6 +16,51 @@ impl AllocatedBit {
         self.var
     }
 
+    /// Allocates this bit but does not check that it's a bit, call
+    /// `checked()` to do this later. This is a hack to ensure that
+    /// the first linear constraints in our proof verification circuits
+    /// are always input constraints.
+    pub fn alloc_input_unchecked<F: Field, CS: ConstraintSystem<F>, FF>(
+        cs: &mut CS,
+        value: FF,
+    ) -> Result<Self, SynthesisError>
+    where
+        FF: FnOnce() -> Result<bool, SynthesisError>,
+    {
+        let mut final_value = None;
+        let var = cs.alloc_input(|| "", || {
+            let v = value()?;
+            final_value = Some(v);
+            let fe = if v { F::one() } else { F::zero() };
+
+            Ok(fe)
+        })?;
+
+        Ok(AllocatedBit {
+            value: final_value,
+            var: var,
+        })
+    }
+
+    pub fn check<F: Field, CS: ConstraintSystem<F>>(
+        &self,
+        cs: &mut CS
+    ) -> Result<(), SynthesisError>
+    {
+        let (a, b, c) = cs.multiply(|| {
+            let val = self.value.ok_or(SynthesisError::AssignmentMissing)?;
+            let val = if val { F::one() } else { F::zero() };
+
+            Ok((val, val, val))
+        })?;
+
+        cs.enforce_zero(LinearCombination::from(a) - self.var);
+        cs.enforce_zero(LinearCombination::from(b) - self.var);
+        cs.enforce_zero(LinearCombination::from(c) - self.var);
+
+        Ok(())
+    }
+
     pub fn alloc<F: Field, CS: ConstraintSystem<F>, FF>(
         cs: &mut CS,
         value: FF,

@@ -26,18 +26,27 @@ impl<F: Field> Circuit<F> for MyCircuit {
 
 fn main() {
     println!("Making parameters");
-    let params0: Params<Ec0> = Params::new(15);
-    let params1: Params<Ec1> = Params::new(15);
-    println!("done");
+    let start = Instant::now();
+    let params0: Params<Ec0> = Params::new(17);
+    let params1: Params<Ec1> = Params::new(17);
+    println!("done, took {:?}", start.elapsed());
 
     let mycircuit = MyCircuit;
 
+    println!("creating proof1");
+    let start = Instant::now();
     let proof1 =
         RecursiveProof::<Ec1, Ec0>::create_proof(&params1, &params0, None, &mycircuit, &[])
             .unwrap();
+    println!("done, took {:?}", start.elapsed());
 
+    println!("verifying proof1");
+    let start = Instant::now();
     assert!(proof1.verify(&params1, &params0, &mycircuit).unwrap());
+    println!("done, took {:?}", start.elapsed());
 
+    println!("creating proof2");
+    let start = Instant::now();
     let proof2 = RecursiveProof::<Ec0, Ec1>::create_proof(
         &params0,
         &params1,
@@ -46,13 +55,15 @@ fn main() {
         &[],
     )
     .unwrap();
+    println!("done, took {:?}", start.elapsed());
 
-    println!("verifying...");
-
+    println!("verifying proof2");
     let start = Instant::now();
     assert!(proof2.verify(&params0, &params1, &mycircuit).unwrap());
     println!("done, took {:?}", start.elapsed());
 
+    println!("creating proof3");
+    let start = Instant::now();
     let proof3 = RecursiveProof::<Ec1, Ec0>::create_proof(
         &params1,
         &params0,
@@ -61,8 +72,9 @@ fn main() {
         &[],
     )
     .unwrap();
+    println!("done, took {:?}", start.elapsed());
 
-    println!("verifying...");
+    println!("verifying proof3");
     let start = Instant::now();
     assert!(proof3.verify(&params1, &params0, &mycircuit).unwrap());
     println!("done, took {:?}", start.elapsed());

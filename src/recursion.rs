@@ -232,16 +232,9 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
         for (j, byte) in self.new_payload.into_iter().enumerate() {
             for i in 0..8 {
                 let bit = (*byte >> i) & 1 == 1;
-                payload_bits.push(cs.alloc_input(
-                    || format!("payload bit {}", 8 * j + i),
-                    || {
-                        Ok(if bit {
-                            E1::Scalar::one()
-                        } else {
-                            E1::Scalar::zero()
-                        })
-                    },
-                )?);
+                payload_bits.push(AllocatedBit::alloc_input_unchecked(cs, || {
+                    Ok(bit)
+                })?);
             }
         }
 
@@ -251,26 +244,18 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
             for (j, byte) in bytes.into_iter().enumerate() {
                 for i in 0..8 {
                     let bit = (byte >> i) & 1 == 1;
-                    leftovers1.push(cs.alloc_input(
-                        || format!("old leftovers bit {}", 8 * j + i),
-                        || {
-                            Ok(if bit {
-                                E1::Scalar::one()
-                            } else {
-                                E1::Scalar::zero()
-                            })
-                        },
-                    )?);
+                    leftovers1.push(AllocatedBit::alloc_input_unchecked(cs, || {
+                        Ok(bit)
+                    })?);
                 }
             }
         } else {
             // 256 * (3 + k)
             let num_bits = 256 * (3 + self.params.k);
             for i in 0..num_bits {
-                leftovers1.push(cs.alloc_input(
-                    || format!("old leftovers bit {}", i),
-                    || Ok(E1::Scalar::zero()),
-                )?);
+                leftovers1.push(AllocatedBit::alloc_input_unchecked(cs, || {
+                    Ok(false)
+                })?);
             }
         }
 
@@ -280,35 +265,97 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
             for (j, byte) in bytes.into_iter().enumerate() {
                 for i in 0..8 {
                     let bit = (byte >> i) & 1 == 1;
-                    leftovers2.push(cs.alloc_input(
-                        || format!("new leftovers bit {}", 8 * j + i),
-                        || {
-                            Ok(if bit {
-                                E1::Scalar::one()
-                            } else {
-                                E1::Scalar::zero()
-                            })
-                        },
-                    )?);
+                    leftovers2.push(AllocatedBit::alloc_input_unchecked(cs, || {
+                        Ok(bit)
+                    })?);
                 }
             }
         } else {
             // 256 * (3 + k)
             let num_bits = 256 * (3 + self.params.k);
             for i in 0..num_bits {
-                leftovers2.push(cs.alloc_input(
-                    || format!("old leftovers bit {}", i),
-                    || Ok(E1::Scalar::zero()),
-                )?);
+                leftovers2.push(AllocatedBit::alloc_input_unchecked(cs, || {
+                    Ok(false)
+                })?);
             }
         }
-
-        // Compute k(Y) commitment
 
         // TODO
         {
             *self.deferred.borrow_mut() = Some(Deferred::dummy())
         }
+
+        // Check that all the inputs are booleans now that we've allocated
+        // all of our public inputs.
+        for b in &payload_bits {
+            b.check(cs)?;
+        }
+        for b in &leftovers1 {
+            b.check(cs)?;
+        }
+        for b in &leftovers2 {
+            b.check(cs)?;
+        }
+        // TODO: check deferred bits are booleans
+
+
+        // Is this the base case?
+        let base_case = AllocatedBit::alloc(cs, || {
+            self.base_case.ok_or(SynthesisError::AssignmentMissing)
+        })?;
+
+        // Compute k(Y) commitment
+        let mut k_commitment = CurvePoint::<E2>::constant(
+            self.params.generators_xy[1].0,
+            self.params.generators_xy[1].1,
+        );
+
+        // Attach payload for old proof
+        let mut bits_for_k_commitment = vec![];
+        if let Some(proof) = &self.proof {
+            for byte in &proof.payload {
+                for i in 0..8 {
+                    let bit = ((*byte >> i) & 1) == 1;
+                    bits_for_k_commitment.push(
+                        AllocatedBit::alloc(cs, || Ok(bit))?
+                    );
+                }
+            }
+        } else {
+            for _ in 0..(8 * self.new_payload.len()) {
+                // TODO: witness the base case payload?
+                bits_for_k_commitment.push(AllocatedBit::alloc(cs, || Ok(false))?);
+            }
+        }
+
+        let mut old_leftovers1 = vec![];
+        if let Some(l) = &self.proof {
+            let l = &l.oldproof1;
+            let bytes = l.to_bytes();
+            for (_, byte) in bytes.into_iter().enumerate() {
+                for i in 0..8 {
+                    let bit = (byte >> i) & 1 == 1;
+                    old_leftovers1.push(AllocatedBit::alloc(cs, || Ok(bit))?);
+                }
+            }
+        } else {
+            // 256 * (3 + k)
+            let num_bits = 256 * (3 + self.params.k);
+            for _ in 0..num_bits {
+                old_leftovers1.push(AllocatedBit::alloc(cs, || Ok(false))?);
+            }
+        }
+
+        bits_for_k_commitment.extend(old_leftovers1.clone());
+        bits_for_k_commitment.extend(leftovers1);
+        // TODO: old proof's deferred field
+
+        for (bit, gen) in bits_for_k_commitment.into_iter().zip(self.params.generators_xy[2..].iter()) {
+            let gen = CurvePoint::constant(gen.0, gen.1);
+            k_commitment = k_commitment.add_conditionally(cs, &gen, &Boolean::from(bit.clone()))?;
+        }
+
+        println!("in circuit: {:?}", k_commitment);
 
         self.inner_circuit.synthesize(cs)
     }
