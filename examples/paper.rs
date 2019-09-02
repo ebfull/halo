@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 extern crate subsonic;
 
 use subsonic::*;
@@ -38,18 +40,16 @@ fn main() {
         RecursiveProof::<Ec0, Ec1>::create_proof(&params0, &params1, Some(&proof1), &mycircuit, &[]).unwrap();
 
     println!("verifying...");
-    use std::time::Instant;
+    
     let start = Instant::now();
     assert!(proof2.verify(&params0, &params1, &mycircuit).unwrap());
     println!("done, took {:?}", start.elapsed());
 
-    // let proof3 = RecursiveProof::<Ec1, Ec0>::create_proof(
-    //     &params1,
-    //     &proof2,
-    //     &mycircuit,
-    //     &[],
-    //     &[]
-    // ).unwrap();
-
-    // assert!(proof3.verify_proof(&params1, &mycircuit, &[]).unwrap());
+    let proof3 =
+        RecursiveProof::<Ec1, Ec0>::create_proof(&params1, &params0, Some(&proof2), &mycircuit, &[]).unwrap();
+    
+    println!("verifying...");
+    let start = Instant::now();
+    assert!(proof3.verify(&params1, &params0, &mycircuit).unwrap());
+    println!("done, took {:?}", start.elapsed());
 }
