@@ -136,6 +136,12 @@ impl Curve for Ec0 {
         }
     }
 
+    fn from_xy_unchecked(x: Self::Base, y: Self::Base) -> Self {
+        Self {
+            x, y, z: Self::Base::one()
+        }
+    }
+
     fn double(&self) -> Self {
         // Algorithm 9, https://eprint.iacr.org/2015/1060.pdf
 
