@@ -130,6 +130,12 @@ impl<F: Field> From<AllocatedNum<F>> for Num<F> {
     }
 }
 
+impl<F: Field> From<(Coeff<F>, AllocatedNum<F>)> for Num<F> {
+    fn from(num: (Coeff<F>, AllocatedNum<F>)) -> Self {
+        Num::Allocated(num.0, num.1)
+    }
+}
+
 impl<F: Field> Num<F> {
     pub fn constant(val: F) -> Self {
         Num::Constant(Coeff::from(val))
@@ -184,7 +190,28 @@ impl<F: Field> Add<AllocatedNum<F>> for Combination<F> {
     }
 }
 
+impl<F: Field> Add<(Coeff<F>, AllocatedNum<F>)> for Combination<F> {
+    type Output = Combination<F>;
+
+    fn add(mut self, other: (Coeff<F>, AllocatedNum<F>)) -> Combination<F> {
+        let new_value = self
+            .value
+            .and_then(|a| other.1.value.and_then(|b| Some(a + (other.0.value() * b))));
+
+        self.terms.push(other.into());
+
+        Combination {
+            value: new_value,
+            terms: self.terms,
+        }
+    }
+}
+
 impl<F: Field> Combination<F> {
+    pub fn get_value(&self) -> Option<F> {
+        self.value
+    }
+
     pub fn lc<CS: ConstraintSystem<F>>(&self, _cs: &mut CS) -> LinearCombination<F> {
         let mut acc = LinearCombination::zero();
 

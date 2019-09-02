@@ -9,7 +9,7 @@ pub(crate) const RESCUE_M: usize = 13;
 // Set sponge capacity to 1
 pub(crate) const SPONGE_RATE: usize = RESCUE_M - 1;
 
-fn generate_mds_matrix<F: Field>() -> [[F; RESCUE_M]; RESCUE_M] {
+pub(crate) fn generate_mds_matrix<F: Field>() -> [[F; RESCUE_M]; RESCUE_M] {
     // TODO: Correct MDS generation; this causes horribly-biased output
     let mut mds_matrix = [[F::zero(); RESCUE_M]; RESCUE_M];
     for i in (0..RESCUE_M).rev() {
