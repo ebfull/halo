@@ -1,5 +1,5 @@
 use crate::{
-    circuits::{Coeff, ConstraintSystem, LinearCombination, SynthesisError},
+    circuits::{Coeff, ConstraintSystem, IntoLinearCombination, LinearCombination, SynthesisError},
     curves::Curve,
     fields::Field,
     gadgets::{
@@ -28,11 +28,16 @@ use crate::{
 /// g = f
 /// h = x
 /// i = x^5
-fn constrain_pow_5<F: Field, CS: ConstraintSystem<F>>(
-    cs: &mut CS,
-    base: AllocatedNum<F>,
-    result: AllocatedNum<F>,
-) -> Result<(), SynthesisError> {
+fn constrain_pow_5<F, CS, B, R>(cs: &mut CS, base: B, result: R) -> Result<(), SynthesisError>
+where
+    F: Field,
+    CS: ConstraintSystem<F>,
+    B: IntoLinearCombination<F>,
+    R: IntoLinearCombination<F>,
+{
+    let base_lc = base.lc(cs);
+    let result_lc = result.lc(cs);
+
     let x = base.get_value();
     let x2 = x.and_then(|x| Some(x.square()));
     let x4 = x2.and_then(|x2| Some(x2.square()));
@@ -44,8 +49,8 @@ fn constrain_pow_5<F: Field, CS: ConstraintSystem<F>>(
 
         Ok((x, x, x2))
     })?;
-    cs.enforce_zero(base.lc() - a_var);
-    cs.enforce_zero(base.lc() - b_var);
+    cs.enforce_zero(base_lc.clone() - a_var);
+    cs.enforce_zero(base_lc.clone() - b_var);
 
     let (d_var, e_var, f_var) = cs.multiply(|| {
         let x2 = x2.ok_or(SynthesisError::AssignmentMissing)?;
@@ -64,49 +69,10 @@ fn constrain_pow_5<F: Field, CS: ConstraintSystem<F>>(
         Ok((x4, x, x5))
     })?;
     cs.enforce_zero(LinearCombination::from(f_var) - g_var);
-    cs.enforce_zero(base.lc() - h_var);
-    cs.enforce_zero(result.lc() - i_var);
+    cs.enforce_zero(base_lc - h_var);
+    cs.enforce_zero(result_lc - i_var);
 
     Ok(())
-}
-
-fn mds<F: Field, CS: ConstraintSystem<F>>(
-    cs: &mut CS,
-    in_state: &[AllocatedNum<F>; RESCUE_M],
-    mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
-) -> Result<[AllocatedNum<F>; RESCUE_M], SynthesisError> {
-    let mut out_state = vec![];
-
-    for i in 0..RESCUE_M {
-        let mut cur = Combination::from(Num::constant(F::zero()));
-        for j in 0..RESCUE_M {
-            cur = cur + (Coeff::Full(mds_matrix[i][j]), in_state[j]);
-        }
-        let out = AllocatedNum::alloc(cs, || {
-            cur.get_value().ok_or(SynthesisError::AssignmentMissing)
-        })?;
-        let cur_lc = cur.lc(cs);
-        cs.enforce_zero(out.lc() - &cur_lc);
-        out_state.push(out);
-    }
-
-    // Manually expand so that we return a fixed-length array without having to
-    // allocate placeholder variables.
-    Ok([
-        out_state[0],
-        out_state[1],
-        out_state[2],
-        out_state[3],
-        out_state[4],
-        out_state[5],
-        out_state[6],
-        out_state[7],
-        out_state[8],
-        out_state[9],
-        out_state[10],
-        out_state[11],
-        out_state[12],
-    ])
 }
 
 fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
@@ -122,8 +88,14 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
     }
     println!();
 
+    let mut cur: Vec<_> = state
+        .iter()
+        .map(|entry| Combination::from(*entry))
+        .collect();
+
     for r in 0..2 * RESCUE_ROUNDS {
-        for entry in state.iter_mut() {
+        let mut mid = vec![];
+        for entry in cur.into_iter() {
             // Assuming F::RESCUE_ALPHA = 5, we need to constrain either entry^5 or
             // entry^(1/5).
             assert_eq!(F::RESCUE_ALPHA, 5);
@@ -134,9 +106,9 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
                 })?;
 
                 // entry^(1/5) --> Constrain result^5 = entry
-                constrain_pow_5(cs, result, *entry)?;
+                constrain_pow_5(cs, result, entry)?;
 
-                *entry = result;
+                mid.push(result);
             } else {
                 let result = AllocatedNum::alloc(cs, || {
                     let num = entry.get_value().ok_or(SynthesisError::AssignmentMissing)?;
@@ -144,12 +116,31 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
                 })?;
 
                 // entry^5 --> Constrain entry^5 = result
-                constrain_pow_5(cs, *entry, result)?;
+                constrain_pow_5(cs, entry, result)?;
 
-                *entry = result;
+                mid.push(result);
             };
         }
-        *state = mds(cs, state, mds_matrix)?;
+
+        let mut next = vec![];
+        for mds_row in mds_matrix.iter() {
+            let mut sum = Combination::from(Num::constant(F::zero()));
+            for (coeff, entry) in mds_row.iter().zip(mid.iter()) {
+                sum = sum + (Coeff::Full(*coeff), *entry);
+            }
+            next.push(sum);
+        }
+
+        cur = next;
+    }
+
+    for i in 0..RESCUE_M {
+        let out = AllocatedNum::alloc(cs, || {
+            cur[i].get_value().ok_or(SynthesisError::AssignmentMissing)
+        })?;
+        let cur_lc = cur[i].lc(cs);
+        cs.enforce_zero(out.lc() - &cur_lc);
+        state[i] = out;
     }
 
     println!("Gadget state after f:");
@@ -355,7 +346,9 @@ pub fn obtain_challenge<F: Field, CS: ConstraintSystem<F>>(
 mod test {
     use super::RescueGadget;
     use crate::{
-        circuits::{is_satisfied, Circuit, ConstraintSystem, SynthesisError},
+        circuits::{
+            is_satisfied, Circuit, ConstraintSystem, IntoLinearCombination, SynthesisError,
+        },
         fields::Fp,
         gadgets::AllocatedNum,
         rescue::Rescue,
