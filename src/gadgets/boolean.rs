@@ -28,13 +28,16 @@ impl AllocatedBit {
         FF: FnOnce() -> Result<bool, SynthesisError>,
     {
         let mut final_value = None;
-        let var = cs.alloc_input(|| "", || {
-            let v = value()?;
-            final_value = Some(v);
-            let fe = if v { F::one() } else { F::zero() };
+        let var = cs.alloc_input(
+            || "",
+            || {
+                let v = value()?;
+                final_value = Some(v);
+                let fe = if v { F::one() } else { F::zero() };
 
-            Ok(fe)
-        })?;
+                Ok(fe)
+            },
+        )?;
 
         Ok(AllocatedBit {
             value: final_value,
@@ -44,9 +47,8 @@ impl AllocatedBit {
 
     pub fn check<F: Field, CS: ConstraintSystem<F>>(
         &self,
-        cs: &mut CS
-    ) -> Result<(), SynthesisError>
-    {
+        cs: &mut CS,
+    ) -> Result<(), SynthesisError> {
         let (a, b, c) = cs.multiply(|| {
             let val = self.value.ok_or(SynthesisError::AssignmentMissing)?;
             let val = if val { F::one() } else { F::zero() };

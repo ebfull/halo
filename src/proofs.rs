@@ -555,7 +555,6 @@ impl<C: Curve> Proof<C> {
             Some(c) => c,
             None => params.commit(&ky, false),
         };
-        println!("verifier outside circuit k={:?}", k_commitment);
         let transcript = append_point::<C>(transcript, &k_commitment);
         let transcript = append_point::<C>(transcript, &self.r_commitment);
         let (transcript, y_cur) = get_challenge::<_, C::Scalar>(transcript);
