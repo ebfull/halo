@@ -41,6 +41,12 @@ pub trait Field:
     /// Generator of the 2^s multiplicative subgroup
     const ALPHA: Self;
 
+    /// Ideally the smallest prime such that gcd(p - 1, alpha) = 1
+    const RESCUE_ALPHA: u64;
+
+    /// RESCUE_INVALPHA * RESCUE_ALPHA = 1 mod (p - 1)
+    const RESCUE_INVALPHA: [u64; 4];
+
     fn is_zero(&self) -> Choice;
 
     fn from_u64(v: u64) -> Self;

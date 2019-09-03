@@ -1,5 +1,5 @@
 use crate::{
-    circuits::{ConstraintSystem, SynthesisError},
+    circuits::{Coeff, ConstraintSystem, IntoLinearCombination, LinearCombination, SynthesisError},
     curves::Curve,
     fields::Field,
     gadgets::{
@@ -7,7 +7,205 @@ use crate::{
         ecc::CurvePoint,
         num::{AllocatedNum, Combination, Num},
     },
+    rescue::{generate_mds_matrix, RESCUE_M, RESCUE_ROUNDS, SPONGE_RATE},
 };
+
+fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
+    cs: &mut CS,
+    state: &mut [AllocatedNum<F>; RESCUE_M],
+    mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
+) -> Result<(), SynthesisError> {
+    println!("Gadget state before f:");
+    for entry in state.iter() {
+        if let Some(v) = entry.get_value() {
+            println!("  {:?},", v);
+        }
+    }
+    println!();
+
+    let mut cur: Vec<_> = state
+        .iter()
+        .map(|entry| Combination::from(*entry))
+        .collect();
+
+    for r in 0..2 * RESCUE_ROUNDS {
+        let mut mid = vec![];
+        for entry in cur.into_iter() {
+            if r % 2 == 0 {
+                mid.push(AllocatedNum::rescue_invalpha(cs, entry)?);
+            } else {
+                mid.push(AllocatedNum::rescue_alpha(cs, entry)?);
+            };
+        }
+
+        let mut next = vec![];
+        for mds_row in mds_matrix.iter() {
+            let mut sum = Combination::from(Num::constant(F::zero()));
+            for (coeff, entry) in mds_row.iter().zip(mid.iter()) {
+                sum = sum + (Coeff::Full(*coeff), *entry);
+            }
+            next.push(sum);
+        }
+
+        cur = next;
+    }
+
+    for i in 0..RESCUE_M {
+        let out = AllocatedNum::alloc(cs, || {
+            cur[i].get_value().ok_or(SynthesisError::AssignmentMissing)
+        })?;
+        let cur_lc = cur[i].lc(cs);
+        cs.enforce_zero(out.lc() - &cur_lc);
+        state[i] = out;
+    }
+
+    println!("Gadget state after f:");
+    for entry in state.iter() {
+        if let Some(v) = entry.get_value() {
+            println!("  {:?},", v);
+        }
+    }
+    println!();
+
+    Ok(())
+}
+
+fn pad<F: Field, CS: ConstraintSystem<F>>(
+    cs: &mut CS,
+    input: &[Option<AllocatedNum<F>>; SPONGE_RATE],
+) -> Result<[AllocatedNum<F>; SPONGE_RATE], SynthesisError> {
+    let one = AllocatedNum::alloc(cs, || Ok(F::one()))?;
+    cs.enforce_zero(one.lc() - CS::ONE);
+
+    let mut padded = vec![];
+    for i in 0..SPONGE_RATE {
+        if let Some(e) = input[i] {
+            padded.push(e);
+        } else {
+            // No more elements; apply necessary padding
+            // TODO: Decide on a padding strategy (currently padding with all-ones)
+            padded.push(one);
+        }
+    }
+
+    // Manually expand so that we return a fixed-length array without having to
+    // allocate placeholder variables.
+    Ok([
+        padded[0], padded[1], padded[2], padded[3], padded[4], padded[5], padded[6], padded[7],
+        padded[8], padded[9], padded[10], padded[11],
+    ])
+}
+
+fn rescue_duplex<F: Field, CS: ConstraintSystem<F>>(
+    cs: &mut CS,
+    state: &mut [AllocatedNum<F>; RESCUE_M],
+    input: &[Option<AllocatedNum<F>>; SPONGE_RATE],
+    mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
+) -> Result<[Option<AllocatedNum<F>>; SPONGE_RATE], SynthesisError> {
+    for (entry, input) in state.iter_mut().zip(pad(cs, input)?.iter()) {
+        let sum = Combination::from(*entry) + *input;
+        *entry = AllocatedNum::alloc(cs, || {
+            sum.get_value().ok_or(SynthesisError::AssignmentMissing)
+        })?;
+        let sum_lc = sum.lc(cs);
+        cs.enforce_zero(entry.lc() - &sum_lc);
+    }
+
+    rescue_f(cs, state, mds_matrix)?;
+
+    let mut output = [None; SPONGE_RATE];
+    for i in 0..SPONGE_RATE {
+        output[i] = Some(state[i]);
+    }
+    Ok(output)
+}
+
+enum SpongeState<F: Field> {
+    Absorbing([Option<AllocatedNum<F>>; SPONGE_RATE]),
+    Squeezing([Option<AllocatedNum<F>>; SPONGE_RATE]),
+}
+
+impl<F: Field> SpongeState<F> {
+    fn absorb(val: AllocatedNum<F>) -> Self {
+        let mut input = [None; SPONGE_RATE];
+        input[0] = Some(val);
+        SpongeState::Absorbing(input)
+    }
+}
+
+pub struct RescueGadget<F: Field> {
+    sponge: SpongeState<F>,
+    state: [AllocatedNum<F>; RESCUE_M],
+    mds_matrix: [[F; RESCUE_M]; RESCUE_M],
+}
+
+impl<F: Field> RescueGadget<F> {
+    pub fn new<CS: ConstraintSystem<F>>(cs: &mut CS) -> Result<Self, SynthesisError> {
+        let zero = AllocatedNum::alloc(cs, || Ok(F::zero()))?;
+        cs.enforce_zero(zero.lc());
+
+        Ok(RescueGadget {
+            sponge: SpongeState::Absorbing([None; SPONGE_RATE]),
+            state: [zero; RESCUE_M],
+            mds_matrix: generate_mds_matrix(),
+        })
+    }
+
+    pub fn absorb<CS: ConstraintSystem<F>>(
+        &mut self,
+        cs: &mut CS,
+        val: AllocatedNum<F>,
+    ) -> Result<(), SynthesisError> {
+        match self.sponge {
+            SpongeState::Absorbing(ref mut input) => {
+                for entry in input.iter_mut() {
+                    if entry.is_none() {
+                        *entry = Some(val);
+                        return Ok(());
+                    }
+                }
+
+                // We've already absorbed as many elements as we can
+                let _ = rescue_duplex(cs, &mut self.state, input, &self.mds_matrix)?;
+                self.sponge = SpongeState::absorb(val);
+            }
+            SpongeState::Squeezing(_) => {
+                // Drop the remaining output elements
+                self.sponge = SpongeState::absorb(val);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn squeeze<CS: ConstraintSystem<F>>(
+        &mut self,
+        cs: &mut CS,
+    ) -> Result<AllocatedNum<F>, SynthesisError> {
+        loop {
+            match self.sponge {
+                SpongeState::Absorbing(input) => {
+                    self.sponge = SpongeState::Squeezing(rescue_duplex(
+                        cs,
+                        &mut self.state,
+                        &input,
+                        &self.mds_matrix,
+                    )?);
+                }
+                SpongeState::Squeezing(ref mut output) => {
+                    for entry in output.iter_mut() {
+                        if let Some(e) = entry.take() {
+                            return Ok(e);
+                        }
+                    }
+
+                    // We've already squeezed out all available elements
+                    self.sponge = SpongeState::Absorbing([None; SPONGE_RATE]);
+                }
+            }
+        }
+    }
+}
 
 /*
 pub fn rescue_gadget<F: Field, CS: ConstraintSystem<F>>(
@@ -59,3 +257,77 @@ pub fn obtain_challenge<F: Field, CS: ConstraintSystem<F>>(
     Ok((new_transcript, bits))
 }
 */
+
+#[cfg(test)]
+mod test {
+    use super::RescueGadget;
+    use crate::{
+        circuits::{
+            is_satisfied, Circuit, ConstraintSystem, IntoLinearCombination, SynthesisError,
+        },
+        fields::Fp,
+        gadgets::AllocatedNum,
+        rescue::Rescue,
+        Basic,
+    };
+
+    #[test]
+    fn test_rescue_gadget() {
+        struct TestCircuit {
+            expected_s: Fp,
+            expected_s2: Fp,
+        }
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let mut g = RescueGadget::new(cs)?;
+
+                let (n, n2) = AllocatedNum::alloc_and_square(cs, || Ok(Fp::from(3)))?;
+                g.absorb(cs, n)?;
+                g.absorb(cs, n2)?;
+
+                let s = g.squeeze(cs)?;
+                let s2 = g.squeeze(cs)?;
+
+                if let (Some(s1), Some(s2)) = (s.get_value(), s2.get_value()) {
+                    println!("Computed s1: {:?}", s1);
+                    println!("Computed s2: {:?}", s2);
+                }
+
+                let expected_s = AllocatedNum::alloc_input(cs, || Ok(self.expected_s))?;
+                let expected_s2 = AllocatedNum::alloc_input(cs, || Ok(self.expected_s2))?;
+
+                cs.enforce_zero(expected_s.lc() - &s.lc());
+                cs.enforce_zero(expected_s2.lc() - &s2.lc());
+
+                Ok(())
+            }
+        }
+
+        let mut r = Rescue::new();
+
+        r.absorb(Fp::from(3));
+        r.absorb(Fp::from(9));
+
+        let expected_s = r.squeeze();
+        let expected_s2 = r.squeeze();
+
+        println!("Expected s1: {:?}", expected_s);
+        println!("Expected s2: {:?}", expected_s2);
+        println!();
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(
+                &TestCircuit {
+                    expected_s,
+                    expected_s2
+                },
+                &[expected_s, expected_s2]
+            ),
+            Ok(true)
+        );
+    }
+}

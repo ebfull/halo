@@ -11,6 +11,7 @@ mod fields;
 mod gadgets;
 mod proofs;
 mod recursion;
+pub mod rescue;
 mod synthesis;
 
 pub use circuits::*;

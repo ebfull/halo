@@ -154,6 +154,12 @@ impl<F: Field> Neg for Coeff<F> {
     }
 }
 
+pub trait IntoLinearCombination<F: Field> {
+    fn get_value(&self) -> Option<F>;
+
+    fn lc<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> LinearCombination<F>;
+}
+
 #[derive(Clone)]
 pub struct LinearCombination<F: Field>(Vec<(Variable, Coeff<F>)>);
 
