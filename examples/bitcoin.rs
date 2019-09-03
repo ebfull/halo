@@ -4,7 +4,7 @@ extern crate hex_literal;
 use std::iter;
 use subsonic::{
     is_satisfied, sha256::sha256, unpack_fe, AllocatedBit, AllocatedNum, Basic, Boolean, Circuit,
-    Coeff, ConstraintSystem, Field, Fp, LinearCombination, SynthesisError, UInt64,
+    Coeff, ConstraintSystem, Field, Fp, LinearCombination, SynthesisError, UInt64, IntoLinearCombination
 };
 
 fn bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
