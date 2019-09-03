@@ -195,6 +195,16 @@ struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: Circuit<C1::Scalar>> {
     deferred: Option<Deferred<C2::Scalar>>,
 }
 
+impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> VerificationCircuit<'a, E1, E2, Inner>
+{
+    fn verify_proof<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        cs: &mut CS,
+    ) -> Result<(), SynthesisError> {
+        Ok(())
+    }
+}
+
 impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Circuit<E1::Scalar>
     for VerificationCircuit<'a, E1, E2, Inner>
 {
@@ -383,7 +393,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
             k_commitment = k_commitment.add_conditionally(cs, &gen, &Boolean::from(bit.clone()))?;
         }
 
-        //println!("k(Y) in circuit: {:?}", k_commitment);
+        self.verify_proof(cs)?;
 
         self.inner_circuit.synthesize(cs)
     }
