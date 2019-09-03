@@ -11,7 +11,7 @@ pub struct RecursiveProof<E1: Curve, E2: Curve> {
     proof: Proof<E1>,
     oldproof1: Leftovers<E1>,
     oldproof2: Leftovers<E2>,
-    deferred: Deferred<E1>,
+    deferred: Deferred<E2::Scalar>,
     payload: Vec<u8>,
 }
 
@@ -127,7 +127,7 @@ where
             }
         }
 
-        let (worked, leftovers) = self.proof.verify::<_, Basic>(
+        let (worked, leftovers, deferred) = self.proof.verify::<_, Basic>(
             &self.oldproof1,
             e1params,
             &circuit1,
@@ -136,6 +136,7 @@ where
         )?;
 
         let worked = worked & self.oldproof2.verify::<_, Basic>(e2params, &circuit2)?;
+        let worked = worked & deferred.verify(e1params.k);
 
         Ok((worked, leftovers, self.oldproof2.clone()))
     }
@@ -187,7 +188,7 @@ struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: Circuit<C1::Scalar>> {
     new_payload: &'a [u8],
     old_leftovers: Option<Leftovers<C1>>,
     new_leftovers: Option<Leftovers<C2>>,
-    deferred: RefCell<Option<Deferred<C1>>>,
+    deferred: RefCell<Option<Deferred<C2::Scalar>>>,
 }
 
 impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Circuit<E1::Scalar>
@@ -346,27 +347,5 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
         }
 
         self.inner_circuit.synthesize(cs)
-    }
-}
-
-#[derive(Clone)]
-struct Deferred<C: Curve> {
-    _marker: PhantomData<C>, /*
-                             g: C,
-                             challenges: Vec<C::Scalar>,
-                             s_new: C,
-                             y_new: C::Scalar
-                             */
-}
-
-impl<C: Curve> Deferred<C> {
-    fn dummy() -> Self {
-        Deferred {
-            _marker: PhantomData,
-        }
-    }
-
-    fn to_bytes(&self) -> Vec<u8> {
-        vec![]
     }
 }

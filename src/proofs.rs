@@ -62,6 +62,97 @@ impl<C: Curve> Leftovers<C> {
 }
 
 #[derive(Clone)]
+pub struct Deferred<F: Field> {
+    x: F,
+    y_cur: F,
+    ky_opening: F,
+    tx_positive_opening: F,
+    tx_negative_opening: F,
+    sx_cur_opening: F,
+    rx_opening: F,
+    rxy_opening: F,
+}
+
+impl<F: Field> Deferred<F> {
+    pub fn dummy() -> Self {
+        Deferred {
+            x: F::one(),
+            y_cur: F::one(),
+            ky_opening: F::zero(),
+            tx_positive_opening: F::zero(),
+            tx_negative_opening: F::zero(),
+            sx_cur_opening: F::zero(),
+            rx_opening: F::zero(),
+            rxy_opening: F::zero(),
+        }
+    }
+
+    pub fn compute(&self, k: usize) -> (F, F) {
+        if self.x == F::zero() {
+            panic!("no");
+        }
+        if self.y_cur == F::zero() {
+            panic!("no");
+        }
+
+        let d = 1 << k;
+        let n = d / 4;
+
+        // TODO: could combine these
+        let xinv = self.x.invert().unwrap();
+        let yinv = self.y_cur.invert().unwrap();
+        let xyinv = xinv * &yinv;
+
+        let xinvn = xinv.pow(&[n as u64, 0, 0, 0]);
+        let xinvd = xinvn.square().square();
+        let yn = self.y_cur.pow(&[n as u64, 0, 0, 0]);
+        let xn = self.x.pow(&[n as u64, 0, 0, 0]);
+        let xyinvn31 = xyinv.pow(&[(3 * n - 1) as u64, 0, 0, 0]);
+        //let xinvn31 = (xinvn.square() * &xinvn) * &self.x;
+        let xinvn31 = xinv.pow(&[(3 * n - 1) as u64, 0, 0, 0]);
+
+        let rhs = self.tx_positive_opening * &self.x;
+        let rhs = rhs + &(self.tx_negative_opening * &xinvd);
+
+        let lhs = self.sx_cur_opening * &xinvn;
+        let lhs = lhs * &yn;
+
+        // Computes x + x^2 + x^3 + ... + x^n
+        fn compute_thing<F: Field>(x: F, k: usize) -> F {
+            let mut acc = x;
+            let mut cur = x;
+            for _ in 0..k {
+                let tmp = acc * cur;
+                cur = cur.square();
+                acc = acc + tmp;
+            }
+            acc
+        }
+
+        let thing = compute_thing(self.x * &self.y_cur, k - 2);
+        let thing = thing + &compute_thing(self.x * &yinv, k - 2);
+        let thing = thing * &xn;
+        let lhs = lhs - &thing;
+        let lhs = lhs + &(self.rxy_opening * &xyinvn31);
+        let lhs = lhs * &(self.rx_opening * &xinvn31);
+        let ky = self.ky_opening * &yn;
+        let lhs = lhs - &ky;
+
+        (lhs, rhs)
+    }
+
+    pub fn verify(&self, k: usize) -> bool {
+        let (lhs, rhs) = self.compute(k);
+
+        lhs == rhs
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        vec![]
+    }
+}
+
+#[derive(Clone)]
 pub struct Proof<C: Curve> {
     // Commitments
     pub r_commitment: C,
@@ -512,7 +603,7 @@ impl<C: Curve> Proof<C> {
         circuit: &CS,
         inputs: &[C::Scalar],
         k_commitment: Option<C>,
-    ) -> Result<(bool, Leftovers<C>), SynthesisError> {
+    ) -> Result<(bool, Leftovers<C>, Deferred<C::Scalar>), SynthesisError> {
         struct InputMap {
             inputs: Vec<usize>,
         }
@@ -578,29 +669,16 @@ impl<C: Curve> Proof<C> {
         let transcript = append_scalar::<C>(transcript, &self.sx_new_opening);
 
         // Check that circuit is satisfied...
-        let xinv = x.invert().unwrap();
-        let xyinv = (x * &y_cur).invert().unwrap();
-        let rhs = self.tx_positive_opening * &x;
-        let rhs = rhs + &(self.tx_negative_opening * &(xinv.pow(&[params.d as u64, 0, 0, 0])));
-        let lhs = self.sx_cur_opening * &(xinv.pow(&[params.n as u64, 0, 0, 0]));
-        let lhs = lhs * &y_cur.pow(&[params.n as u64, 0, 0, 0]);
-        /// Computes x + x^2 + x^3 + ... + x^n
-        fn compute_thing<F: Field>(x: F, n: u64) -> F {
-            let num = (x.pow(&[n, 0, 0, 0]) - F::one()) * x;
-            let denom = x - F::one();
-
-            num * denom.invert().unwrap()
-        }
-        let thing = compute_thing(x * &y_cur, params.n as u64);
-        let thing = thing + &compute_thing(x * &(y_cur.invert().unwrap()), params.n as u64);
-        let thing = thing * &(x.pow(&[params.n as u64, 0, 0, 0]));
-        let lhs = lhs - &thing;
-        let lhs = lhs + &(self.rxy_opening * &(xyinv.pow(&[(params.n * 3 - 1) as u64, 0, 0, 0])));
-        let lhs = lhs * &(self.rx_opening * &(xinv.pow(&[(params.n * 3 - 1) as u64, 0, 0, 0])));
-        let ky = ky_opening * (&y_cur.pow(&[params.n as u64, 0, 0, 0]));
-        let lhs = lhs - &ky;
-
-        let circuit_satisfied = rhs == lhs;
+        let deferred = Deferred {
+            x,
+            y_cur,
+            ky_opening: ky_opening,
+            tx_positive_opening: self.tx_positive_opening,
+            tx_negative_opening: self.tx_negative_opening,
+            sx_cur_opening: self.sx_cur_opening,
+            rx_opening: self.rx_opening,
+            rxy_opening: self.rxy_opening,
+        };
 
         let mut challenges_old_inv = leftovers.challenges_new.clone();
         for c in &mut challenges_old_inv {
@@ -675,7 +753,7 @@ impl<C: Curve> Proof<C> {
             challenges_new,
         };
 
-        Ok((inner_product_satisfied & circuit_satisfied, metadata))
+        Ok((inner_product_satisfied, metadata, deferred))
     }
 }
 
@@ -741,7 +819,7 @@ fn my_test_circuit() {
         .unwrap());
 
     // partially verify proof (without doing any linear time procedures)
-    let (valid_proof, verifier_new_leftovers) = proof
+    let (valid_proof, verifier_new_leftovers, deferred) = proof
         .verify::<_, Basic>(
             &dummy_leftovers,
             &params,
@@ -751,6 +829,7 @@ fn my_test_circuit() {
         )
         .unwrap();
     assert!(valid_proof);
+    assert!(deferred.verify(params.k));
     assert!(verifier_new_leftovers
         .verify::<_, Basic>(&params, &verifier_circuit)
         .unwrap());
@@ -764,7 +843,7 @@ fn my_test_circuit() {
         .verify::<_, Basic>(&params, &verifier_circuit)
         .unwrap());
 
-    let (valid_proof, verifier_new_leftovers) = proof
+    let (valid_proof, verifier_new_leftovers, deferred) = proof
         .verify::<_, Basic>(
             &verifier_new_leftovers,
             &params,
@@ -773,6 +852,7 @@ fn my_test_circuit() {
             None,
         )
         .unwrap();
+    assert!(deferred.verify(params.k));
     assert!(valid_proof);
     assert!(verifier_new_leftovers
         .verify::<_, Basic>(&params, &verifier_circuit)
