@@ -3,7 +3,6 @@ use super::gadgets::*;
 use super::proofs::*;
 use super::synthesis::Basic;
 use super::{Curve, Field};
-use std::cell::RefCell;
 use std::marker::PhantomData;
 
 #[derive(Clone)]
@@ -27,13 +26,18 @@ where
         circuit: &CS,
         new_payload: &[u8],
     ) -> Result<Self, SynthesisError> {
-        let (new_leftovers, old_leftovers) = match old_proof {
+        let (newdeferred, new_leftovers, old_leftovers) = match old_proof {
             Some(old_proof) => {
-                let (_, l1, l2) = old_proof.verify_inner(e2params, e1params, circuit)?;
+                let (_, newdeferred, l1, l2) =
+                    old_proof.verify_inner(e2params, e1params, circuit)?;
 
-                (l1, l2)
+                (newdeferred, l1, l2)
             }
-            None => (Leftovers::dummy(e2params), Leftovers::dummy(e1params)),
+            None => (
+                Deferred::dummy(),
+                Leftovers::dummy(e2params),
+                Leftovers::dummy(e1params),
+            ),
         };
 
         let mut circuit = VerificationCircuit::<E1, E2, _> {
@@ -45,7 +49,7 @@ where
             new_payload,
             old_leftovers: Some(old_leftovers.clone()),
             new_leftovers: Some(new_leftovers.clone()),
-            deferred: RefCell::new(None),
+            deferred: Some(newdeferred.clone()),
         };
 
         if old_proof.is_some() {
@@ -62,7 +66,7 @@ where
             proof,
             oldproof1: old_leftovers,
             oldproof2: new_leftovers,
-            deferred: circuit.deferred.into_inner().unwrap(),
+            deferred: newdeferred,
             payload: new_payload.to_vec(),
         })
     }
@@ -72,7 +76,7 @@ where
         e1params: &Params<E1>,
         e2params: &Params<E2>,
         circuit: &CS,
-    ) -> Result<(bool, Leftovers<E1>, Leftovers<E2>), SynthesisError> {
+    ) -> Result<(bool, Deferred<E1::Scalar>, Leftovers<E1>, Leftovers<E2>), SynthesisError> {
         let circuit1 = VerificationCircuit::<E1, E2, _> {
             _marker: PhantomData,
             params: e2params,
@@ -82,7 +86,7 @@ where
             new_payload: &self.payload,
             old_leftovers: None,
             new_leftovers: None,
-            deferred: RefCell::new(None),
+            deferred: None,
         };
 
         let circuit2 = VerificationCircuit::<E2, E1, _> {
@@ -94,7 +98,7 @@ where
             new_payload: &self.payload,
             old_leftovers: None,
             new_leftovers: None,
-            deferred: RefCell::new(None),
+            deferred: None,
         };
 
         // The public inputs for the proof consists of
@@ -136,9 +140,8 @@ where
         )?;
 
         let worked = worked & self.oldproof2.verify::<_, Basic>(e2params, &circuit2)?;
-        let worked = worked & deferred.verify(e1params.k);
 
-        Ok((worked, leftovers, self.oldproof2.clone()))
+        Ok((worked, deferred, leftovers, self.oldproof2.clone()))
     }
 
     pub fn verify<CS: Circuit<E1::Scalar> + Circuit<E2::Scalar>>(
@@ -156,7 +159,7 @@ where
             new_payload: &self.payload,
             old_leftovers: None,
             new_leftovers: None,
-            deferred: RefCell::new(None),
+            deferred: None,
         };
 
         let circuit2 = VerificationCircuit::<E2, E1, _> {
@@ -168,12 +171,13 @@ where
             new_payload: &self.payload,
             old_leftovers: None,
             new_leftovers: None,
-            deferred: RefCell::new(None),
+            deferred: None,
         };
 
-        let (worked, a, b) = self.verify_inner(e1params, e2params, circuit)?;
+        let (worked, deferred, a, b) = self.verify_inner(e1params, e2params, circuit)?;
 
         Ok(worked
+            & deferred.verify(e1params.k)
             & a.verify::<_, Basic>(e1params, &circuit1)?
             & b.verify::<_, Basic>(e2params, &circuit2)?)
     }
@@ -188,7 +192,7 @@ struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: Circuit<C1::Scalar>> {
     new_payload: &'a [u8],
     old_leftovers: Option<Leftovers<C1>>,
     new_leftovers: Option<Leftovers<C2>>,
-    deferred: RefCell<Option<Deferred<C2::Scalar>>>,
+    deferred: Option<Deferred<C2::Scalar>>,
 }
 
 impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Circuit<E1::Scalar>
@@ -271,9 +275,21 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
             }
         }
 
-        // TODO
-        {
-            *self.deferred.borrow_mut() = Some(Deferred::dummy())
+        let mut deferred = vec![];
+        if let Some(l) = &self.deferred {
+            let bytes = l.to_bytes();
+            for (j, byte) in bytes.into_iter().enumerate() {
+                for i in 0..8 {
+                    let bit = (byte >> i) & 1 == 1;
+                    deferred.push(AllocatedBit::alloc_input_unchecked(cs, || Ok(bit))?);
+                }
+            }
+        } else {
+            // 256 * 8
+            let num_bits = 256 * 8;
+            for i in 0..num_bits {
+                deferred.push(AllocatedBit::alloc_input_unchecked(cs, || Ok(false))?);
+            }
         }
 
         // Check that all the inputs are booleans now that we've allocated
@@ -334,9 +350,30 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
             }
         }
 
+        let mut old_deferred = vec![];
+        if let Some(l) = &self.proof {
+            let l = &l.deferred;
+            let bytes = l.to_bytes();
+            for (_, byte) in bytes.into_iter().enumerate() {
+                for i in 0..8 {
+                    let bit = (byte >> i) & 1 == 1;
+                    old_deferred.push(AllocatedBit::alloc(cs, || Ok(bit))?);
+                }
+            }
+        } else {
+            let dummy_deferred = Deferred::<E2::Scalar>::dummy();
+            let bytes = dummy_deferred.to_bytes();
+            for (_, byte) in bytes.into_iter().enumerate() {
+                for i in 0..8 {
+                    let bit = (byte >> i) & 1 == 1;
+                    old_deferred.push(AllocatedBit::alloc(cs, || Ok(bit))?);
+                }
+            }
+        }
+
         bits_for_k_commitment.extend(old_leftovers1.clone());
         bits_for_k_commitment.extend(leftovers1);
-        // TODO: old proof's deferred field
+        bits_for_k_commitment.extend(old_deferred.clone());
 
         for (bit, gen) in bits_for_k_commitment
             .into_iter()
@@ -345,6 +382,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
             let gen = CurvePoint::constant(gen.0, gen.1);
             k_commitment = k_commitment.add_conditionally(cs, &gen, &Boolean::from(bit.clone()))?;
         }
+
+        //println!("k(Y) in circuit: {:?}", k_commitment);
 
         self.inner_circuit.synthesize(cs)
     }

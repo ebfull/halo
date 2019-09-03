@@ -27,8 +27,8 @@ impl<F: Field> Circuit<F> for MyCircuit {
 fn main() {
     println!("Making parameters");
     let start = Instant::now();
-    let params0: Params<Ec0> = Params::new(17);
-    let params1: Params<Ec1> = Params::new(17);
+    let params0: Params<Ec0> = Params::new(18);
+    let params1: Params<Ec1> = Params::new(18);
     println!("done, took {:?}", start.elapsed());
 
     let mycircuit = MyCircuit;

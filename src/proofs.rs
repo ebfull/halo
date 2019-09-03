@@ -13,6 +13,7 @@ impl<C: Curve> Leftovers<C> {
         let mut ret = vec![];
 
         ret.extend(self.s_new_commitment.to_bytes()[..].iter().cloned());
+        // TODO: This is 128-bit
         ret.extend(self.y_new.to_bytes()[..].iter().cloned());
         ret.extend(self.g_new.to_bytes()[..].iter().cloned());
         for challenge in &self.challenges_new {
@@ -74,6 +75,23 @@ pub struct Deferred<F: Field> {
 }
 
 impl<F: Field> Deferred<F> {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut ret = vec![];
+
+        // TODO: they're 128-bit
+        ret.extend(self.x.to_bytes()[..].iter().cloned());
+        ret.extend(self.y_cur.to_bytes()[..].iter().cloned());
+
+        ret.extend(self.ky_opening.to_bytes()[..].iter().cloned());
+        ret.extend(self.tx_positive_opening.to_bytes()[..].iter().cloned());
+        ret.extend(self.tx_negative_opening.to_bytes()[..].iter().cloned());
+        ret.extend(self.sx_cur_opening.to_bytes()[..].iter().cloned());
+        ret.extend(self.rx_opening.to_bytes()[..].iter().cloned());
+        ret.extend(self.rxy_opening.to_bytes()[..].iter().cloned());
+
+        ret
+    }
+
     pub fn dummy() -> Self {
         Deferred {
             x: F::one(),
@@ -145,10 +163,6 @@ impl<F: Field> Deferred<F> {
         let (lhs, rhs) = self.compute(k);
 
         lhs == rhs
-    }
-
-    pub fn to_bytes(&self) -> Vec<u8> {
-        vec![]
     }
 }
 
@@ -646,6 +660,7 @@ impl<C: Curve> Proof<C> {
             Some(c) => c,
             None => params.commit(&ky, false),
         };
+        //println!("k commitment in verifier: {:?}", k_commitment.get_xy().unwrap());
         let transcript = append_point::<C>(transcript, &k_commitment);
         let transcript = append_point::<C>(transcript, &self.r_commitment);
         let (transcript, y_cur) = get_challenge::<_, C::Scalar>(transcript);
