@@ -1,3 +1,4 @@
+use crate::rescue::Rescue;
 use crate::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -294,7 +295,7 @@ impl<C: Curve> Proof<C> {
         assignment.b.resize(params.n, C::Scalar::zero());
         assignment.c.resize(params.n, C::Scalar::zero());
 
-        let transcript = C::Base::zero();
+        let mut transcript = Rescue::<C::Base>::new();
 
         // Compute s(X, y_old)
         let y_old = old_leftovers.y_new;
@@ -332,7 +333,7 @@ impl<C: Curve> Proof<C> {
 
         // Commit to k(Y)
         let k_commitment = params.commit(&ky, false);
-        let transcript = append_point::<C>(transcript, &k_commitment);
+        append_point::<C>(&mut transcript, &k_commitment);
 
         // Compute r(X, Y)
         let mut rx = Vec::with_capacity(3 * params.n + 1);
@@ -344,10 +345,10 @@ impl<C: Curve> Proof<C> {
 
         // Commit to r(X, Y)
         let r_commitment = params.commit(&rx, true);
-        let transcript = append_point::<C>(transcript, &r_commitment);
+        append_point::<C>(&mut transcript, &r_commitment);
 
         // Obtain the challenge y_cur
-        let (transcript, y_cur) = get_challenge::<_, C::Scalar>(transcript);
+        let y_cur = get_challenge::<_, C::Scalar>(&mut transcript);
         let y_cur_inv = y_cur.invert().unwrap();
 
         // Compute s(X, y_cur)
@@ -355,7 +356,7 @@ impl<C: Curve> Proof<C> {
 
         // Commit to s(X, y_cur)
         let s_cur_commitment = params.commit(&sx_cur, false);
-        let transcript = append_point::<C>(transcript, &s_cur_commitment);
+        append_point::<C>(&mut transcript, &s_cur_commitment);
 
         // Compute r(X, y_cur)
         let mut rxy = rx.clone();
@@ -402,16 +403,16 @@ impl<C: Curve> Proof<C> {
         // Commit to t^+(X, y)
         let tx_positive = &tx[4 * params.n + 1..];
         let t_positive_commitment = params.commit(tx_positive, false);
-        let transcript = append_point::<C>(transcript, &t_positive_commitment);
+        append_point::<C>(&mut transcript, &t_positive_commitment);
 
         // Commit to t^-(X, y)
         let tx_negative = &tx[0..(4 * params.n)];
         let t_negative_commitment = params.commit(tx_negative, false);
         assert_eq!(params.generators.len(), 4 * params.n);
-        let transcript = append_point::<C>(transcript, &t_negative_commitment);
+        append_point::<C>(&mut transcript, &t_negative_commitment);
 
         // Obtain the challenge x
-        let (transcript, x) = get_challenge::<_, C::Scalar>(transcript);
+        let x = get_challenge::<_, C::Scalar>(&mut transcript);
 
         // Compute s(x, Y)
         let mut sy = params.compute_sy::<_, S>(circuit, x, params.n, assignment.q)?;
@@ -426,35 +427,35 @@ impl<C: Curve> Proof<C> {
 
         // Commit to s(x, Y)
         let c_commitment = params.commit(&sy, false);
-        let transcript = append_point::<C>(transcript, &c_commitment);
+        append_point::<C>(&mut transcript, &c_commitment);
 
         // Obtain the challenge y_new
-        let (transcript, y_new) = get_challenge::<_, C::Scalar>(transcript);
+        let y_new = get_challenge::<_, C::Scalar>(&mut transcript);
 
         // Compute s(X, y_new)
         let sx_new = params.compute_sx::<_, S>(circuit, y_new)?;
 
         // Commit to s(X, y_new)
         let s_new_commitment = params.commit(&sx_new, false);
-        let transcript = append_point::<C>(transcript, &s_new_commitment);
+        append_point::<C>(&mut transcript, &s_new_commitment);
 
         // Send openings
         let ky_opening = params.compute_opening(&ky, y_cur, false);
-        let transcript = append_scalar::<C>(transcript, &ky_opening);
+        append_scalar::<C>(&mut transcript, &ky_opening);
         let rx_opening = params.compute_opening(&rx, x, true);
-        let transcript = append_scalar::<C>(transcript, &rx_opening);
+        append_scalar::<C>(&mut transcript, &rx_opening);
         let rxy_opening = params.compute_opening(&rx, x * &y_cur, true);
-        let transcript = append_scalar::<C>(transcript, &rxy_opening);
+        append_scalar::<C>(&mut transcript, &rxy_opening);
         let sx_old_opening = params.compute_opening(&sx_old, x, false);
-        let transcript = append_scalar::<C>(transcript, &sx_old_opening);
+        append_scalar::<C>(&mut transcript, &sx_old_opening);
         let sx_cur_opening = params.compute_opening(&sx_cur, x, false);
-        let transcript = append_scalar::<C>(transcript, &sx_cur_opening);
+        append_scalar::<C>(&mut transcript, &sx_cur_opening);
         let tx_positive_opening = params.compute_opening(&tx_positive, x, false);
-        let transcript = append_scalar::<C>(transcript, &tx_positive_opening);
+        append_scalar::<C>(&mut transcript, &tx_positive_opening);
         let tx_negative_opening = params.compute_opening(&tx_negative, x, false);
-        let transcript = append_scalar::<C>(transcript, &tx_negative_opening);
+        append_scalar::<C>(&mut transcript, &tx_negative_opening);
         let sx_new_opening = params.compute_opening(&sx_new, x, false);
-        let transcript = append_scalar::<C>(transcript, &sx_new_opening);
+        append_scalar::<C>(&mut transcript, &sx_new_opening);
 
         // We don't add this to the transcript, the verifier computes it.
         // That's the whole trick!
@@ -465,7 +466,8 @@ impl<C: Curve> Proof<C> {
         );
 
         // Obtain the challenge z
-        let (transcript, z) = get_challenge::<_, C::Scalar>(transcript);
+
+        let z = get_challenge::<_, C::Scalar>(&mut transcript);
 
         // Compute P, the commitment to p(x), and p, the value it
         // must open to
@@ -643,7 +645,7 @@ impl<C: Curve> Proof<C> {
         S::synthesize(&mut inputmap, circuit)?;
         assert_eq!(inputs.len(), inputmap.inputs.len() - 1);
 
-        let transcript = C::Base::zero();
+        let mut transcript = Rescue::<C::Base>::new();
 
         // Commitments
         let mut ky = vec![];
@@ -661,27 +663,27 @@ impl<C: Curve> Proof<C> {
             None => params.commit(&ky, false),
         };
         //println!("k commitment in verifier: {:?}", k_commitment.get_xy().unwrap());
-        let transcript = append_point::<C>(transcript, &k_commitment);
-        let transcript = append_point::<C>(transcript, &self.r_commitment);
-        let (transcript, y_cur) = get_challenge::<_, C::Scalar>(transcript);
-        let transcript = append_point::<C>(transcript, &self.s_cur_commitment);
-        let transcript = append_point::<C>(transcript, &self.t_positive_commitment);
-        let transcript = append_point::<C>(transcript, &self.t_negative_commitment);
-        let (transcript, x) = get_challenge::<_, C::Scalar>(transcript);
-        let transcript = append_point::<C>(transcript, &self.c_commitment);
-        let (transcript, y_new) = get_challenge::<_, C::Scalar>(transcript);
-        let transcript = append_point::<C>(transcript, &self.s_new_commitment);
+        append_point::<C>(&mut transcript, &k_commitment);
+        append_point::<C>(&mut transcript, &self.r_commitment);
+        let y_cur = get_challenge::<_, C::Scalar>(&mut transcript);
+        append_point::<C>(&mut transcript, &self.s_cur_commitment);
+        append_point::<C>(&mut transcript, &self.t_positive_commitment);
+        append_point::<C>(&mut transcript, &self.t_negative_commitment);
+        let x = get_challenge::<_, C::Scalar>(&mut transcript);
+        append_point::<C>(&mut transcript, &self.c_commitment);
+        let y_new = get_challenge::<_, C::Scalar>(&mut transcript);
+        append_point::<C>(&mut transcript, &self.s_new_commitment);
 
         // Openings
         let ky_opening = params.compute_opening(&ky, y_cur, false);
-        let transcript = append_scalar::<C>(transcript, &ky_opening);
-        let transcript = append_scalar::<C>(transcript, &self.rx_opening);
-        let transcript = append_scalar::<C>(transcript, &self.rxy_opening);
-        let transcript = append_scalar::<C>(transcript, &self.sx_old_opening);
-        let transcript = append_scalar::<C>(transcript, &self.sx_cur_opening);
-        let transcript = append_scalar::<C>(transcript, &self.tx_positive_opening);
-        let transcript = append_scalar::<C>(transcript, &self.tx_negative_opening);
-        let transcript = append_scalar::<C>(transcript, &self.sx_new_opening);
+        append_scalar::<C>(&mut transcript, &ky_opening);
+        append_scalar::<C>(&mut transcript, &self.rx_opening);
+        append_scalar::<C>(&mut transcript, &self.rxy_opening);
+        append_scalar::<C>(&mut transcript, &self.sx_old_opening);
+        append_scalar::<C>(&mut transcript, &self.sx_cur_opening);
+        append_scalar::<C>(&mut transcript, &self.tx_positive_opening);
+        append_scalar::<C>(&mut transcript, &self.tx_negative_opening);
+        append_scalar::<C>(&mut transcript, &self.sx_new_opening);
 
         // Check that circuit is satisfied...
         let deferred = Deferred {
@@ -702,7 +704,7 @@ impl<C: Curve> Proof<C> {
         // Not added to the transcript; we computed it.
         let gx_old_opening = compute_b(x, &leftovers.challenges_new, &challenges_old_inv);
 
-        let (transcript, z) = get_challenge::<_, C::Scalar>(transcript);
+        let z = get_challenge::<_, C::Scalar>(&mut transcript);
 
         let p_commitment = self.r_commitment;
         let p_commitment = p_commitment * &z + leftovers.s_new_commitment;
@@ -1022,7 +1024,7 @@ impl<C: Curve> MultiPolynomialOpening<C> {
 
     pub fn verify_proof(
         &self,
-        transcript: &mut C::Base,
+        transcript: &mut Rescue<C::Base>,
         instances: &[PolynomialOpening<C>],
         k: usize,
     ) -> (bool, Vec<C::Scalar>, C) {
@@ -1044,14 +1046,13 @@ impl<C: Curve> MultiPolynomialOpening<C> {
 
         for round in &self.rounds {
             for j in 0..instances.len() {
-                *transcript = append_point(*transcript, &round.L[j]);
-                *transcript = append_point(*transcript, &round.R[j]);
-                *transcript = append_scalar::<C>(*transcript, &round.l[j]);
-                *transcript = append_scalar::<C>(*transcript, &round.r[j]);
+                append_point(transcript, &round.L[j]);
+                append_point(transcript, &round.R[j]);
+                append_scalar::<C>(transcript, &round.l[j]);
+                append_scalar::<C>(transcript, &round.r[j]);
             }
 
-            let (new_transcript, challenge) = get_challenge::<_, C::Scalar>(*transcript);
-            *transcript = new_transcript;
+            let challenge = get_challenge::<_, C::Scalar>(transcript);
             let challenge_inv = challenge.invert().unwrap();
             let challenge_sq = challenge.square();
             let challenge_inv_sq = challenge_inv.square();
@@ -1085,7 +1086,7 @@ impl<C: Curve> MultiPolynomialOpening<C> {
     }
 
     pub fn new_proof<'a>(
-        transcript: &mut C::Base,
+        transcript: &mut Rescue<C::Base>,
         instances: &'a [(PolynomialOpening<C>, &'a [C::Scalar])],
         generators: &[C],
         k: usize,
@@ -1129,18 +1130,17 @@ impl<C: Curve> MultiPolynomialOpening<C> {
                     let this_R = util::multiexp(&a[j][l..], &generators[0..l]);
                     let this_l = compute_inner_product(&a[j][0..l], &b[j][l..]);
                     let this_r = compute_inner_product(&a[j][l..], &b[j][0..l]);
-                    *transcript = append_point(*transcript, &this_L);
-                    *transcript = append_point(*transcript, &this_R);
-                    *transcript = append_scalar::<C>(*transcript, &this_l);
-                    *transcript = append_scalar::<C>(*transcript, &this_r);
+                    append_point(transcript, &this_L);
+                    append_point(transcript, &this_R);
+                    append_scalar::<C>(transcript, &this_l);
+                    append_scalar::<C>(transcript, &this_r);
 
                     round_L.push(this_L);
                     round_R.push(this_R);
                     round_l.push(this_l);
                     round_r.push(this_r);
                 }
-                let (new_transcript, challenge) = get_challenge::<_, C::Scalar>(*transcript);
-                *transcript = new_transcript;
+                let challenge = get_challenge::<_, C::Scalar>(transcript);
                 let challenge_inv = challenge.invert().unwrap();
 
                 challenges.push(challenge);
@@ -1192,25 +1192,27 @@ impl<C: Curve> MultiPolynomialOpening<C> {
     }
 }
 
-fn append_point<C: Curve>(transcript: C::Base, p: &C) -> C::Base {
+fn append_point<C: Curve>(transcript: &mut Rescue<C::Base>, p: &C) {
     let xy = p.get_xy();
     if bool::from(xy.is_some()) {
         let (x, y) = xy.unwrap();
-        rescue(&[transcript, x, y])
+        transcript.absorb(x);
+        transcript.absorb(y);
     } else {
-        rescue(&[transcript, C::Base::zero(), C::Base::zero()])
+        transcript.absorb(C::Base::zero());
+        transcript.absorb(C::Base::zero());
     }
 }
 
-fn append_scalar<C: Curve>(transcript: C::Base, scalar: &C::Scalar) -> C::Base {
+fn append_scalar<C: Curve>(transcript: &mut Rescue<C::Base>, scalar: &C::Scalar) {
     append_point(transcript, &(C::one() * scalar))
 }
 
-fn get_challenge<F1: Field, F2: Field>(transcript: F1) -> (F1, F2) {
-    let new_transcript = rescue(&[transcript]);
-    let challenge = transcript.get_lower_128();
+fn get_challenge<F1: Field, F2: Field>(transcript: &mut Rescue<F1>) -> F2 {
+    let challenge = transcript.squeeze();
+    let challenge = challenge.get_lower_128();
 
-    (new_transcript, F2::from_u128(challenge))
+    F2::from_u128(challenge)
 }
 
 /*
