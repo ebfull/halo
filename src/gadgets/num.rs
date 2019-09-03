@@ -4,6 +4,66 @@ use crate::{
 };
 use std::ops::Add;
 
+/// Constrain (x)^5 = (x^5), and return variables for x and (x^5).
+///
+/// We can do so with three multiplication constraints and five linear constraints:
+///
+/// a * b = c
+/// a := x
+/// b = a
+/// c := x^2
+///
+/// d * e = f
+/// d = c
+/// e = c
+/// f := x^4
+///
+/// g * h = i
+/// g = f
+/// h = x
+/// i := x^5
+fn constrain_pow_five<F, CS>(
+    cs: &mut CS,
+    x: Option<F>,
+) -> Result<(Variable, Variable), SynthesisError>
+where
+    F: Field,
+    CS: ConstraintSystem<F>,
+{
+    let x2 = x.and_then(|x| Some(x.square()));
+    let x4 = x2.and_then(|x2| Some(x2.square()));
+    let x5 = x4.and_then(|x4| x.and_then(|x| Some(x4 * x)));
+
+    let (base_var, b_var, c_var) = cs.multiply(|| {
+        let x = x.ok_or(SynthesisError::AssignmentMissing)?;
+        let x2 = x2.ok_or(SynthesisError::AssignmentMissing)?;
+
+        Ok((x, x, x2))
+    })?;
+    cs.enforce_zero(LinearCombination::from(base_var) - b_var);
+
+    let (d_var, e_var, f_var) = cs.multiply(|| {
+        let x2 = x2.ok_or(SynthesisError::AssignmentMissing)?;
+        let x4 = x4.ok_or(SynthesisError::AssignmentMissing)?;
+
+        Ok((x2, x2, x4))
+    })?;
+    cs.enforce_zero(LinearCombination::from(c_var) - d_var);
+    cs.enforce_zero(LinearCombination::from(c_var) - e_var);
+
+    let (g_var, h_var, result_var) = cs.multiply(|| {
+        let x = x.ok_or(SynthesisError::AssignmentMissing)?;
+        let x4 = x4.ok_or(SynthesisError::AssignmentMissing)?;
+        let x5 = x5.ok_or(SynthesisError::AssignmentMissing)?;
+
+        Ok((x4, x, x5))
+    })?;
+    cs.enforce_zero(LinearCombination::from(f_var) - g_var);
+    cs.enforce_zero(LinearCombination::from(base_var) - h_var);
+
+    Ok((base_var, result_var))
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct AllocatedNum<F: Field> {
     value: Option<F>,
@@ -106,6 +166,50 @@ impl<F: Field> AllocatedNum<F> {
                 var: c,
             },
         ))
+    }
+
+    pub fn rescue_alpha<CS, B>(cs: &mut CS, base: B) -> Result<Self, SynthesisError>
+    where
+        F: Field,
+        CS: ConstraintSystem<F>,
+        B: IntoLinearCombination<F>,
+    {
+        let base_value = base.get_value();
+        let result_value = base_value.and_then(|num| Some(num.pow(&[F::RESCUE_ALPHA, 0, 0, 0])));
+
+        // base^5 --> Constrain base^5 = result
+        assert_eq!(F::RESCUE_ALPHA, 5);
+        let (base_var, result_var) = constrain_pow_five(cs, base_value)?;
+
+        let base_lc = base.lc(cs);
+        cs.enforce_zero(base_lc - base_var);
+
+        Ok(AllocatedNum {
+            value: result_value,
+            var: result_var,
+        })
+    }
+
+    pub fn rescue_invalpha<CS, B>(cs: &mut CS, base: B) -> Result<Self, SynthesisError>
+    where
+        F: Field,
+        CS: ConstraintSystem<F>,
+        B: IntoLinearCombination<F>,
+    {
+        let base_value = base.get_value();
+        let result_value = base_value.and_then(|num| Some(num.pow(&F::RESCUE_INVALPHA)));
+
+        // base^(1/5) --> Constrain result^5 = base
+        assert_eq!(F::RESCUE_ALPHA, 5);
+        let (result_var, base_var) = constrain_pow_five(cs, result_value)?;
+
+        let base_lc = base.lc(cs);
+        cs.enforce_zero(base_lc - base_var);
+
+        Ok(AllocatedNum {
+            value: result_value,
+            var: result_var,
+        })
     }
 
     pub fn get_variable(&self) -> Variable {

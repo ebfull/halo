@@ -10,71 +10,6 @@ use crate::{
     rescue::{generate_mds_matrix, RESCUE_M, RESCUE_ROUNDS, SPONGE_RATE},
 };
 
-/// Constrain base^5 = result
-///
-/// We can do so with three multiplication constraints and seven linear constraints:
-///
-/// a * b = c
-/// a = x
-/// b = x
-/// c = x^2
-///
-/// d * e = f
-/// d = c
-/// e = c
-/// f = x^4
-///
-/// g * h = i
-/// g = f
-/// h = x
-/// i = x^5
-fn constrain_pow_5<F, CS, B, R>(cs: &mut CS, base: B, result: R) -> Result<(), SynthesisError>
-where
-    F: Field,
-    CS: ConstraintSystem<F>,
-    B: IntoLinearCombination<F>,
-    R: IntoLinearCombination<F>,
-{
-    let base_lc = base.lc(cs);
-    let result_lc = result.lc(cs);
-
-    let x = base.get_value();
-    let x2 = x.and_then(|x| Some(x.square()));
-    let x4 = x2.and_then(|x2| Some(x2.square()));
-    let x5 = x4.and_then(|x4| x.and_then(|x| Some(x4 * x)));
-
-    let (a_var, b_var, c_var) = cs.multiply(|| {
-        let x = x.ok_or(SynthesisError::AssignmentMissing)?;
-        let x2 = x2.ok_or(SynthesisError::AssignmentMissing)?;
-
-        Ok((x, x, x2))
-    })?;
-    cs.enforce_zero(base_lc.clone() - a_var);
-    cs.enforce_zero(base_lc.clone() - b_var);
-
-    let (d_var, e_var, f_var) = cs.multiply(|| {
-        let x2 = x2.ok_or(SynthesisError::AssignmentMissing)?;
-        let x4 = x4.ok_or(SynthesisError::AssignmentMissing)?;
-
-        Ok((x2, x2, x4))
-    })?;
-    cs.enforce_zero(LinearCombination::from(c_var) - d_var);
-    cs.enforce_zero(LinearCombination::from(c_var) - e_var);
-
-    let (g_var, h_var, i_var) = cs.multiply(|| {
-        let x = x.ok_or(SynthesisError::AssignmentMissing)?;
-        let x4 = x4.ok_or(SynthesisError::AssignmentMissing)?;
-        let x5 = x5.ok_or(SynthesisError::AssignmentMissing)?;
-
-        Ok((x4, x, x5))
-    })?;
-    cs.enforce_zero(LinearCombination::from(f_var) - g_var);
-    cs.enforce_zero(base_lc - h_var);
-    cs.enforce_zero(result_lc - i_var);
-
-    Ok(())
-}
-
 fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
     state: &mut [AllocatedNum<F>; RESCUE_M],
@@ -96,29 +31,10 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
     for r in 0..2 * RESCUE_ROUNDS {
         let mut mid = vec![];
         for entry in cur.into_iter() {
-            // Assuming F::RESCUE_ALPHA = 5, we need to constrain either entry^5 or
-            // entry^(1/5).
-            assert_eq!(F::RESCUE_ALPHA, 5);
             if r % 2 == 0 {
-                let result = AllocatedNum::alloc(cs, || {
-                    let num = entry.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-                    Ok(num.pow(&F::RESCUE_INVALPHA))
-                })?;
-
-                // entry^(1/5) --> Constrain result^5 = entry
-                constrain_pow_5(cs, result, entry)?;
-
-                mid.push(result);
+                mid.push(AllocatedNum::rescue_invalpha(cs, entry)?);
             } else {
-                let result = AllocatedNum::alloc(cs, || {
-                    let num = entry.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-                    Ok(num.pow(&[F::RESCUE_ALPHA, 0, 0, 0]))
-                })?;
-
-                // entry^5 --> Constrain entry^5 = result
-                constrain_pow_5(cs, entry, result)?;
-
-                mid.push(result);
+                mid.push(AllocatedNum::rescue_alpha(cs, entry)?);
             };
         }
 
