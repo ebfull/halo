@@ -195,7 +195,8 @@ struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: Circuit<C1::Scalar>> {
     deferred: Option<Deferred<C2::Scalar>>,
 }
 
-impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> VerificationCircuit<'a, E1, E2, Inner>
+impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
+    VerificationCircuit<'a, E1, E2, Inner>
 {
     fn verify_proof<CS: ConstraintSystem<E1::Scalar>>(
         &self,
