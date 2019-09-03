@@ -114,6 +114,14 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
     state: &mut [AllocatedNum<F>; RESCUE_M],
     mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
 ) -> Result<(), SynthesisError> {
+    println!("Gadget state before f:");
+    for entry in state.iter() {
+        if let Some(v) = entry.get_value() {
+            println!("  {:?},", v);
+        }
+    }
+    println!();
+
     for r in 0..2 * RESCUE_ROUNDS {
         for entry in state.iter_mut() {
             // Assuming F::RESCUE_ALPHA = 5, we need to constrain either entry^5 or
@@ -143,6 +151,14 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
         }
         *state = mds(cs, state, mds_matrix)?;
     }
+
+    println!("Gadget state after f:");
+    for entry in state.iter() {
+        if let Some(v) = entry.get_value() {
+            println!("  {:?},", v);
+        }
+    }
+    println!();
 
     Ok(())
 }
@@ -367,6 +383,11 @@ mod test {
                 let s = g.squeeze(cs)?;
                 let s2 = g.squeeze(cs)?;
 
+                if let (Some(s1), Some(s2)) = (s.get_value(), s2.get_value()) {
+                    println!("Computed s1: {:?}", s1);
+                    println!("Computed s2: {:?}", s2);
+                }
+
                 let expected_s = AllocatedNum::alloc_input(cs, || Ok(self.expected_s))?;
                 let expected_s2 = AllocatedNum::alloc_input(cs, || Ok(self.expected_s2))?;
 
@@ -384,6 +405,10 @@ mod test {
 
         let expected_s = r.squeeze();
         let expected_s2 = r.squeeze();
+
+        println!("Expected s1: {:?}", expected_s);
+        println!("Expected s2: {:?}", expected_s2);
+        println!();
 
         assert_eq!(
             is_satisfied::<_, _, Basic>(
