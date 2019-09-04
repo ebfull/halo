@@ -2,7 +2,7 @@ use crate::{
     fields::Field, Coeff, ConstraintSystem, IntoLinearCombination, LinearCombination,
     SynthesisError, Variable,
 };
-use std::ops::{Add, Neg, Sub};
+use std::ops::{Add, AddAssign, Neg, Sub};
 
 /// Constrain (x)^5 = (x^5), and return variables for x and (x^5).
 ///
@@ -352,16 +352,18 @@ impl<F: Field> Add<AllocatedNum<F>> for Combination<F> {
     type Output = Combination<F>;
 
     fn add(mut self, other: AllocatedNum<F>) -> Combination<F> {
-        let new_value = self
+        self += other;
+        self
+    }
+}
+
+impl<'a, F: Field> AddAssign<AllocatedNum<F>> for Combination<F> {
+    fn add_assign(&mut self, other: AllocatedNum<F>) {
+        self.value = self
             .value
             .and_then(|a| other.value.and_then(|b| Some(a + b)));
 
         self.terms.push(other.into());
-
-        Combination {
-            value: new_value,
-            terms: self.terms,
-        }
     }
 }
 

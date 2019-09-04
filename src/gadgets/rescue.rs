@@ -9,16 +9,14 @@ use crate::{
     },
     rescue::{generate_mds_matrix, RESCUE_M, RESCUE_ROUNDS, SPONGE_RATE},
 };
+use std::ops::AddAssign;
 
 fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
-    state: &mut [AllocatedNum<F>; RESCUE_M],
+    state: &mut [Combination<F>; RESCUE_M],
     mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
 ) -> Result<(), SynthesisError> {
-    let mut cur: Vec<_> = state
-        .iter()
-        .map(|entry| Combination::from(*entry))
-        .collect();
+    let mut cur: Vec<_> = state.iter().cloned().collect();
 
     for r in 0..2 * RESCUE_ROUNDS {
         let mut mid = vec![];
@@ -42,13 +40,8 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
         cur = next;
     }
 
-    for i in 0..RESCUE_M {
-        let out = AllocatedNum::alloc(cs, || {
-            cur[i].get_value().ok_or(SynthesisError::AssignmentMissing)
-        })?;
-        let cur_lc = cur[i].lc(cs);
-        cs.enforce_zero(out.lc() - &cur_lc);
-        state[i] = out;
+    for (i, entry) in cur.into_iter().enumerate() {
+        state[i] = entry;
     }
 
     Ok(())
@@ -82,24 +75,30 @@ fn pad<F: Field, CS: ConstraintSystem<F>>(
 
 fn rescue_duplex<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
-    state: &mut [AllocatedNum<F>; RESCUE_M],
+    state: &mut [Combination<F>; RESCUE_M],
     input: &[Option<AllocatedNum<F>>; SPONGE_RATE],
     mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
 ) -> Result<[Option<AllocatedNum<F>>; SPONGE_RATE], SynthesisError> {
     for (entry, input) in state.iter_mut().zip(pad(cs, input)?.iter()) {
-        let sum = Combination::from(*entry) + *input;
-        *entry = AllocatedNum::alloc(cs, || {
-            sum.get_value().ok_or(SynthesisError::AssignmentMissing)
-        })?;
-        let sum_lc = sum.lc(cs);
-        cs.enforce_zero(entry.lc() - &sum_lc);
+        entry.add_assign(*input);
     }
 
     rescue_f(cs, state, mds_matrix)?;
 
     let mut output = [None; SPONGE_RATE];
     for i in 0..SPONGE_RATE {
-        output[i] = Some(state[i]);
+        let out = AllocatedNum::alloc(cs, || {
+            state[i]
+                .get_value()
+                .ok_or(SynthesisError::AssignmentMissing)
+        })?;
+        let entry_lc = state[i].lc(cs);
+        cs.enforce_zero(out.lc() - &entry_lc);
+        output[i] = Some(out);
+
+        // As we've constrained this current state combination, we can substitute for the
+        // new variable to shorten subsequent combinations.
+        state[i] = out.into();
     }
     Ok(output)
 }
@@ -119,18 +118,31 @@ impl<F: Field> SpongeState<F> {
 
 pub struct RescueGadget<F: Field> {
     sponge: SpongeState<F>,
-    state: [AllocatedNum<F>; RESCUE_M],
+    state: [Combination<F>; RESCUE_M],
     mds_matrix: [[F; RESCUE_M]; RESCUE_M],
 }
 
 impl<F: Field> RescueGadget<F> {
     pub fn new<CS: ConstraintSystem<F>>(cs: &mut CS) -> Result<Self, SynthesisError> {
-        let zero = AllocatedNum::alloc(cs, || Ok(F::zero()))?;
-        cs.enforce_zero(zero.lc());
+        let state = [
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+        ];
 
         Ok(RescueGadget {
             sponge: SpongeState::Absorbing([None; SPONGE_RATE]),
-            state: [zero; RESCUE_M],
+            state,
             mds_matrix: generate_mds_matrix(),
         })
     }
