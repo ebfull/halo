@@ -294,9 +294,25 @@ impl<F: Field> From<(Coeff<F>, AllocatedNum<F>)> for Num<F> {
     }
 }
 
+impl<F: Field> From<(Coeff<F>, Num<F>)> for Num<F> {
+    fn from(num: (Coeff<F>, Num<F>)) -> Self {
+        match num.1 {
+            Num::Constant(coeff) => Num::Constant(num.0 * coeff),
+            Num::Allocated(coeff, n) => Num::Allocated(num.0 * coeff, n),
+        }
+    }
+}
+
 impl<F: Field> Num<F> {
     pub fn constant(val: F) -> Self {
         Num::Constant(Coeff::from(val))
+    }
+
+    pub fn is_constant(&self) -> bool {
+        match *self {
+            Num::Constant(_) => true,
+            _ => false,
+        }
     }
 
     pub fn value(&self) -> Option<F> {
@@ -420,6 +436,26 @@ impl<F: Field> Add<(Coeff<F>, AllocatedNum<F>)> for Combination<F> {
     }
 }
 
+impl<F: Field> Add<(Coeff<F>, Num<F>)> for Combination<F> {
+    type Output = Combination<F>;
+
+    fn add(mut self, other: (Coeff<F>, Num<F>)) -> Combination<F> {
+        let new_value = self.value.and_then(|a| {
+            other
+                .1
+                .value()
+                .and_then(|b| Some(a + (other.0.value() * b)))
+        });
+
+        self.terms.push(other.into());
+
+        Combination {
+            value: new_value,
+            terms: self.terms,
+        }
+    }
+}
+
 impl<F: Field> IntoLinearCombination<F> for Combination<F> {
     fn get_value(&self) -> Option<F> {
         self.value
@@ -442,6 +478,25 @@ impl<F: Field> IntoLinearCombination<F> for Combination<F> {
 }
 
 impl<F: Field> Combination<F> {
+    pub fn evaluate<CS>(self, cs: &mut CS) -> Result<Num<F>, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        let any_allocated = self.terms.iter().any(|n| !n.is_constant());
+
+        if any_allocated {
+            let out =
+                AllocatedNum::alloc(cs, || self.value.ok_or(SynthesisError::AssignmentMissing))?;
+            let lc = self.lc(cs);
+            cs.enforce_zero(out.lc() - &lc);
+            Ok(out.into())
+        } else {
+            // We can just return a constant
+            let base_value = self.value.ok_or(SynthesisError::AssignmentMissing)?;
+            Ok(Num::constant(base_value))
+        }
+    }
+
     pub fn mul<CS: ConstraintSystem<F>>(
         &self,
         cs: &mut CS,
@@ -483,6 +538,36 @@ impl<F: Field> Combination<F> {
         cs.enforce_zero(lc - r);
 
         Ok(AllocatedNum { value, var: o })
+    }
+
+    pub fn rescue_alpha<CS>(self, cs: &mut CS) -> Result<Num<F>, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        let any_allocated = self.terms.iter().any(|n| !n.is_constant());
+
+        if any_allocated {
+            AllocatedNum::rescue_alpha(cs, self).map(|n| n.into())
+        } else {
+            // We can just return a constant
+            let base_value = self.value.ok_or(SynthesisError::AssignmentMissing)?;
+            Ok(Num::constant(base_value.pow(&[F::RESCUE_ALPHA, 0, 0, 0])))
+        }
+    }
+
+    pub fn rescue_invalpha<CS>(self, cs: &mut CS) -> Result<Num<F>, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        let any_allocated = self.terms.iter().any(|n| !n.is_constant());
+
+        if any_allocated {
+            AllocatedNum::rescue_invalpha(cs, self).map(|n| n.into())
+        } else {
+            // We can just return a constant
+            let base_value = self.value.ok_or(SynthesisError::AssignmentMissing)?;
+            Ok(Num::constant(base_value.pow(&F::RESCUE_INVALPHA)))
+        }
     }
 }
 

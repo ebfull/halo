@@ -53,9 +53,91 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
     Ok(())
 }
 
-fn generate_key_schedule<F: Field>() -> [[Num<F>; RESCUE_M]; 2 * RESCUE_ROUNDS + 1] {
-    // TODO: Generate correct key schedule
-    [[Num::constant(F::one()); RESCUE_M]; 2 * RESCUE_ROUNDS + 1]
+/// Duplicates [`rescue_f`] in order to extract the key schedule.
+fn generate_key_schedule<F: Field, CS: ConstraintSystem<F>>(
+    cs: &mut CS,
+    master_key: [Num<F>; RESCUE_M],
+    mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
+) -> Result<[[Num<F>; RESCUE_M]; 2 * RESCUE_ROUNDS + 1], SynthesisError> {
+    // TODO: Generate correct constants
+    let constants = [[Num::constant(F::one()); RESCUE_M]; 2 * RESCUE_ROUNDS + 1];
+
+    let mut key_schedule = vec![];
+    let mut state = master_key;
+
+    let mut cur: Vec<_> = state
+        .iter()
+        .cloned()
+        .zip(constants[0].iter())
+        .map(|(e, k)| Combination::from(e) + *k)
+        .collect();
+    key_schedule.push(
+        cur.iter()
+            .cloned()
+            .map(|c| c.evaluate(cs))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+
+    for r in 0..2 * RESCUE_ROUNDS {
+        let mut mid = vec![];
+        for entry in cur.into_iter() {
+            if r % 2 == 0 {
+                mid.push(entry.rescue_invalpha(cs)?);
+            } else {
+                mid.push(entry.rescue_alpha(cs)?);
+            };
+        }
+
+        let mut next = vec![];
+        for (mds_row, constant) in mds_matrix.iter().zip(constants[r + 1].iter()) {
+            let mut sum = Combination::from(Num::constant(F::zero()));
+            for (coeff, entry) in mds_row.iter().zip(mid.iter()) {
+                sum = sum + (Coeff::Full(*coeff), *entry);
+            }
+            next.push(sum + *constant);
+        }
+
+        cur = next;
+        key_schedule.push(
+            cur.iter()
+                .cloned()
+                .map(|c| c.evaluate(cs))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+    }
+
+    let key_schedule: Vec<_> = key_schedule
+        .into_iter()
+        .map(|k| {
+            [
+                k[0], k[1], k[2], k[3], k[4], k[5], k[6], k[7], k[8], k[9], k[10], k[11], k[12],
+            ]
+        })
+        .collect();
+
+    Ok([
+        key_schedule[0],
+        key_schedule[1],
+        key_schedule[2],
+        key_schedule[3],
+        key_schedule[4],
+        key_schedule[5],
+        key_schedule[6],
+        key_schedule[7],
+        key_schedule[8],
+        key_schedule[9],
+        key_schedule[10],
+        key_schedule[11],
+        key_schedule[12],
+        key_schedule[13],
+        key_schedule[14],
+        key_schedule[15],
+        key_schedule[16],
+        key_schedule[17],
+        key_schedule[18],
+        key_schedule[19],
+        key_schedule[20],
+    ])
 }
 
 fn pad<F: Field, CS: ConstraintSystem<F>>(
@@ -137,12 +219,17 @@ impl<F: Field> RescueGadget<F> {
             Num::constant(F::zero()).into(),
             Num::constant(F::zero()).into(),
         ];
+        let mds_matrix = generate_mds_matrix();
+
+        // To use Rescue as a permutation, fix the master key to zero
+        let key_schedule =
+            generate_key_schedule(cs, [Num::constant(F::zero()); RESCUE_M], &mds_matrix)?;
 
         Ok(RescueGadget {
             sponge: SpongeState::Absorbing([None; SPONGE_RATE]),
             state,
-            mds_matrix: generate_mds_matrix(),
-            key_schedule: generate_key_schedule(),
+            mds_matrix,
+            key_schedule,
         })
     }
 
