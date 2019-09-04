@@ -15,14 +15,6 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
     state: &mut [AllocatedNum<F>; RESCUE_M],
     mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
 ) -> Result<(), SynthesisError> {
-    println!("Gadget state before f:");
-    for entry in state.iter() {
-        if let Some(v) = entry.get_value() {
-            println!("  {:?},", v);
-        }
-    }
-    println!();
-
     let mut cur: Vec<_> = state
         .iter()
         .map(|entry| Combination::from(*entry))
@@ -58,14 +50,6 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
         cs.enforce_zero(out.lc() - &cur_lc);
         state[i] = out;
     }
-
-    println!("Gadget state after f:");
-    for entry in state.iter() {
-        if let Some(v) = entry.get_value() {
-            println!("  {:?},", v);
-        }
-    }
-    println!();
 
     Ok(())
 }

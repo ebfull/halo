@@ -2,7 +2,7 @@ use crate::{
     fields::Field, Coeff, ConstraintSystem, IntoLinearCombination, LinearCombination,
     SynthesisError, Variable,
 };
-use std::ops::Add;
+use std::ops::{Add, Neg, Sub};
 
 /// Constrain (x)^5 = (x^5), and return variables for x and (x^5).
 ///
@@ -219,6 +219,40 @@ impl<F: Field> AllocatedNum<F> {
     pub fn lc(&self) -> LinearCombination<F> {
         LinearCombination::from(self.var)
     }
+
+    pub fn invert<CS>(&self, cs: &mut CS) -> Result<AllocatedNum<F>, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        let mut newval = None;
+        let newnum = AllocatedNum::alloc(cs, || {
+            let inv = self
+                .value
+                .ok_or(SynthesisError::AssignmentMissing)?
+                .invert();
+            if bool::from(inv.is_some()) {
+                let tmp = inv.unwrap();
+                newval = Some(tmp);
+                Ok(tmp)
+            } else {
+                Err(SynthesisError::Unsatisfiable)
+            }
+        })?;
+
+        let (a, b, c) = cs.multiply(|| {
+            Ok((
+                newval.ok_or(SynthesisError::AssignmentMissing)?,
+                self.value.ok_or(SynthesisError::AssignmentMissing)?,
+                F::one(),
+            ))
+        })?;
+
+        cs.enforce_zero(LinearCombination::from(a) - newnum.get_variable());
+        cs.enforce_zero(LinearCombination::from(b) - self.get_variable());
+        cs.enforce_zero(LinearCombination::from(c) - CS::ONE);
+
+        Ok(newnum)
+    }
 }
 
 impl<F: Field> IntoLinearCombination<F> for AllocatedNum<F> {
@@ -235,6 +269,17 @@ impl<F: Field> IntoLinearCombination<F> for AllocatedNum<F> {
 pub enum Num<F: Field> {
     Constant(Coeff<F>),
     Allocated(Coeff<F>, AllocatedNum<F>),
+}
+
+impl<F: Field> Neg for Num<F> {
+    type Output = Self;
+
+    fn neg(self) -> Self {
+        match self {
+            Num::Constant(coeff) => Num::Constant(-coeff),
+            Num::Allocated(coeff, var) => Num::Allocated(-coeff, var),
+        }
+    }
 }
 
 impl<F: Field> From<AllocatedNum<F>> for Num<F> {
@@ -286,6 +331,23 @@ impl<F: Field> From<Num<F>> for Combination<F> {
     }
 }
 
+impl<F: Field> Add<Combination<F>> for Combination<F> {
+    type Output = Combination<F>;
+
+    fn add(mut self, other: Combination<F>) -> Combination<F> {
+        let new_value = self
+            .value
+            .and_then(|a| other.value.and_then(|b| Some(a + b)));
+
+        self.terms.extend(other.terms);
+
+        Combination {
+            value: new_value,
+            terms: self.terms,
+        }
+    }
+}
+
 impl<F: Field> Add<AllocatedNum<F>> for Combination<F> {
     type Output = Combination<F>;
 
@@ -295,6 +357,23 @@ impl<F: Field> Add<AllocatedNum<F>> for Combination<F> {
             .and_then(|a| other.value.and_then(|b| Some(a + b)));
 
         self.terms.push(other.into());
+
+        Combination {
+            value: new_value,
+            terms: self.terms,
+        }
+    }
+}
+
+impl<F: Field> Sub<AllocatedNum<F>> for Combination<F> {
+    type Output = Combination<F>;
+
+    fn sub(mut self, other: AllocatedNum<F>) -> Combination<F> {
+        let new_value = self
+            .value
+            .and_then(|a| other.value.and_then(|b| Some(a - b)));
+
+        self.terms.push(-Num::from(other));
 
         Combination {
             value: new_value,
@@ -342,6 +421,29 @@ impl<F: Field> IntoLinearCombination<F> for Combination<F> {
 }
 
 impl<F: Field> Combination<F> {
+    pub fn mul<CS: ConstraintSystem<F>>(
+        &self,
+        cs: &mut CS,
+        other: &Combination<F>,
+    ) -> Result<AllocatedNum<F>, SynthesisError> {
+        let mut value = None;
+        let (l, r, o) = cs.multiply(|| {
+            let l = self.value.ok_or(SynthesisError::AssignmentMissing)?;
+            let r = other.value.ok_or(SynthesisError::AssignmentMissing)?;
+            let o = l * &r;
+            value = Some(o);
+
+            Ok((l, r, o))
+        })?;
+
+        let lc = self.lc(cs);
+        cs.enforce_zero(lc - l);
+        let lc = other.lc(cs);
+        cs.enforce_zero(lc - r);
+
+        Ok(AllocatedNum { value, var: o })
+    }
+
     pub fn square<CS: ConstraintSystem<F>>(
         &self,
         cs: &mut CS,

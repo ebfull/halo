@@ -34,7 +34,7 @@ where
                 (newdeferred, l1, l2)
             }
             None => (
-                Deferred::dummy(),
+                Deferred::dummy(e2params.k),
                 Leftovers::dummy(e2params),
                 Leftovers::dummy(e1params),
             ),
@@ -177,6 +177,7 @@ where
         let (worked, deferred, a, b) = self.verify_inner(e1params, e2params, circuit)?;
 
         Ok(worked
+            & self.deferred.verify(e2params.k)
             & deferred.verify(e1params.k)
             & a.verify::<_, Basic>(e1params, &circuit1)?
             & b.verify::<_, Basic>(e2params, &circuit2)?)
@@ -198,6 +199,205 @@ struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: Circuit<C1::Scalar>> {
 impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
     VerificationCircuit<'a, E1, E2, Inner>
 {
+    fn verify_deferred<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        cs: &mut CS,
+        mut deferred: &[AllocatedBit],
+    ) -> Result<(), SynthesisError> {
+        // Unpack all of the deferred data
+        /*
+        x: F,
+        y_old: F,
+        y_cur: F,
+        y_new: F,
+        ky_opening: F,
+        tx_positive_opening: F,
+        tx_negative_opening: F,
+        sx_cur_opening: F,
+        rx_opening: F,
+        rxy_opening: F,
+        challenges_old: Vec<F>,
+        gx_old_opening: F,
+        challenges_new: Vec<F>,
+        b_x: F,
+        b_xy: F,
+        b_y_old: F,
+        b_y_cur: F,
+        b_y_new: F,
+        */
+
+        let x = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let y_old = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let y_cur = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let y_new = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let ky_opening = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let tx_positive_opening = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let tx_negative_opening = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let sx_cur_opening = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let rx_opening = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let rxy_opening = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let mut challenges_old = vec![];
+        for _ in 0..self.params.k {
+            challenges_old.push(self.obtain_scalar_from_bits(cs, &deferred[0..256])?);
+            deferred = &deferred[256..];
+        }
+        let gx_old_opening = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let mut challenges_new = vec![];
+        for _ in 0..self.params.k {
+            challenges_new.push(self.obtain_scalar_from_bits(cs, &deferred[0..256])?);
+            deferred = &deferred[256..];
+        }
+        let b_x = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let b_xy = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let b_y_old = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let b_y_cur = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+        let b_y_new = self.obtain_scalar_from_bits(cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+
+        assert_eq!(deferred.len(), 0);
+
+        // Check that the inner proof's circuit check was satisfied for it, since
+        // we can do scalar arithmetic more efficiently in our base field! :)
+
+        let xinv = x.invert(cs)?;
+        let yinv = y_cur.invert(cs)?;
+        let xyinv = xinv.mul(cs, &yinv)?;
+        let xy = x.mul(cs, &y_cur)?;
+        let x_invy = x.mul(cs, &yinv)?;
+
+        let nk = self.params.k - 2;
+
+        // let xinvn = xinv.pow(&[n as u64, 0, 0, 0]);
+        let mut xinvn = xinv.clone();
+        for _ in 0..nk {
+            xinvn = xinvn.mul(cs, &xinvn)?;
+        }
+        // let xinvd = xinvn.square().square();
+        let mut xinvd = xinvn.clone();
+        for _ in 0..2 {
+            xinvd = xinvd.mul(cs, &xinvd)?;
+        }
+        // let yn = self.y_cur.pow(&[n as u64, 0, 0, 0]);
+        let mut yn = y_cur.clone();
+        for _ in 0..nk {
+            yn = yn.mul(cs, &yn)?;
+        }
+        // let xn = self.x.pow(&[n as u64, 0, 0, 0]);
+        let mut xn = x.clone();
+        for _ in 0..nk {
+            xn = xn.mul(cs, &xn)?;
+        }
+        // let xyinvn31 = xyinv.pow(&[(3 * n - 1) as u64, 0, 0, 0]);
+        let mut xyinvn31 = xyinv.clone();
+        for _ in 0..nk {
+            xyinvn31 = xyinvn31.mul(cs, &xyinvn31)?;
+        }
+        {
+            let tmp = xyinvn31.mul(cs, &xyinvn31)?;
+            xyinvn31 = xyinvn31.mul(cs, &tmp)?;
+        }
+        xyinvn31 = xyinvn31.mul(cs, &xy)?;
+        // let xinvn31 = (xinvn.square() * &xinvn) * &self.x;
+        let xinvn31 = xinvn.mul(cs, &xinvn)?;
+        let xinvn31 = xinvn31.mul(cs, &xinvn)?;
+        let xinvn31 = xinvn31.mul(cs, &x)?;
+
+        // println!("circuit xyinvn31: {:?}", xyinvn31);
+        // println!("circuit xinvn31: {:?}", xinvn31);
+
+        let rhs = tx_positive_opening.mul(cs, &x)?;
+        let tmp = tx_negative_opening.mul(cs, &xinvd)?;
+        let rhs = Combination::from(rhs) + tmp;
+
+        let lhs = sx_cur_opening.mul(cs, &xinvn)?;
+        let lhs = lhs.mul(cs, &yn)?;
+
+        // Computes x + x^2 + x^3 + ... + x^n
+        fn compute_thing<F: Field, CS: ConstraintSystem<F>>(
+            cs: &mut CS,
+            x: AllocatedNum<F>,
+            k: usize,
+        ) -> Result<Combination<F>, SynthesisError> {
+            let mut acc = Combination::from(x);
+            let mut cur = x.clone();
+            for _ in 0..k {
+                let tmp = acc.mul(cs, &Combination::from(cur))?;
+                cur = cur.mul(cs, &cur)?;
+
+                acc = acc + tmp;
+            }
+            Ok(acc)
+        }
+
+        let thing = compute_thing(cs, xy, nk)?;
+        let thing = thing + compute_thing(cs, x_invy, nk)?;
+        let thing = thing.mul(cs, &Combination::from(xn))?;
+        /*
+        let lhs = lhs - &thing;
+        let lhs = lhs + &(self.rxy_opening * &xyinvn31);
+        let lhs = lhs * &(self.rx_opening * &xinvn31);
+        let ky = self.ky_opening * &yn;
+        let lhs = lhs - &ky;
+        */
+
+        let tmp = rxy_opening.mul(cs, &xyinvn31)?;
+        let lhs = Combination::from(lhs);
+        let lhs = lhs + tmp;
+        let lhs = lhs - thing;
+        let tmp = rx_opening.mul(cs, &xinvn31)?;
+        let lhs = lhs.mul(cs, &Combination::from(tmp))?;
+        let ky = ky_opening.mul(cs, &yn)?;
+        let lhs = Combination::from(lhs) - ky;
+
+        let lhs = lhs.lc(cs);
+        let rhs = rhs.lc(cs);
+        cs.enforce_zero(lhs - &rhs);
+
+        Ok(())
+    }
+
+    fn obtain_scalar_from_bits<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        cs: &mut CS,
+        bits: &[AllocatedBit],
+    ) -> Result<AllocatedNum<E1::Scalar>, SynthesisError> {
+        assert_eq!(bits.len(), 256);
+
+        let mut value = Some(E1::Scalar::zero());
+        let mut cur = E1::Scalar::one();
+        let mut lc = LinearCombination::zero();
+        for bit in bits {
+            if let Some(bit) = bit.get_value() {
+                if bit {
+                    value = value.map(|value| value + &cur);
+                }
+            }
+            lc = lc + (Coeff::Full(cur), bit.get_variable());
+            cur = cur + &cur;
+        }
+
+        let newnum = AllocatedNum::alloc(cs, || value.ok_or(SynthesisError::AssignmentMissing))?;
+
+        cs.enforce_zero(lc - newnum.get_variable());
+
+        Ok(newnum)
+    }
+
     fn verify_proof<CS: ConstraintSystem<E1::Scalar>>(
         &self,
         cs: &mut CS,
@@ -296,8 +496,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
                 }
             }
         } else {
-            // 256 * 8
-            let num_bits = 256 * 8;
+            // 256 * (16 + 2k)
+            let num_bits = 256 * (16 + 2 * self.params.k);
             for i in 0..num_bits {
                 deferred.push(AllocatedBit::alloc_input_unchecked(cs, || Ok(false))?);
             }
@@ -314,7 +514,9 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
         for b in &leftovers2 {
             b.check(cs)?;
         }
-        // TODO: check deferred bits are booleans
+        for b in &deferred {
+            b.check(cs)?;
+        }
 
         // Is this the base case?
         let base_case = AllocatedBit::alloc(cs, || {
@@ -372,7 +574,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
                 }
             }
         } else {
-            let dummy_deferred = Deferred::<E2::Scalar>::dummy();
+            let dummy_deferred = Deferred::<E2::Scalar>::dummy(self.params.k);
             let bytes = dummy_deferred.to_bytes();
             for (_, byte) in bytes.into_iter().enumerate() {
                 for i in 0..8 {
@@ -394,6 +596,11 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
             k_commitment = k_commitment.add_conditionally(cs, &gen, &Boolean::from(bit.clone()))?;
         }
 
+        println!("k inside circuit: {:?}", k_commitment);
+
+        // Verify the deferred computations from the inner proof
+
+        self.verify_deferred(cs, &old_deferred)?;
         self.verify_proof(cs)?;
 
         self.inner_circuit.synthesize(cs)

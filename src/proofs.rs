@@ -63,16 +63,29 @@ impl<C: Curve> Leftovers<C> {
     }
 }
 
+/*
+(16 + 2k) F
+*/
 #[derive(Clone)]
 pub struct Deferred<F: Field> {
     x: F,
+    y_old: F,
     y_cur: F,
+    y_new: F,
     ky_opening: F,
     tx_positive_opening: F,
     tx_negative_opening: F,
     sx_cur_opening: F,
     rx_opening: F,
     rxy_opening: F,
+    challenges_old: Vec<F>,
+    gx_old_opening: F,
+    challenges_new: Vec<F>,
+    b_x: F,
+    b_xy: F,
+    b_y_old: F,
+    b_y_cur: F,
+    b_y_new: F,
 }
 
 impl<F: Field> Deferred<F> {
@@ -81,7 +94,9 @@ impl<F: Field> Deferred<F> {
 
         // TODO: they're 128-bit
         ret.extend(self.x.to_bytes()[..].iter().cloned());
+        ret.extend(self.y_old.to_bytes()[..].iter().cloned());
         ret.extend(self.y_cur.to_bytes()[..].iter().cloned());
+        ret.extend(self.y_new.to_bytes()[..].iter().cloned());
 
         ret.extend(self.ky_opening.to_bytes()[..].iter().cloned());
         ret.extend(self.tx_positive_opening.to_bytes()[..].iter().cloned());
@@ -89,20 +104,46 @@ impl<F: Field> Deferred<F> {
         ret.extend(self.sx_cur_opening.to_bytes()[..].iter().cloned());
         ret.extend(self.rx_opening.to_bytes()[..].iter().cloned());
         ret.extend(self.rxy_opening.to_bytes()[..].iter().cloned());
+        for a in &self.challenges_old {
+            ret.extend(a.to_bytes()[..].iter().cloned());
+        }
+        ret.extend(self.gx_old_opening.to_bytes()[..].iter().cloned());
+        for a in &self.challenges_new {
+            ret.extend(a.to_bytes()[..].iter().cloned());
+        }
+        ret.extend(self.b_x.to_bytes()[..].iter().cloned());
+        ret.extend(self.b_xy.to_bytes()[..].iter().cloned());
+        ret.extend(self.b_y_old.to_bytes()[..].iter().cloned());
+        ret.extend(self.b_y_cur.to_bytes()[..].iter().cloned());
+        ret.extend(self.b_y_new.to_bytes()[..].iter().cloned());
 
         ret
     }
 
-    pub fn dummy() -> Self {
+    pub fn dummy(k: usize) -> Self {
+        let challenges = vec![F::one(); k];
+        let gx_old_opening = compute_b(F::one(), &challenges, &challenges);
+        let b_one = compute_b(F::one(), &challenges, &challenges);
+
         Deferred {
             x: F::one(),
+            y_old: F::one(),
             y_cur: F::one(),
+            y_new: F::one(),
             ky_opening: F::zero(),
             tx_positive_opening: F::zero(),
             tx_negative_opening: F::zero(),
             sx_cur_opening: F::zero(),
             rx_opening: F::zero(),
             rxy_opening: F::zero(),
+            challenges_old: challenges.clone(),
+            gx_old_opening,
+            challenges_new: challenges.clone(),
+            b_x: b_one,
+            b_xy: b_one,
+            b_y_old: b_one,
+            b_y_cur: b_one,
+            b_y_new: b_one,
         }
     }
 
@@ -127,8 +168,10 @@ impl<F: Field> Deferred<F> {
         let yn = self.y_cur.pow(&[n as u64, 0, 0, 0]);
         let xn = self.x.pow(&[n as u64, 0, 0, 0]);
         let xyinvn31 = xyinv.pow(&[(3 * n - 1) as u64, 0, 0, 0]);
-        //let xinvn31 = (xinvn.square() * &xinvn) * &self.x;
-        let xinvn31 = xinv.pow(&[(3 * n - 1) as u64, 0, 0, 0]);
+        let xinvn31 = (xinvn.square() * &xinvn) * &self.x;
+
+        //println!("verifier xyinvn31: {:?}", xyinvn31);
+        //println!("verifier xinvn31: {:?}", xinvn31);
 
         let rhs = self.tx_positive_opening * &self.x;
         let rhs = rhs + &(self.tx_negative_opening * &xinvd);
@@ -163,7 +206,29 @@ impl<F: Field> Deferred<F> {
     pub fn verify(&self, k: usize) -> bool {
         let (lhs, rhs) = self.compute(k);
 
+        let correct_gx_old_opening = {
+            let mut challenges_inv = self.challenges_old.clone();
+
+            F::batch_invert(&mut challenges_inv);
+            compute_b(self.x, &self.challenges_old, &challenges_inv)
+        };
+
+        // TODO: prover could have put a zero here
+        let mut challenges_inv = self.challenges_new.clone();
+        F::batch_invert(&mut challenges_inv);
+        let b_x = compute_b(self.x, &self.challenges_new, &challenges_inv);
+        let b_xy = compute_b(self.x * self.y_cur, &self.challenges_new, &challenges_inv);
+        let b_y_old = compute_b(self.y_old, &self.challenges_new, &challenges_inv);
+        let b_y_cur = compute_b(self.y_cur, &self.challenges_new, &challenges_inv);
+        let b_y_new = compute_b(self.y_new, &self.challenges_new, &challenges_inv);
+
         lhs == rhs
+            && correct_gx_old_opening == self.gx_old_opening
+            && self.b_x == b_x
+            && self.b_xy == b_xy
+            && self.b_y_old == b_y_old
+            && self.b_y_cur == b_y_cur
+            && self.b_y_new == b_y_new
     }
 }
 
@@ -662,7 +727,10 @@ impl<C: Curve> Proof<C> {
             Some(c) => c,
             None => params.commit(&ky, false),
         };
-        //println!("k commitment in verifier: {:?}", k_commitment.get_xy().unwrap());
+        println!(
+            "k commitment in verifier: {:?}",
+            k_commitment.get_xy().unwrap()
+        );
         append_point::<C>(&mut transcript, &k_commitment);
         append_point::<C>(&mut transcript, &self.r_commitment);
         let y_cur = get_challenge::<_, C::Scalar>(&mut transcript);
@@ -684,18 +752,6 @@ impl<C: Curve> Proof<C> {
         append_scalar::<C>(&mut transcript, &self.tx_positive_opening);
         append_scalar::<C>(&mut transcript, &self.tx_negative_opening);
         append_scalar::<C>(&mut transcript, &self.sx_new_opening);
-
-        // Check that circuit is satisfied...
-        let deferred = Deferred {
-            x,
-            y_cur,
-            ky_opening: ky_opening,
-            tx_positive_opening: self.tx_positive_opening,
-            tx_negative_opening: self.tx_negative_opening,
-            sx_cur_opening: self.sx_cur_opening,
-            rx_opening: self.rx_opening,
-            rxy_opening: self.rxy_opening,
-        };
 
         let mut challenges_old_inv = leftovers.challenges_new.clone();
         for c in &mut challenges_old_inv {
@@ -767,7 +823,33 @@ impl<C: Curve> Proof<C> {
             s_new_commitment: self.s_new_commitment,
             y_new,
             g_new,
-            challenges_new,
+            challenges_new: challenges_new.clone(),
+        };
+
+        let mut challenges_new_inv = challenges_new.clone();
+        C::Scalar::batch_invert(&mut challenges_new_inv);
+
+        // Check that circuit is satisfied and that the old proof's
+        // G opens to the correct value
+        let deferred = Deferred {
+            x,
+            y_old: leftovers.y_new,
+            y_cur,
+            y_new,
+            ky_opening: ky_opening,
+            tx_positive_opening: self.tx_positive_opening,
+            tx_negative_opening: self.tx_negative_opening,
+            sx_cur_opening: self.sx_cur_opening,
+            rx_opening: self.rx_opening,
+            rxy_opening: self.rxy_opening,
+            challenges_old: leftovers.challenges_new.clone(),
+            gx_old_opening,
+            challenges_new: challenges_new.clone(),
+            b_x: compute_b(x, &challenges_new, &challenges_new_inv),
+            b_xy: compute_b(x * &y_cur, &challenges_new, &challenges_new_inv),
+            b_y_old: compute_b(leftovers.y_new, &challenges_new, &challenges_new_inv),
+            b_y_cur: compute_b(y_cur, &challenges_new, &challenges_new_inv),
+            b_y_new: compute_b(y_new, &challenges_new, &challenges_new_inv),
         };
 
         Ok((inner_product_satisfied, metadata, deferred))

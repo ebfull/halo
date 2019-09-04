@@ -34,12 +34,6 @@ fn mds<F: Field>(
 }
 
 fn rescue_f<F: Field>(state: &mut [F; RESCUE_M], mds_matrix: &[[F; RESCUE_M]; RESCUE_M]) {
-    println!("State before f:");
-    for entry in state.iter() {
-        println!("  {:?},", entry);
-    }
-    println!();
-
     for r in 0..2 * RESCUE_ROUNDS {
         let exp = if r % 2 == 0 {
             F::RESCUE_INVALPHA
@@ -51,12 +45,6 @@ fn rescue_f<F: Field>(state: &mut [F; RESCUE_M], mds_matrix: &[[F; RESCUE_M]; RE
         }
         *state = mds(state, mds_matrix);
     }
-
-    println!("State after f:");
-    for entry in state.iter() {
-        println!("  {:?},", entry);
-    }
-    println!();
 }
 
 fn pad<F: Field>(input: &[Option<F>; SPONGE_RATE]) -> [F; SPONGE_RATE] {
