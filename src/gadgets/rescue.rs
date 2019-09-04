@@ -15,8 +15,14 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
     state: &mut [Combination<F>; RESCUE_M],
     mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
+    key_schedule: &[[Num<F>; RESCUE_M]; 2 * RESCUE_ROUNDS + 1],
 ) -> Result<(), SynthesisError> {
-    let mut cur: Vec<_> = state.iter().cloned().collect();
+    let mut cur: Vec<_> = state
+        .iter()
+        .cloned()
+        .zip(key_schedule[0].iter())
+        .map(|(c, k)| c + *k)
+        .collect();
 
     for r in 0..2 * RESCUE_ROUNDS {
         let mut mid = vec![];
@@ -29,12 +35,12 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
         }
 
         let mut next = vec![];
-        for mds_row in mds_matrix.iter() {
+        for (mds_row, key) in mds_matrix.iter().zip(key_schedule[r + 1].iter()) {
             let mut sum = Combination::from(Num::constant(F::zero()));
             for (coeff, entry) in mds_row.iter().zip(mid.iter()) {
                 sum = sum + (Coeff::Full(*coeff), *entry);
             }
-            next.push(sum);
+            next.push(sum + *key);
         }
 
         cur = next;
@@ -45,6 +51,11 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
     }
 
     Ok(())
+}
+
+fn generate_key_schedule<F: Field>() -> [[Num<F>; RESCUE_M]; 2 * RESCUE_ROUNDS + 1] {
+    // TODO: Generate correct key schedule
+    [[Num::constant(F::one()); RESCUE_M]; 2 * RESCUE_ROUNDS + 1]
 }
 
 fn pad<F: Field, CS: ConstraintSystem<F>>(
@@ -78,12 +89,13 @@ fn rescue_duplex<F: Field, CS: ConstraintSystem<F>>(
     state: &mut [Combination<F>; RESCUE_M],
     input: &[Option<AllocatedNum<F>>; SPONGE_RATE],
     mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
+    key_schedule: &[[Num<F>; RESCUE_M]; 2 * RESCUE_ROUNDS + 1],
 ) -> Result<(), SynthesisError> {
     for (entry, input) in state.iter_mut().zip(pad(cs, input)?.iter()) {
         entry.add_assign(*input);
     }
 
-    rescue_f(cs, state, mds_matrix)?;
+    rescue_f(cs, state, mds_matrix, key_schedule)?;
 
     Ok(())
 }
@@ -105,6 +117,7 @@ pub struct RescueGadget<F: Field> {
     sponge: SpongeState<F>,
     state: [Combination<F>; RESCUE_M],
     mds_matrix: [[F; RESCUE_M]; RESCUE_M],
+    key_schedule: [[Num<F>; RESCUE_M]; 2 * RESCUE_ROUNDS + 1],
 }
 
 impl<F: Field> RescueGadget<F> {
@@ -129,6 +142,7 @@ impl<F: Field> RescueGadget<F> {
             sponge: SpongeState::Absorbing([None; SPONGE_RATE]),
             state,
             mds_matrix: generate_mds_matrix(),
+            key_schedule: generate_key_schedule(),
         })
     }
 
@@ -147,7 +161,13 @@ impl<F: Field> RescueGadget<F> {
                 }
 
                 // We've already absorbed as many elements as we can
-                rescue_duplex(cs, &mut self.state, input, &self.mds_matrix)?;
+                rescue_duplex(
+                    cs,
+                    &mut self.state,
+                    input,
+                    &self.mds_matrix,
+                    &self.key_schedule,
+                )?;
                 self.sponge = SpongeState::absorb(val);
             }
             SpongeState::Squeezing(_) => {
@@ -166,7 +186,13 @@ impl<F: Field> RescueGadget<F> {
         loop {
             match self.sponge {
                 SpongeState::Absorbing(input) => {
-                    rescue_duplex(cs, &mut self.state, &input, &self.mds_matrix)?;
+                    rescue_duplex(
+                        cs,
+                        &mut self.state,
+                        &input,
+                        &self.mds_matrix,
+                        &self.key_schedule,
+                    )?;
                     self.sponge = SpongeState::Squeezing([false; SPONGE_RATE]);
                 }
                 SpongeState::Squeezing(ref mut output) => {

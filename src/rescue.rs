@@ -33,7 +33,15 @@ fn mds<F: Field>(
     out_state
 }
 
-fn rescue_f<F: Field>(state: &mut [F; RESCUE_M], mds_matrix: &[[F; RESCUE_M]; RESCUE_M]) {
+fn rescue_f<F: Field>(
+    state: &mut [F; RESCUE_M],
+    mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
+    key_schedule: &[[F; RESCUE_M]; 2 * RESCUE_ROUNDS + 1],
+) {
+    for i in 0..RESCUE_M {
+        state[i] += key_schedule[0][i];
+    }
+
     for r in 0..2 * RESCUE_ROUNDS {
         let exp = if r % 2 == 0 {
             F::RESCUE_INVALPHA
@@ -44,7 +52,15 @@ fn rescue_f<F: Field>(state: &mut [F; RESCUE_M], mds_matrix: &[[F; RESCUE_M]; RE
             *entry = entry.pow_vartime(&exp);
         }
         *state = mds(state, mds_matrix);
+        for i in 0..RESCUE_M {
+            state[i] += key_schedule[r + 1][i];
+        }
     }
+}
+
+fn generate_key_schedule<F: Field>() -> [[F; RESCUE_M]; 2 * RESCUE_ROUNDS + 1] {
+    // TODO: Generate correct key schedule
+    [[F::one(); RESCUE_M]; 2 * RESCUE_ROUNDS + 1]
 }
 
 fn pad<F: Field>(input: &[Option<F>; SPONGE_RATE]) -> [F; SPONGE_RATE] {
@@ -64,13 +80,14 @@ fn rescue_duplex<F: Field>(
     state: &mut [F; RESCUE_M],
     input: &[Option<F>; SPONGE_RATE],
     mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
+    key_schedule: &[[F; RESCUE_M]; 2 * RESCUE_ROUNDS + 1],
 ) -> [Option<F>; SPONGE_RATE] {
     let padded = pad(input);
     for i in 0..SPONGE_RATE {
         state[i] += padded[i];
     }
 
-    rescue_f(state, mds_matrix);
+    rescue_f(state, mds_matrix, key_schedule);
 
     let mut output = [None; SPONGE_RATE];
     for i in 0..SPONGE_RATE {
@@ -96,6 +113,7 @@ pub struct Rescue<F: Field> {
     sponge: SpongeState<F>,
     state: [F; RESCUE_M],
     mds_matrix: [[F; RESCUE_M]; RESCUE_M],
+    key_schedule: [[F; RESCUE_M]; 2 * RESCUE_ROUNDS + 1],
 }
 
 impl<F: Field> Default for Rescue<F> {
@@ -110,6 +128,7 @@ impl<F: Field> Rescue<F> {
             sponge: SpongeState::Absorbing([None; SPONGE_RATE]),
             state: [F::zero(); RESCUE_M],
             mds_matrix: generate_mds_matrix(),
+            key_schedule: generate_key_schedule(),
         }
     }
 
@@ -124,7 +143,7 @@ impl<F: Field> Rescue<F> {
                 }
 
                 // We've already absorbed as many elements as we can
-                let _ = rescue_duplex(&mut self.state, input, &self.mds_matrix);
+                let _ = rescue_duplex(&mut self.state, input, &self.mds_matrix, &self.key_schedule);
                 self.sponge = SpongeState::absorb(val);
             }
             SpongeState::Squeezing(_) => {
@@ -142,6 +161,7 @@ impl<F: Field> Rescue<F> {
                         &mut self.state,
                         &input,
                         &self.mds_matrix,
+                        &self.key_schedule,
                     ));
                 }
                 SpongeState::Squeezing(ref mut output) => {

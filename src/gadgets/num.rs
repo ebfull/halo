@@ -384,6 +384,25 @@ impl<F: Field> Sub<AllocatedNum<F>> for Combination<F> {
     }
 }
 
+impl<F: Field> Add<Num<F>> for Combination<F> {
+    type Output = Combination<F>;
+
+    fn add(mut self, other: Num<F>) -> Combination<F> {
+        self += other;
+        self
+    }
+}
+
+impl<'a, F: Field> AddAssign<Num<F>> for Combination<F> {
+    fn add_assign(&mut self, other: Num<F>) {
+        self.value = self
+            .value
+            .and_then(|a| other.value().and_then(|b| Some(a + b)));
+
+        self.terms.push(other);
+    }
+}
+
 impl<F: Field> Add<(Coeff<F>, AllocatedNum<F>)> for Combination<F> {
     type Output = Combination<F>;
 
