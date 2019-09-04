@@ -78,34 +78,19 @@ fn rescue_duplex<F: Field, CS: ConstraintSystem<F>>(
     state: &mut [Combination<F>; RESCUE_M],
     input: &[Option<AllocatedNum<F>>; SPONGE_RATE],
     mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
-) -> Result<[Option<AllocatedNum<F>>; SPONGE_RATE], SynthesisError> {
+) -> Result<(), SynthesisError> {
     for (entry, input) in state.iter_mut().zip(pad(cs, input)?.iter()) {
         entry.add_assign(*input);
     }
 
     rescue_f(cs, state, mds_matrix)?;
 
-    let mut output = [None; SPONGE_RATE];
-    for i in 0..SPONGE_RATE {
-        let out = AllocatedNum::alloc(cs, || {
-            state[i]
-                .get_value()
-                .ok_or(SynthesisError::AssignmentMissing)
-        })?;
-        let entry_lc = state[i].lc(cs);
-        cs.enforce_zero(out.lc() - &entry_lc);
-        output[i] = Some(out);
-
-        // As we've constrained this current state combination, we can substitute for the
-        // new variable to shorten subsequent combinations.
-        state[i] = out.into();
-    }
-    Ok(output)
+    Ok(())
 }
 
 enum SpongeState<F: Field> {
     Absorbing([Option<AllocatedNum<F>>; SPONGE_RATE]),
-    Squeezing([Option<AllocatedNum<F>>; SPONGE_RATE]),
+    Squeezing([bool; SPONGE_RATE]),
 }
 
 impl<F: Field> SpongeState<F> {
@@ -162,7 +147,7 @@ impl<F: Field> RescueGadget<F> {
                 }
 
                 // We've already absorbed as many elements as we can
-                let _ = rescue_duplex(cs, &mut self.state, input, &self.mds_matrix)?;
+                rescue_duplex(cs, &mut self.state, input, &self.mds_matrix)?;
                 self.sponge = SpongeState::absorb(val);
             }
             SpongeState::Squeezing(_) => {
@@ -181,17 +166,26 @@ impl<F: Field> RescueGadget<F> {
         loop {
             match self.sponge {
                 SpongeState::Absorbing(input) => {
-                    self.sponge = SpongeState::Squeezing(rescue_duplex(
-                        cs,
-                        &mut self.state,
-                        &input,
-                        &self.mds_matrix,
-                    )?);
+                    rescue_duplex(cs, &mut self.state, &input, &self.mds_matrix)?;
+                    self.sponge = SpongeState::Squeezing([false; SPONGE_RATE]);
                 }
                 SpongeState::Squeezing(ref mut output) => {
-                    for entry in output.iter_mut() {
-                        if let Some(e) = entry.take() {
-                            return Ok(e);
+                    for (squeezed, entry) in output.iter_mut().zip(self.state.iter_mut()) {
+                        if !*squeezed {
+                            *squeezed = true;
+
+                            let out = AllocatedNum::alloc(cs, || {
+                                entry.get_value().ok_or(SynthesisError::AssignmentMissing)
+                            })?;
+                            let entry_lc = entry.lc(cs);
+                            cs.enforce_zero(out.lc() - &entry_lc);
+
+                            // As we've constrained this current state combination, we can
+                            // substitute for the new variable to shorten subsequent
+                            // combinations.
+                            *entry = out.into();
+
+                            return Ok(out);
                         }
                     }
 
