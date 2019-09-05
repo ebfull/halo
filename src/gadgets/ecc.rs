@@ -117,7 +117,62 @@ impl<C: Curve> CurvePoint<C> {
         &self,
         cs: &mut CS,
     ) -> Result<(AllocatedNum<C::Base>, AllocatedNum<C::Base>), SynthesisError> {
-        unimplemented!()
+        // We want to constrain the output to (0, 0) if is_identity is true, and
+        // (x, y) if is_identity is false. We do this with two selection constraints:
+        //
+        // x_out = (1 - b) * x
+        // y_out = (1 - b) * y
+
+        let x_val = self.x.value();
+        let y_val = self.y.value();
+        let bit_val = self.is_identity.not().get_value().map(|b| {
+            if b {
+                C::Base::one()
+            } else {
+                C::Base::zero()
+            }
+        });
+        let x_out_val = self
+            .is_identity
+            .not()
+            .get_value()
+            .and_then(|b| x_val.map(|x| if b { x } else { C::Base::zero() }));
+        let y_out_val = self
+            .is_identity
+            .not()
+            .get_value()
+            .and_then(|b| y_val.map(|y| if b { y } else { C::Base::zero() }));
+
+        let x_out = AllocatedNum::alloc(cs, || x_out_val.ok_or(SynthesisError::AssignmentMissing))?;
+        let y_out = AllocatedNum::alloc(cs, || y_out_val.ok_or(SynthesisError::AssignmentMissing))?;
+
+        let x_lc = self.x.lc(cs);
+        let y_lc = self.y.lc(cs);
+        let is_identity_lc = self.is_identity.not().lc(CS::ONE, Coeff::One);
+
+        let (a_var, b_var, c_var) = cs.multiply(|| {
+            let x = x_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let x_out = x_out_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let b = bit_val.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((b, x, x_out))
+        })?;
+        cs.enforce_zero(is_identity_lc.clone() - a_var);
+        cs.enforce_zero(x_lc - b_var);
+        cs.enforce_zero(x_out.lc() - c_var);
+
+        let (s_var, t_var, u_var) = cs.multiply(|| {
+            let y = y_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let y_out = y_out_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let b = bit_val.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((b, y, y_out))
+        })?;
+        cs.enforce_zero(is_identity_lc - s_var);
+        cs.enforce_zero(y_lc - t_var);
+        cs.enforce_zero(y_out.lc() - u_var);
+
+        Ok((x_out, y_out))
     }
 
     /// Adds `self` to `other`, returning the result unless
@@ -344,7 +399,7 @@ impl<C: Curve> CurvePoint<C> {
 mod test {
     use super::CurvePoint;
     use crate::{
-        circuits::{is_satisfied, Circuit, ConstraintSystem, SynthesisError},
+        circuits::{is_satisfied, Circuit, Coeff, ConstraintSystem, SynthesisError},
         curves::{Curve, Ec1},
         fields::Fp,
         gadgets::boolean::Boolean,
@@ -395,6 +450,39 @@ mod test {
 
                 let p3a = p1.add_conditionally(cs, &p2, &Boolean::constant(true))?;
                 let p3b = p1.add_conditionally(cs, &p2, &Boolean::constant(false))?;
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn test_get_xy() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let one = Ec1::one();
+                let one_coords = one.get_xy().unwrap();
+
+                let p1 = CurvePoint::witness(cs, || Ok(one))?;
+                let (x1, y1) = p1.get_xy(cs)?;
+                cs.enforce_zero(x1.lc() - (Coeff::Full(one_coords.0), CS::ONE));
+                cs.enforce_zero(y1.lc() - (Coeff::Full(one_coords.1), CS::ONE));
+
+                let p2 = CurvePoint::witness(cs, || Ok(Ec1::zero()))?;
+                let (x2, y2) = p2.get_xy(cs)?;
+                cs.enforce_zero(x2.lc() - (Coeff::Zero, CS::ONE));
+                cs.enforce_zero(y2.lc() - (Coeff::Zero, CS::ONE));
 
                 Ok(())
             }
