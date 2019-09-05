@@ -1,5 +1,5 @@
 use super::AllocatedNum;
-use super::{Boolean, Num};
+use super::{AllocatedBit, Boolean, Num};
 use crate::{
     circuits::{Coeff, ConstraintSystem, LinearCombination, SynthesisError},
     fields::Field,
@@ -36,7 +36,67 @@ impl<C: Curve> CurvePoint<C> {
         CS: ConstraintSystem<C::Base>,
         P: FnOnce() -> Result<C, SynthesisError>,
     {
-        unimplemented!()
+        // If get_xy returns None, then the point is the identity, so represent
+        // it internally as C::one() which does satisfy the curve equation.
+        let point = point().map(|p| {
+            let coords = p.get_xy();
+            if coords.is_some().into() {
+                let (x, y) = coords.unwrap();
+                (x, y, false)
+            } else {
+                let (x, y) = C::one().get_xy().unwrap();
+                (x, y, true)
+            }
+        });
+        let x_val = point.map(|(x, _, _)| x);
+        let y_val = point.map(|(_, y, _)| y);
+        let is_identity_val = point.map(|(_, _, b)| b);
+
+        // Curve equation is y^2 = x^3 + B
+        // As constraints:
+        //
+        // a * b = c
+        // a = y
+        // b = y
+        // c := y^2
+        //
+        // d * e = f
+        // d = x
+        // e = x
+        // f := x^2
+        //
+        // g * h = i
+        // g = f
+        // h = x
+        // i := x^3
+
+        let ysq = y_val.map(|y| y * &y);
+        let xsq = x_val.map(|x| x * &x);
+        let xcub = xsq.and_then(|xsq| x_val.map(|x| xsq * &x));
+
+        let x = AllocatedNum::alloc(cs, || x_val)?;
+        let y = AllocatedNum::alloc(cs, || y_val)?;
+        let is_identity = AllocatedBit::alloc(cs, || is_identity_val)?;
+
+        let (a_var, b_var, c_var) = cs.multiply(|| Ok((y_val?, y_val?, ysq?)))?;
+        cs.enforce_zero(y.lc() - a_var);
+        cs.enforce_zero(y.lc() - b_var);
+
+        let (d_var, e_var, f_var) = cs.multiply(|| Ok((x_val?, x_val?, xsq?)))?;
+        cs.enforce_zero(x.lc() - d_var);
+        cs.enforce_zero(x.lc() - e_var);
+
+        let (g_var, h_var, i_var) = cs.multiply(|| Ok((xsq?, x_val?, xcub?)))?;
+        cs.enforce_zero(LinearCombination::from(f_var) - g_var);
+        cs.enforce_zero(x.lc() - h_var);
+
+        cs.enforce_zero(LinearCombination::from(i_var) + (Coeff::Full(C::b()), CS::ONE) - c_var);
+
+        Ok(CurvePoint {
+            x: Num::from(x),
+            y: Num::from(y),
+            is_identity: is_identity.into(),
+        })
     }
 
     /// Returns Some(None) if this is the identity, and Some(point) otherwise.
@@ -290,6 +350,29 @@ mod test {
         gadgets::boolean::Boolean,
         Basic,
     };
+
+    #[test]
+    fn test_witness() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let _ = CurvePoint::witness(cs, || Ok(Ec1::one()))?;
+                let _ = CurvePoint::witness(cs, || Ok(Ec1::zero()))?;
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
 
     #[test]
     fn test_add_conditionally() {
