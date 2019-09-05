@@ -40,7 +40,12 @@ pub trait Curve:
 
     fn from_bytes(bytes: &[u8; 32]) -> CtOption<Self>;
     fn to_bytes(&self) -> [u8; 32];
+
+    /// Returns None if this is the identity (for which [`is_zero`] returns
+    /// true), and a valid curve point (for which [`is_on_curve`] returns true)
+    /// otherwise.
     fn get_xy(&self) -> CtOption<(Self::Base, Self::Base)>;
+
     fn get_xyz(&self) -> (Self::Base, Self::Base, Self::Base);
     fn from_xy(x: Self::Base, y: Self::Base) -> CtOption<Self>;
     fn from_xy_unchecked(x: Self::Base, y: Self::Base) -> Self;
