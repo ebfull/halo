@@ -12,37 +12,30 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
     mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
     key_schedule: &[[Num<F>; RESCUE_M]; 2 * RESCUE_ROUNDS + 1],
 ) -> Result<(), SynthesisError> {
-    let mut cur: Vec<_> = state
-        .iter()
-        .cloned()
-        .zip(key_schedule[0].iter())
-        .map(|(c, k)| c + *k)
-        .collect();
+    for (entry, key) in state.iter_mut().zip(key_schedule[0].iter()) {
+        *entry += *key;
+    }
 
     for r in 0..2 * RESCUE_ROUNDS {
         let mut mid = vec![];
-        for entry in cur.into_iter() {
+        for entry in state.iter() {
             if r % 2 == 0 {
-                mid.push(AllocatedNum::rescue_invalpha(cs, entry)?);
+                mid.push(entry.rescue_invalpha(cs)?);
             } else {
-                mid.push(AllocatedNum::rescue_alpha(cs, entry)?);
+                mid.push(entry.rescue_alpha(cs)?);
             };
         }
 
-        let mut next = vec![];
-        for (mds_row, key) in mds_matrix.iter().zip(key_schedule[r + 1].iter()) {
+        for (next_entry, (mds_row, key)) in state
+            .iter_mut()
+            .zip(mds_matrix.iter().zip(key_schedule[r + 1].iter()))
+        {
             let mut sum = Combination::from(Num::constant(F::zero()));
             for (coeff, entry) in mds_row.iter().zip(mid.iter()) {
                 sum = sum + (Coeff::Full(*coeff), *entry);
             }
-            next.push(sum + *key);
+            *next_entry = sum + *key;
         }
-
-        cur = next;
-    }
-
-    for (i, entry) in cur.into_iter().enumerate() {
-        state[i] = entry;
     }
 
     Ok(())
@@ -58,24 +51,22 @@ fn generate_key_schedule<F: Field, CS: ConstraintSystem<F>>(
     let constants = [[Num::constant(F::one()); RESCUE_M]; 2 * RESCUE_ROUNDS + 1];
 
     let mut key_schedule = vec![];
-    let mut state = master_key;
 
-    let mut cur: Vec<_> = state
+    let mut state: Vec<_> = master_key
         .iter()
-        .cloned()
         .zip(constants[0].iter())
-        .map(|(e, k)| Combination::from(e) + *k)
+        .map(|(e, k)| Combination::from(*e) + *k)
         .collect();
     key_schedule.push(
-        cur.iter()
-            .cloned()
+        state
+            .iter()
             .map(|c| c.evaluate(cs))
             .collect::<Result<Vec<_>, _>>()?,
     );
 
     for r in 0..2 * RESCUE_ROUNDS {
         let mut mid = vec![];
-        for entry in cur.into_iter() {
+        for entry in state.iter() {
             if r % 2 == 0 {
                 mid.push(entry.rescue_invalpha(cs)?);
             } else {
@@ -83,19 +74,20 @@ fn generate_key_schedule<F: Field, CS: ConstraintSystem<F>>(
             };
         }
 
-        let mut next = vec![];
-        for (mds_row, constant) in mds_matrix.iter().zip(constants[r + 1].iter()) {
+        for (next_entry, (mds_row, constant)) in state
+            .iter_mut()
+            .zip(mds_matrix.iter().zip(constants[r + 1].iter()))
+        {
             let mut sum = Combination::from(Num::constant(F::zero()));
             for (coeff, entry) in mds_row.iter().zip(mid.iter()) {
                 sum = sum + (Coeff::Full(*coeff), *entry);
             }
-            next.push(sum + *constant);
+            *next_entry = sum + *constant;
         }
 
-        cur = next;
         key_schedule.push(
-            cur.iter()
-                .cloned()
+            state
+                .iter()
                 .map(|c| c.evaluate(cs))
                 .collect::<Result<Vec<_>, _>>()?,
         );

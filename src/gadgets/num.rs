@@ -168,11 +168,10 @@ impl<F: Field> AllocatedNum<F> {
         ))
     }
 
-    pub fn rescue_alpha<CS, B>(cs: &mut CS, base: B) -> Result<Self, SynthesisError>
+    pub fn rescue_alpha<CS>(cs: &mut CS, base: &Combination<F>) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
-        B: IntoLinearCombination<F>,
     {
         let base_value = base.get_value();
         let result_value = base_value.and_then(|num| Some(num.pow(&[F::RESCUE_ALPHA, 0, 0, 0])));
@@ -190,11 +189,10 @@ impl<F: Field> AllocatedNum<F> {
         })
     }
 
-    pub fn rescue_invalpha<CS, B>(cs: &mut CS, base: B) -> Result<Self, SynthesisError>
+    pub fn rescue_invalpha<CS>(cs: &mut CS, base: &Combination<F>) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
-        B: IntoLinearCombination<F>,
     {
         let base_value = base.get_value();
         let result_value = base_value.and_then(|num| Some(num.pow(&F::RESCUE_INVALPHA)));
@@ -478,7 +476,7 @@ impl<F: Field> IntoLinearCombination<F> for Combination<F> {
 }
 
 impl<F: Field> Combination<F> {
-    pub fn evaluate<CS>(self, cs: &mut CS) -> Result<Num<F>, SynthesisError>
+    pub fn evaluate<CS>(&self, cs: &mut CS) -> Result<Num<F>, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -540,7 +538,7 @@ impl<F: Field> Combination<F> {
         Ok(AllocatedNum { value, var: o })
     }
 
-    pub fn rescue_alpha<CS>(self, cs: &mut CS) -> Result<Num<F>, SynthesisError>
+    pub fn rescue_alpha<CS>(&self, cs: &mut CS) -> Result<Num<F>, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -555,7 +553,7 @@ impl<F: Field> Combination<F> {
         }
     }
 
-    pub fn rescue_invalpha<CS>(self, cs: &mut CS) -> Result<Num<F>, SynthesisError>
+    pub fn rescue_invalpha<CS>(&self, cs: &mut CS) -> Result<Num<F>, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
