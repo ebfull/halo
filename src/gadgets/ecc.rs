@@ -433,38 +433,6 @@ mod test {
     }
 
     #[test]
-    fn test_add_conditionally() {
-        #[derive(Default)]
-        struct TestCircuit;
-
-        impl Circuit<Fp> for TestCircuit {
-            fn synthesize<CS: ConstraintSystem<Fp>>(
-                &self,
-                cs: &mut CS,
-            ) -> Result<(), SynthesisError> {
-                let p1 = {
-                    let (x1, y1) = Ec1::one().get_xy().unwrap();
-                    CurvePoint::<Ec1>::constant(x1, y1)
-                };
-                let p2 = {
-                    let (x1, y1) = Ec1::one().double().get_xy().unwrap();
-                    CurvePoint::<Ec1>::constant(x1, y1)
-                };
-
-                let p3a = p1.add_conditionally(cs, &p2, &Boolean::constant(true))?;
-                let p3b = p1.add_conditionally(cs, &p2, &Boolean::constant(false))?;
-
-                Ok(())
-            }
-        }
-
-        assert_eq!(
-            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
-            Ok(true)
-        );
-    }
-
-    #[test]
     fn test_get_xy() {
         #[derive(Default)]
         struct TestCircuit;
@@ -486,6 +454,38 @@ mod test {
                 let (x2, y2) = p2.get_xy(cs)?;
                 cs.enforce_zero(x2.lc() - (Coeff::Zero, CS::ONE));
                 cs.enforce_zero(y2.lc() - (Coeff::Zero, CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn test_add_conditionally() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let p1 = {
+                    let (x1, y1) = Ec1::one().get_xy().unwrap();
+                    CurvePoint::<Ec1>::constant(x1, y1)
+                };
+                let p2 = {
+                    let (x1, y1) = Ec1::one().double().get_xy().unwrap();
+                    CurvePoint::<Ec1>::constant(x1, y1)
+                };
+
+                let p3a = p1.add_conditionally(cs, &p2, &Boolean::constant(true))?;
+                let p3b = p1.add_conditionally(cs, &p2, &Boolean::constant(false))?;
 
                 Ok(())
             }
