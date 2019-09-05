@@ -1236,10 +1236,7 @@ impl<C: Curve> MultiPolynomialOpening<C> {
                     b[j].truncate(l);
                 }
 
-                for i in 0..l {
-                    generators[i] =
-                        (generators[i] * &challenge_inv) + &(generators[i + l] * &challenge);
-                }
+                util::parallel_generator_collapse(&mut generators, challenge, challenge_inv);
 
                 generators.truncate(l);
 
