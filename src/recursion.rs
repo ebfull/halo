@@ -374,16 +374,38 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
             for c in &mut challenges_old_inv {
                 *c = c.invert(cs)?;
             }
-            let expected_gx_old_opening = self.compute_b(
-                cs,
-                x,
-                &challenges_old,
-                &challenges_old_inv
-            )?;
+            let expected_gx_old_opening =
+                self.compute_b(cs, x, &challenges_old, &challenges_old_inv)?;
 
             let lc = expected_gx_old_opening.lc(cs);
             cs.enforce_zero(lc - gx_old_opening.get_variable());
         }
+
+        // Check the other `b` entries
+        let mut challenges_new_inv = challenges_new.clone();
+        for c in &mut challenges_new_inv {
+            *c = c.invert(cs)?;
+        }
+        let expected_b_x = self.compute_b(cs, x, &challenges_new, &challenges_new_inv)?;
+        let expected_b_xy = self.compute_b(cs, xy, &challenges_new, &challenges_new_inv)?;
+        let expected_b_y_old = self.compute_b(cs, y_old, &challenges_new, &challenges_new_inv)?;
+        let expected_b_y_cur = self.compute_b(cs, y_cur, &challenges_new, &challenges_new_inv)?;
+        let expected_b_y_new = self.compute_b(cs, y_new, &challenges_new, &challenges_new_inv)?;
+
+        let lc = expected_b_x.lc(cs);
+        cs.enforce_zero(lc - b_x.get_variable());
+
+        let lc = expected_b_xy.lc(cs);
+        cs.enforce_zero(lc - b_xy.get_variable());
+
+        let lc = expected_b_y_old.lc(cs);
+        cs.enforce_zero(lc - b_y_old.get_variable());
+
+        let lc = expected_b_y_cur.lc(cs);
+        cs.enforce_zero(lc - b_y_cur.get_variable());
+
+        let lc = expected_b_y_new.lc(cs);
+        cs.enforce_zero(lc - b_y_new.get_variable());
 
         Ok(())
     }
@@ -393,9 +415,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         cs: &mut CS,
         x: AllocatedNum<E1::Scalar>,
         challenges: &[AllocatedNum<E1::Scalar>],
-        challenges_inv: &[AllocatedNum<E1::Scalar>]
-    ) -> Result<Combination<E1::Scalar>, SynthesisError>
-    {
+        challenges_inv: &[AllocatedNum<E1::Scalar>],
+    ) -> Result<Combination<E1::Scalar>, SynthesisError> {
         assert!(challenges.len() >= 1);
         assert_eq!(challenges.len(), challenges_inv.len());
         Ok(if challenges.len() == 1 {
@@ -419,8 +440,9 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
                     cs,
                     x2,
                     &challenges[0..(challenges.len() - 1)],
-                    &challenges_inv[0..(challenges.len() - 1)]
-                )?.mul(cs, &tmp)?
+                    &challenges_inv[0..(challenges.len() - 1)],
+                )?
+                .mul(cs, &tmp)?,
             )
         })
     }

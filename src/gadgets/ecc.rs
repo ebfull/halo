@@ -19,6 +19,10 @@ impl<C: Curve> CurvePoint<C> {
         }
     }
 
+    /// Adds `self` to `other`, returning the result unless
+    /// condition is false, in which case it returns `self`.
+    ///
+    /// Assumes no edge cases will occur.
     pub fn add_conditionally<CS: ConstraintSystem<C::Base>>(
         &self,
         cs: &mut CS,
