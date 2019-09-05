@@ -904,6 +904,12 @@ fn my_test_circuit() {
     assert!(is_satisfied::<_, _, Basic>(&prover_circuit, &[Fq::from(1000)]).unwrap());
     let verifier_circuit: CubingCircuit<Fq> = CubingCircuit { x: None };
 
+    // phony deferred should be valid
+    let a = Deferred::<<Ec1 as Curve>::Scalar>::dummy(params.k);
+    assert!(a.verify(params.k));
+    let a = Deferred::<<Ec0 as Curve>::Scalar>::dummy(params.k);
+    assert!(a.verify(params.k));
+
     // bootstrap the cycle with phony inputs
     let dummy_leftovers = Leftovers::dummy(&params);
     assert!(dummy_leftovers

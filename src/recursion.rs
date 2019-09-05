@@ -368,7 +368,61 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         let rhs = rhs.lc(cs);
         cs.enforce_zero(lhs - &rhs);
 
+        // Check gx_old_opening
+        {
+            let mut challenges_old_inv = challenges_old.clone();
+            for c in &mut challenges_old_inv {
+                *c = c.invert(cs)?;
+            }
+            let expected_gx_old_opening = self.compute_b(
+                cs,
+                x,
+                &challenges_old,
+                &challenges_old_inv
+            )?;
+
+            let lc = expected_gx_old_opening.lc(cs);
+            cs.enforce_zero(lc - gx_old_opening.get_variable());
+        }
+
         Ok(())
+    }
+
+    fn compute_b<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        cs: &mut CS,
+        x: AllocatedNum<E1::Scalar>,
+        challenges: &[AllocatedNum<E1::Scalar>],
+        challenges_inv: &[AllocatedNum<E1::Scalar>]
+    ) -> Result<Combination<E1::Scalar>, SynthesisError>
+    {
+        assert!(challenges.len() >= 1);
+        assert_eq!(challenges.len(), challenges_inv.len());
+        Ok(if challenges.len() == 1 {
+            // return *challenges_inv.last().unwrap() + *challenges.last().unwrap() * x;
+            let tmp = x.mul(cs, challenges.last().unwrap())?;
+            Combination::from(*challenges_inv.last().unwrap()) + tmp
+        } else {
+            // return (*challenges_inv.last().unwrap() + *challenges.last().unwrap() * x)
+            //     * compute_b(
+            //         x.square(),
+            //         &challenges[0..(challenges.len() - 1)],
+            //         &challenges_inv[0..(challenges.len() - 1)],
+            //     );
+
+            let tmp = x.mul(cs, challenges.last().unwrap())?;
+            let tmp = Combination::from(*challenges_inv.last().unwrap()) + tmp;
+            let x2 = x.mul(cs, &x)?;
+
+            Combination::from(
+                self.compute_b(
+                    cs,
+                    x2,
+                    &challenges[0..(challenges.len() - 1)],
+                    &challenges_inv[0..(challenges.len() - 1)]
+                )?.mul(cs, &tmp)?
+            )
+        })
     }
 
     fn obtain_scalar_from_bits<CS: ConstraintSystem<E1::Scalar>>(

@@ -307,7 +307,7 @@ impl<F: Field> Num<F> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Combination<F: Field> {
     value: Option<F>,
     terms: Vec<Num<F>>,
