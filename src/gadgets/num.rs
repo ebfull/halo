@@ -1,7 +1,4 @@
-use crate::{
-    fields::Field, Coeff, ConstraintSystem, IntoLinearCombination, LinearCombination,
-    SynthesisError, Variable,
-};
+use crate::{fields::Field, Coeff, ConstraintSystem, LinearCombination, SynthesisError, Variable};
 use std::ops::{Add, AddAssign, Neg, Sub};
 
 /// Constrain (x)^5 = (x^5), and return variables for x and (x^5).
@@ -210,6 +207,10 @@ impl<F: Field> AllocatedNum<F> {
         })
     }
 
+    pub fn get_value(&self) -> Option<F> {
+        self.value
+    }
+
     pub fn get_variable(&self) -> Variable {
         self.var
     }
@@ -250,16 +251,6 @@ impl<F: Field> AllocatedNum<F> {
         cs.enforce_zero(LinearCombination::from(c) - CS::ONE);
 
         Ok(newnum)
-    }
-}
-
-impl<F: Field> IntoLinearCombination<F> for AllocatedNum<F> {
-    fn get_value(&self) -> Option<F> {
-        self.value
-    }
-
-    fn lc<CS: ConstraintSystem<F>>(&self, _cs: &mut CS) -> LinearCombination<F> {
-        AllocatedNum::lc(self)
     }
 }
 
@@ -454,12 +445,12 @@ impl<F: Field> Add<(Coeff<F>, Num<F>)> for Combination<F> {
     }
 }
 
-impl<F: Field> IntoLinearCombination<F> for Combination<F> {
-    fn get_value(&self) -> Option<F> {
+impl<F: Field> Combination<F> {
+    pub fn get_value(&self) -> Option<F> {
         self.value
     }
 
-    fn lc<CS: ConstraintSystem<F>>(&self, _cs: &mut CS) -> LinearCombination<F> {
+    pub fn lc<CS: ConstraintSystem<F>>(&self, _cs: &mut CS) -> LinearCombination<F> {
         let mut acc = LinearCombination::zero();
 
         for term in &self.terms {
@@ -473,9 +464,7 @@ impl<F: Field> IntoLinearCombination<F> for Combination<F> {
 
         acc
     }
-}
 
-impl<F: Field> Combination<F> {
     pub fn evaluate<CS>(&self, cs: &mut CS) -> Result<Num<F>, SynthesisError>
     where
         CS: ConstraintSystem<F>,

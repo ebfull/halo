@@ -1,5 +1,5 @@
 use crate::{
-    circuits::{Coeff, ConstraintSystem, IntoLinearCombination, SynthesisError},
+    circuits::{Coeff, ConstraintSystem, SynthesisError},
     fields::Field,
     gadgets::num::{AllocatedNum, Combination, Num},
     rescue::{generate_mds_matrix, RESCUE_M, RESCUE_ROUNDS, SPONGE_RATE},
@@ -301,9 +301,7 @@ impl<F: Field> RescueGadget<F> {
 mod test {
     use super::RescueGadget;
     use crate::{
-        circuits::{
-            is_satisfied, Circuit, ConstraintSystem, IntoLinearCombination, SynthesisError,
-        },
+        circuits::{is_satisfied, Circuit, ConstraintSystem, SynthesisError},
         fields::Fp,
         gadgets::AllocatedNum,
         rescue::Rescue,
