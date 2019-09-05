@@ -11,6 +11,7 @@ pub enum Variable {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SynthesisError {
     AssignmentMissing,
+    DivisionByZero,
     Unsatisfiable,
     Violation,
 }

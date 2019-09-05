@@ -310,6 +310,14 @@ impl<F: Field> Num<F> {
             Num::Allocated(coeff, var) => var.value.map(|v| (coeff * v).value()),
         }
     }
+
+    pub fn lc<CS: ConstraintSystem<F>>(&self, _cs: &mut CS) -> LinearCombination<F> {
+        LinearCombination::zero()
+            + match self {
+                Num::Constant(v) => (Coeff::from(*v), CS::ONE),
+                Num::Allocated(coeff, num) => (Coeff::from(*coeff), num.var),
+            }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -450,16 +458,11 @@ impl<F: Field> Combination<F> {
         self.value
     }
 
-    pub fn lc<CS: ConstraintSystem<F>>(&self, _cs: &mut CS) -> LinearCombination<F> {
+    pub fn lc<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> LinearCombination<F> {
         let mut acc = LinearCombination::zero();
 
         for term in &self.terms {
-            let tmp = match term {
-                Num::Constant(v) => (Coeff::from(*v), CS::ONE),
-                Num::Allocated(coeff, num) => (Coeff::from(*coeff), num.var),
-            };
-
-            acc = acc + tmp;
+            acc = acc + &term.lc(cs);
         }
 
         acc
