@@ -39,7 +39,7 @@ impl<C: Curve> CurvePoint<C> {
     }
 
     /// Returns Some(None) if this is the identity, and Some(point) otherwise.
-    pub fn get_point(&self) -> Option<CtOption<C>> {
+    fn get_point(&self) -> Option<CtOption<C>> {
         match (self.x.value(), self.y.value(), self.is_identity.get_value()) {
             (Some(x), Some(y), Some(is_identity)) => Some(if is_identity {
                 CtOption::new(C::zero(), 0.into())
@@ -48,6 +48,15 @@ impl<C: Curve> CurvePoint<C> {
             }),
             _ => None,
         }
+    }
+
+    /// Returns variables constrained to (0, 0) if this is the identity, and
+    /// (x, y) otherwise.
+    pub fn get_xy<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: &mut CS,
+    ) -> Result<(AllocatedNum<C::Base>, AllocatedNum<C::Base>), SynthesisError> {
+        unimplemented!()
     }
 
     /// Adds `self` to `other`, returning the result unless
