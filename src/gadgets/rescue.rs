@@ -1,57 +1,130 @@
 use crate::{
-    circuits::{Coeff, ConstraintSystem, IntoLinearCombination, LinearCombination, SynthesisError},
-    curves::Curve,
+    circuits::{Coeff, ConstraintSystem, SynthesisError},
     fields::Field,
-    gadgets::{
-        boolean::{unpack_fe, AllocatedBit},
-        ecc::CurvePoint,
-        num::{AllocatedNum, Combination, Num},
-    },
+    gadgets::num::{AllocatedNum, Combination, Num},
     rescue::{generate_mds_matrix, RESCUE_M, RESCUE_ROUNDS, SPONGE_RATE},
 };
+use std::ops::AddAssign;
 
 fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
-    state: &mut [AllocatedNum<F>; RESCUE_M],
+    state: &mut [Combination<F>; RESCUE_M],
     mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
+    key_schedule: &[[Num<F>; RESCUE_M]; 2 * RESCUE_ROUNDS + 1],
 ) -> Result<(), SynthesisError> {
-    let mut cur: Vec<_> = state
-        .iter()
-        .map(|entry| Combination::from(*entry))
-        .collect();
+    for (entry, key) in state.iter_mut().zip(key_schedule[0].iter()) {
+        *entry += *key;
+    }
 
     for r in 0..2 * RESCUE_ROUNDS {
         let mut mid = vec![];
-        for entry in cur.into_iter() {
+        for entry in state.iter() {
             if r % 2 == 0 {
-                mid.push(AllocatedNum::rescue_invalpha(cs, entry)?);
+                mid.push(entry.rescue_invalpha(cs)?);
             } else {
-                mid.push(AllocatedNum::rescue_alpha(cs, entry)?);
+                mid.push(entry.rescue_alpha(cs)?);
             };
         }
 
-        let mut next = vec![];
-        for mds_row in mds_matrix.iter() {
+        for (next_entry, (mds_row, key)) in state
+            .iter_mut()
+            .zip(mds_matrix.iter().zip(key_schedule[r + 1].iter()))
+        {
             let mut sum = Combination::from(Num::constant(F::zero()));
             for (coeff, entry) in mds_row.iter().zip(mid.iter()) {
                 sum = sum + (Coeff::Full(*coeff), *entry);
             }
-            next.push(sum);
+            *next_entry = sum + *key;
         }
-
-        cur = next;
-    }
-
-    for i in 0..RESCUE_M {
-        let out = AllocatedNum::alloc(cs, || {
-            cur[i].get_value().ok_or(SynthesisError::AssignmentMissing)
-        })?;
-        let cur_lc = cur[i].lc(cs);
-        cs.enforce_zero(out.lc() - &cur_lc);
-        state[i] = out;
     }
 
     Ok(())
+}
+
+/// Duplicates [`rescue_f`] in order to extract the key schedule.
+fn generate_key_schedule<F: Field, CS: ConstraintSystem<F>>(
+    cs: &mut CS,
+    master_key: [Num<F>; RESCUE_M],
+    mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
+) -> Result<[[Num<F>; RESCUE_M]; 2 * RESCUE_ROUNDS + 1], SynthesisError> {
+    // TODO: Generate correct constants
+    let constants = [[Num::constant(F::one()); RESCUE_M]; 2 * RESCUE_ROUNDS + 1];
+
+    let mut key_schedule = vec![];
+
+    let mut state: Vec<_> = master_key
+        .iter()
+        .zip(constants[0].iter())
+        .map(|(e, k)| Combination::from(*e) + *k)
+        .collect();
+    key_schedule.push(
+        state
+            .iter()
+            .map(|c| c.evaluate(cs))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+
+    for r in 0..2 * RESCUE_ROUNDS {
+        let mut mid = vec![];
+        for entry in state.iter() {
+            if r % 2 == 0 {
+                mid.push(entry.rescue_invalpha(cs)?);
+            } else {
+                mid.push(entry.rescue_alpha(cs)?);
+            };
+        }
+
+        for (next_entry, (mds_row, constant)) in state
+            .iter_mut()
+            .zip(mds_matrix.iter().zip(constants[r + 1].iter()))
+        {
+            let mut sum = Combination::from(Num::constant(F::zero()));
+            for (coeff, entry) in mds_row.iter().zip(mid.iter()) {
+                sum = sum + (Coeff::Full(*coeff), *entry);
+            }
+            *next_entry = sum + *constant;
+        }
+
+        key_schedule.push(
+            state
+                .iter()
+                .map(|c| c.evaluate(cs))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+    }
+
+    let key_schedule: Vec<_> = key_schedule
+        .into_iter()
+        .map(|k| {
+            [
+                k[0], k[1], k[2], k[3], k[4], k[5], k[6], k[7], k[8], k[9], k[10], k[11], k[12],
+            ]
+        })
+        .collect();
+
+    Ok([
+        key_schedule[0],
+        key_schedule[1],
+        key_schedule[2],
+        key_schedule[3],
+        key_schedule[4],
+        key_schedule[5],
+        key_schedule[6],
+        key_schedule[7],
+        key_schedule[8],
+        key_schedule[9],
+        key_schedule[10],
+        key_schedule[11],
+        key_schedule[12],
+        key_schedule[13],
+        key_schedule[14],
+        key_schedule[15],
+        key_schedule[16],
+        key_schedule[17],
+        key_schedule[18],
+        key_schedule[19],
+        key_schedule[20],
+    ])
 }
 
 fn pad<F: Field, CS: ConstraintSystem<F>>(
@@ -82,31 +155,23 @@ fn pad<F: Field, CS: ConstraintSystem<F>>(
 
 fn rescue_duplex<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
-    state: &mut [AllocatedNum<F>; RESCUE_M],
+    state: &mut [Combination<F>; RESCUE_M],
     input: &[Option<AllocatedNum<F>>; SPONGE_RATE],
     mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
-) -> Result<[Option<AllocatedNum<F>>; SPONGE_RATE], SynthesisError> {
+    key_schedule: &[[Num<F>; RESCUE_M]; 2 * RESCUE_ROUNDS + 1],
+) -> Result<(), SynthesisError> {
     for (entry, input) in state.iter_mut().zip(pad(cs, input)?.iter()) {
-        let sum = Combination::from(*entry) + *input;
-        *entry = AllocatedNum::alloc(cs, || {
-            sum.get_value().ok_or(SynthesisError::AssignmentMissing)
-        })?;
-        let sum_lc = sum.lc(cs);
-        cs.enforce_zero(entry.lc() - &sum_lc);
+        entry.add_assign(*input);
     }
 
-    rescue_f(cs, state, mds_matrix)?;
+    rescue_f(cs, state, mds_matrix, key_schedule)?;
 
-    let mut output = [None; SPONGE_RATE];
-    for i in 0..SPONGE_RATE {
-        output[i] = Some(state[i]);
-    }
-    Ok(output)
+    Ok(())
 }
 
 enum SpongeState<F: Field> {
     Absorbing([Option<AllocatedNum<F>>; SPONGE_RATE]),
-    Squeezing([Option<AllocatedNum<F>>; SPONGE_RATE]),
+    Squeezing([bool; SPONGE_RATE]),
 }
 
 impl<F: Field> SpongeState<F> {
@@ -119,19 +184,39 @@ impl<F: Field> SpongeState<F> {
 
 pub struct RescueGadget<F: Field> {
     sponge: SpongeState<F>,
-    state: [AllocatedNum<F>; RESCUE_M],
+    state: [Combination<F>; RESCUE_M],
     mds_matrix: [[F; RESCUE_M]; RESCUE_M],
+    key_schedule: [[Num<F>; RESCUE_M]; 2 * RESCUE_ROUNDS + 1],
 }
 
 impl<F: Field> RescueGadget<F> {
     pub fn new<CS: ConstraintSystem<F>>(cs: &mut CS) -> Result<Self, SynthesisError> {
-        let zero = AllocatedNum::alloc(cs, || Ok(F::zero()))?;
-        cs.enforce_zero(zero.lc());
+        let state = [
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+            Num::constant(F::zero()).into(),
+        ];
+        let mds_matrix = generate_mds_matrix();
+
+        // To use Rescue as a permutation, fix the master key to zero
+        let key_schedule =
+            generate_key_schedule(cs, [Num::constant(F::zero()); RESCUE_M], &mds_matrix)?;
 
         Ok(RescueGadget {
             sponge: SpongeState::Absorbing([None; SPONGE_RATE]),
-            state: [zero; RESCUE_M],
-            mds_matrix: generate_mds_matrix(),
+            state,
+            mds_matrix,
+            key_schedule,
         })
     }
 
@@ -150,7 +235,13 @@ impl<F: Field> RescueGadget<F> {
                 }
 
                 // We've already absorbed as many elements as we can
-                let _ = rescue_duplex(cs, &mut self.state, input, &self.mds_matrix)?;
+                rescue_duplex(
+                    cs,
+                    &mut self.state,
+                    input,
+                    &self.mds_matrix,
+                    &self.key_schedule,
+                )?;
                 self.sponge = SpongeState::absorb(val);
             }
             SpongeState::Squeezing(_) => {
@@ -169,17 +260,32 @@ impl<F: Field> RescueGadget<F> {
         loop {
             match self.sponge {
                 SpongeState::Absorbing(input) => {
-                    self.sponge = SpongeState::Squeezing(rescue_duplex(
+                    rescue_duplex(
                         cs,
                         &mut self.state,
                         &input,
                         &self.mds_matrix,
-                    )?);
+                        &self.key_schedule,
+                    )?;
+                    self.sponge = SpongeState::Squeezing([false; SPONGE_RATE]);
                 }
                 SpongeState::Squeezing(ref mut output) => {
-                    for entry in output.iter_mut() {
-                        if let Some(e) = entry.take() {
-                            return Ok(e);
+                    for (squeezed, entry) in output.iter_mut().zip(self.state.iter_mut()) {
+                        if !*squeezed {
+                            *squeezed = true;
+
+                            let out = AllocatedNum::alloc(cs, || {
+                                entry.get_value().ok_or(SynthesisError::AssignmentMissing)
+                            })?;
+                            let entry_lc = entry.lc(cs);
+                            cs.enforce_zero(out.lc() - &entry_lc);
+
+                            // As we've constrained this current state combination, we can
+                            // substitute for the new variable to shorten subsequent
+                            // combinations.
+                            *entry = out.into();
+
+                            return Ok(out);
                         }
                     }
 
@@ -191,64 +297,11 @@ impl<F: Field> RescueGadget<F> {
     }
 }
 
-/*
-pub fn rescue_gadget<F: Field, CS: ConstraintSystem<F>>(
-    cs: &mut CS,
-    inputs: &[AllocatedNum<F>],
-) -> Result<AllocatedNum<F>, SynthesisError> {
-    let mut cur = Combination::from(Num::constant(F::ALPHA));
-    for input in inputs {
-        for _ in 0..30 {
-            cur = cur + *input;
-            cur = Combination::from(cur.square(cs)?);
-        }
-    }
-
-    cur.square(cs)
-}
-*/
-pub fn rescue<F: Field>(inputs: &[F]) -> F {
-    let mut cur = F::ALPHA;
-    for input in inputs {
-        for _ in 0..30 {
-            cur = cur + *input;
-            cur = cur.square()
-        }
-    }
-
-    cur.square()
-}
-/*
-pub fn append_point<C: Curve, CS: ConstraintSystem<C::Base>>(
-    cs: &mut CS,
-    transcript: &AllocatedNum<C::Base>,
-    point: &CurvePoint<C>,
-) -> Result<AllocatedNum<C::Base>, SynthesisError> {
-    rescue_gadget(cs, &[transcript.clone(), point.x(), point.y()])
-}
-
-pub fn obtain_challenge<F: Field, CS: ConstraintSystem<F>>(
-    cs: &mut CS,
-    transcript: &AllocatedNum<F>,
-) -> Result<(AllocatedNum<F>, Vec<AllocatedBit>), SynthesisError> {
-    let new_transcript = rescue_gadget(cs, &[transcript.clone()])?;
-
-    // We don't need to enforce that it's canonical; the adversary
-    // only gains like a bit out of this.
-    let mut bits = unpack_fe(cs, &transcript)?;
-    bits.truncate(128); // only need lower 128 bits
-
-    Ok((new_transcript, bits))
-}
-*/
-
 #[cfg(test)]
 mod test {
     use super::RescueGadget;
     use crate::{
-        circuits::{
-            is_satisfied, Circuit, ConstraintSystem, IntoLinearCombination, SynthesisError,
-        },
+        circuits::{is_satisfied, Circuit, ConstraintSystem, SynthesisError},
         fields::Fp,
         gadgets::AllocatedNum,
         rescue::Rescue,
