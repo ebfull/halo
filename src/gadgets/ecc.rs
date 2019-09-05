@@ -7,24 +7,47 @@ use crate::{
 };
 use subtle::CtOption;
 
+/// A curve point. It is either the identity, or a valid curve point.
+///
+/// Internally it is represented with coordinates that always satisfy the curve
+/// equation, and a [`Boolean`] tracking whether it is the identity.
 #[derive(Debug)]
 pub struct CurvePoint<C: Curve> {
     x: Num<C::Base>,
     y: Num<C::Base>,
+
+    /// Whether or not this curve point actually represents the identity.
+    is_identity: Boolean,
 }
 
 impl<C: Curve> CurvePoint<C> {
+    /// Create a constant that is assumed to not be the identity.
     pub fn constant(x: C::Base, y: C::Base) -> Self {
         CurvePoint {
             x: Num::constant(x),
             y: Num::constant(y),
+            is_identity: Boolean::constant(false),
         }
     }
 
-    fn get_point(&self) -> Option<CtOption<C>> {
-        self.x
-            .value()
-            .and_then(|x| self.y.value().and_then(|y| Some(C::from_xy(x, y))))
+    /// Witness an arbitrary curve point
+    pub fn witness<CS: ConstraintSystem<C::Base>>(
+        cs: &mut CS,
+        point: C,
+    ) -> Result<Self, SynthesisError> {
+        unimplemented!()
+    }
+
+    /// Returns Some(None) if this is the identity, and Some(point) otherwise.
+    pub fn get_point(&self) -> Option<CtOption<C>> {
+        match (self.x.value(), self.y.value(), self.is_identity.get_value()) {
+            (Some(x), Some(y), Some(is_identity)) => Some(if is_identity {
+                CtOption::new(C::zero(), 0.into())
+            } else {
+                C::from_xy(x, y)
+            }),
+            _ => None,
+        }
     }
 
     /// Adds `self` to `other`, returning the result unless
@@ -212,7 +235,38 @@ impl<C: Curve> CurvePoint<C> {
         Ok(CurvePoint {
             x: Num::from(x_out),
             y: Num::from(y_out),
+            is_identity: Boolean::constant(false), // TODO: Fix this method
         })
+    }
+
+    /// Adds a point to another point and handles all
+    /// edge cases
+    pub fn add<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: &mut CS,
+        other: &Self,
+    ) -> Result<Self, SynthesisError> {
+        // If one is identity, return the other
+        unimplemented!()
+    }
+
+    /// Multiply by a scalar
+    pub fn multiply<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: &mut CS,
+        other: &[Boolean],
+    ) -> Result<Self, SynthesisError> {
+        unimplemented!()
+    }
+
+    /// Multiply by the inverse of a scalar
+    pub fn multiply_inv<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: &mut CS,
+        other: &[Boolean],
+    ) -> Result<Self, SynthesisError> {
+        // Will run into edge cases if during it we have an addition that runs into an edge case
+        unimplemented!()
     }
 }
 

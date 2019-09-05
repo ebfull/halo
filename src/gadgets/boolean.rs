@@ -310,7 +310,7 @@ pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
 
 /// This is a boolean value which may be either a constant or
 /// an interpretation of an `AllocatedBit`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Boolean {
     /// Existential view of the boolean variable
     Is(AllocatedBit),
