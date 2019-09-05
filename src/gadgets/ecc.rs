@@ -31,10 +31,11 @@ impl<C: Curve> CurvePoint<C> {
     }
 
     /// Witness an arbitrary curve point
-    pub fn witness<CS: ConstraintSystem<C::Base>>(
-        cs: &mut CS,
-        point: C,
-    ) -> Result<Self, SynthesisError> {
+    pub fn witness<CS, P>(cs: &mut CS, point: P) -> Result<Self, SynthesisError>
+    where
+        CS: ConstraintSystem<C::Base>,
+        P: FnOnce() -> Result<C, SynthesisError>,
+    {
         unimplemented!()
     }
 
