@@ -477,8 +477,83 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
     fn verify_proof<CS: ConstraintSystem<E1::Scalar>>(
         &self,
         cs: &mut CS,
+        k_commitment: &CurvePoint<E2>,
     ) -> Result<(), SynthesisError> {
+        let mut transcript = RescueGadget::new(cs)?;
+        let transcript = &mut transcript;
+
+        self.commit_point(cs, transcript, &k_commitment)?;
+
+        let r_commitment = CurvePoint::witness(cs, || {
+            Ok(self
+                .proof
+                .map(|proof| proof.proof.r_commitment)
+                .unwrap_or(E2::zero()))
+        })?;
+        self.commit_point(cs, transcript, &r_commitment)?;
+
+        let y_cur = self.get_challenge(cs, transcript)?;
+
+        let s_cur_commitment = CurvePoint::witness(cs, || {
+            Ok(self
+                .proof
+                .map(|proof| proof.proof.s_cur_commitment)
+                .unwrap_or(E2::zero()))
+        })?;
+        self.commit_point(cs, transcript, &s_cur_commitment)?;
+        /*
+        let t_positive_commitment = CurvePoint::witness(cs, || {
+            Ok(self.proof.map(|proof| proof.proof.t_positive_commitment).unwrap_or(E2::zero()))
+        })?;
+        self.commit_point(cs, transcript, &t_positive_commitment)?;
+        let t_negative_commitment = CurvePoint::witness(cs, || {
+            Ok(self.proof.map(|proof| proof.proof.t_negative_commitment).unwrap_or(E2::zero()))
+        })?;
+        self.commit_point(cs, transcript, &t_negative_commitment)?;
+
+        let x = self.get_challenge(cs, transcript)?;
+
+        let c_commitment = CurvePoint::witness(cs, || {
+            Ok(self.proof.map(|proof| proof.proof.c_commitment).unwrap_or(E2::zero()))
+        })?;
+        self.commit_point(cs, transcript, &c_commitment)?;
+
+        let y_new = self.get_challenge(cs, transcript)?;
+
+        let s_new_commitment = CurvePoint::witness(cs, || {
+            Ok(self.proof.map(|proof| proof.proof.s_new_commitment).unwrap_or(E2::zero()))
+        })?;
+        self.commit_point(cs, transcript, &s_new_commitment)?;
+
+        println!("y_new in the circuit: {:?}", y_new);
+        */
+
         Ok(())
+    }
+
+    fn commit_point<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        cs: &mut CS,
+        transcript: &mut RescueGadget<E1::Scalar>,
+        point: &CurvePoint<E2>,
+    ) -> Result<(), SynthesisError> {
+        let (x, y) = point.get_xy(cs)?;
+        transcript.absorb(cs, x)?;
+        transcript.absorb(cs, y)?;
+
+        Ok(())
+    }
+
+    fn get_challenge<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        cs: &mut CS,
+        transcript: &mut RescueGadget<E1::Scalar>,
+    ) -> Result<Vec<AllocatedBit>, SynthesisError> {
+        let num = transcript.squeeze(cs)?;
+        let mut bits = unpack_fe(cs, &num)?;
+        bits.truncate(128);
+
+        Ok(bits)
     }
 }
 
@@ -677,7 +752,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
         // Verify the deferred computations from the inner proof
 
         self.verify_deferred(cs, &old_deferred)?;
-        self.verify_proof(cs)?;
+        self.verify_proof(cs, &k_commitment)?;
 
         self.inner_circuit.synthesize(cs)
     }

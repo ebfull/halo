@@ -740,6 +740,7 @@ impl<C: Curve> Proof<C> {
         let x = get_challenge::<_, C::Scalar>(&mut transcript);
         append_point::<C>(&mut transcript, &self.c_commitment);
         let y_new = get_challenge::<_, C::Scalar>(&mut transcript);
+        println!("VERIFIER: y_new in the verifier: {:?}", y_new);
         append_point::<C>(&mut transcript, &self.s_new_commitment);
 
         // Openings
@@ -977,26 +978,49 @@ pub struct Params<C: Curve> {
 
 impl<C: Curve> Params<C> {
     pub fn new(k: usize) -> Self {
+        use crossbeam_utils::thread;
+        use num_cpus;
+
         assert!(k > 3);
         let d = 1 << k;
         let n = d / 4;
 
-        let mut generators = Vec::with_capacity(d);
-        let mut generators_xy = Vec::with_capacity(d);
+        let mut generators = vec![C::zero(); d];
+        let mut generators_xy = vec![(C::Base::zero(), C::Base::zero()); d];
         // TODO: use public source of randomness
-        while generators.len() < d {
-            use rand_core::{OsRng, RngCore};
-            let mut attempt = [0u8; 32];
-            OsRng.fill_bytes(&mut attempt);
-            let attempt = C::from_bytes(&attempt);
-            if bool::from(attempt.is_some()) {
-                let attempt = attempt.unwrap();
-                generators.push(attempt);
-                let (x, y, z) = attempt.get_xyz();
-                assert!(z == C::Base::one());
-                generators_xy.push((x, y));
-            }
+        let num_cpus = num_cpus::get();
+        let mut chunk = d / num_cpus;
+        if chunk < num_cpus {
+            chunk = d;
         }
+
+        thread::scope(|scope| {
+            for (gen, gen_xy) in generators
+                .chunks_mut(chunk)
+                .zip(generators_xy.chunks_mut(chunk))
+            {
+                scope.spawn(move |_| {
+                    use rand_core::{OsRng, RngCore};
+                    let mut attempt = [0u8; 32];
+
+                    'outer: for (gen, gen_xy) in gen.iter_mut().zip(gen_xy.iter_mut()) {
+                        loop {
+                            OsRng.fill_bytes(&mut attempt);
+                            let attempt = C::from_bytes(&attempt);
+                            if bool::from(attempt.is_some()) {
+                                let attempt = attempt.unwrap();
+                                let (x, y, z) = attempt.get_xyz();
+                                assert!(z == C::Base::one());
+                                *gen = attempt;
+                                *gen_xy = (x, y);
+                                continue 'outer;
+                            }
+                        }
+                    }
+                });
+            }
+        })
+        .unwrap();
 
         Params {
             g: C::one(),
