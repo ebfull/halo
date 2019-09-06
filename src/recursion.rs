@@ -60,25 +60,25 @@ where
         }
 
         {
-            let mut inputs = vec![];
-            inputs.extend(new_payload.iter().cloned());
-            inputs.extend(old_leftovers.to_bytes());
-            inputs.extend(new_leftovers.to_bytes());
-            inputs.extend(newdeferred.to_bytes());
+            // let mut inputs = vec![];
+            // inputs.extend(new_payload.iter().cloned());
+            // inputs.extend(old_leftovers.to_bytes());
+            // inputs.extend(new_leftovers.to_bytes());
+            // inputs.extend(newdeferred.to_bytes());
 
-            let mut realinputs = vec![];
-            for byte in inputs {
-                for i in 0..8 {
-                    let bit = ((byte >> i) & 1) == 1;
-                    if bit {
-                        realinputs.push(Field::one());
-                    } else {
-                        realinputs.push(Field::zero());
-                    }
-                }
-            }
+            // let mut realinputs = vec![];
+            // for byte in inputs {
+            //     for i in 0..8 {
+            //         let bit = ((byte >> i) & 1) == 1;
+            //         if bit {
+            //             realinputs.push(Field::one());
+            //         } else {
+            //             realinputs.push(Field::zero());
+            //         }
+            //     }
+            // }
 
-            assert!(is_satisfied::<_, _, Basic>(&circuit, &realinputs)?);
+            assert!(is_satisfied::<_, _, Basic>(&circuit, &[])?);
         }
 
         // Now make the proof...
@@ -138,6 +138,7 @@ where
         inputs.extend(self.deferred.to_bytes());
 
         let mut k_commitment = e1params.generators[1];
+        /*
         let mut iter_gens = e1params.generators[2..].iter();
         let mut bitinputs = vec![];
         for byte in inputs {
@@ -152,12 +153,13 @@ where
                 }
             }
         }
+        */
 
         let (worked, leftovers, deferred) = self.proof.verify::<_, Basic>(
             &self.oldproof1,
             e1params,
             &circuit1,
-            &bitinputs,
+            &[],
             Some(k_commitment),
         )?;
 
@@ -499,28 +501,19 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
     fn verify_proof<CS: ConstraintSystem<E1::Scalar>>(
         &self,
         cs: &mut CS,
-        k_commitment: &CurvePoint<E2>,
     ) -> Result<(), SynthesisError> {
         let mut transcript = RescueGadget::new(cs)?;
         let transcript = &mut transcript;
 
-        self.commit_point(cs, transcript, &k_commitment)?;
-
         let r_commitment = CurvePoint::witness(cs, || {
-            Ok(self
-                .proof
-                .map(|proof| proof.proof.r_commitment)
-                .unwrap_or(E2::zero()))
+            Ok(E2::zero())
         })?;
         self.commit_point(cs, transcript, &r_commitment)?;
 
         let y_cur = self.get_challenge(cs, transcript)?;
 
-        let s_cur_commitment = CurvePoint::witness_test(cs, || {
-            Ok(self
-                .proof
-                .map(|proof| proof.proof.s_cur_commitment)
-                .unwrap_or(E2::zero()))
+        let s_cur_commitment = CurvePoint::witness(cs, || {
+            Ok(E2::zero())
         })?;
         //self.commit_point(cs, transcript, &s_cur_commitment)?;
         /*
@@ -586,36 +579,13 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
         &self,
         cs: &mut CS,
     ) -> Result<(), SynthesisError> {
-        // Witness the commitment to r(X, Y)
-        // let r_commitment = CurvePoint::<E2>::alloc(cs, || {
-        //     let (x, y) = self.proof.r_commitment.get_xy().unwrap();
-        //     Ok((x, y))
-        // })?;
-
-        // // The transcript starts out with value zero.
-        // let transcript = AllocatedNum::alloc(cs, || {
-        //     Ok(E1::Scalar::zero())
-        // })?;
-        // cs.enforce_zero(transcript.lc());
-
-        // // Hash the commitment to r(X, Y)
-        // let transcript = append_point(cs, &transcript, &r_commitment)?;
-
-        // // Obtain the challenge y_cur
-        // let (transcript, y_cur) = obtain_challenge(cs, &transcript)?;
-
-        // let proof = self.proof.clone().unwrap();
-
+        /*
         // The public inputs to our circuit include
         // 1. The new payload.
         // 2. Leftovers from the previous proof, which will be used
         // to construct the outer proof.
         // 2. Leftovers resulting from verifying the inner proof
         // 3. New "deferred" computations
-
-        // + 256 * (3 + k)
-        // + 256 * (3 + k)
-        // + 256 * deferred.len()
 
         let mut payload_bits = vec![];
         for (j, byte) in self.new_payload.into_iter().enumerate() {
@@ -675,33 +645,35 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
                 deferred.push(AllocatedBit::alloc_input_unchecked(cs, || Ok(false))?);
             }
         }
+        */
 
         // Check that all the inputs are booleans now that we've allocated
         // all of our public inputs.
-        for b in &payload_bits {
-            b.check(cs)?;
-        }
-        for b in &leftovers1 {
-            b.check(cs)?;
-        }
-        for b in &leftovers2 {
-            b.check(cs)?;
-        }
-        for b in &deferred {
-            b.check(cs)?;
-        }
+        // for b in &payload_bits {
+        //     b.check(cs)?;
+        // }
+        // for b in &leftovers1 {
+        //     b.check(cs)?;
+        // }
+        // for b in &leftovers2 {
+        //     b.check(cs)?;
+        // }
+        // for b in &deferred {
+        //     b.check(cs)?;
+        // }
 
         // Is this the base case?
-        let base_case = AllocatedBit::alloc(cs, || {
-            self.base_case.ok_or(SynthesisError::AssignmentMissing)
-        })?;
+        // let base_case = AllocatedBit::alloc(cs, || {
+        //     self.base_case.ok_or(SynthesisError::AssignmentMissing)
+        // })?;
 
         // Compute k(Y) commitment
-        let mut k_commitment = CurvePoint::<E2>::constant(
-            self.params.generators_xy[1].0,
-            self.params.generators_xy[1].1,
-        );
+        // let mut k_commitment = CurvePoint::<E2>::constant(
+        //     self.params.generators_xy[1].0,
+        //     self.params.generators_xy[1].1,
+        // );
 
+        /*
         // Attach payload for old proof
         let mut bits_for_k_commitment = vec![];
         if let Some(proof) = &self.proof {
@@ -761,21 +733,23 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
         bits_for_k_commitment.extend(leftovers1);
         bits_for_k_commitment.extend(old_deferred.clone());
 
-        for (bit, gen) in bits_for_k_commitment
-            .into_iter()
-            .zip(self.params.generators_xy[2..].iter())
-        {
-            let gen = CurvePoint::constant(gen.0, gen.1);
-            k_commitment = k_commitment.add_conditionally(cs, &gen, &Boolean::from(bit.clone()))?;
-        }
+        // for (bit, gen) in bits_for_k_commitment
+        //     .into_iter()
+        //     .zip(self.params.generators_xy[2..].iter())
+        // {
+        //     let gen = CurvePoint::constant(gen.0, gen.1);
+        //     k_commitment = k_commitment.add_conditionally(cs, &gen, &Boolean::from(bit.clone()))?;
+        // }
 
         println!("k inside circuit: {:?}", k_commitment);
+        */
 
         // Verify the deferred computations from the inner proof
 
-        self.verify_deferred(cs, &old_deferred)?;
-        self.verify_proof(cs, &k_commitment)?;
+        //self.verify_deferred(cs, &old_deferred)?;
+        self.verify_proof(cs)?;
 
-        self.inner_circuit.synthesize(cs)
+        //self.inner_circuit.synthesize(cs)
+        Ok(())
     }
 }

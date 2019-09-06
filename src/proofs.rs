@@ -984,7 +984,6 @@ pub struct Params<C: Curve> {
 impl<C: Curve> Params<C> {
     pub fn new(k: usize) -> Self {
         use crossbeam_utils::thread;
-        use num_cpus;
 
         assert!(k > 3);
         let d = 1 << k;

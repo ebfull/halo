@@ -74,9 +74,9 @@ impl<C: Curve> CurvePoint<C> {
         let xsq = x_val.map(|x| x * &x);
         let xcub = xsq.and_then(|xsq| x_val.map(|x| xsq * &x));
 
-        let (x, y) = C::one().get_xy().unwrap();
-        return Ok(Self::constant(x, y));
-        /*
+        // let (x, y) = C::one().get_xy().unwrap();
+        // return Ok(Self::constant(x, y));
+        // /*
         let x = AllocatedNum::alloc(cs, || x_val)?;
         let y = AllocatedNum::alloc(cs, || y_val)?;
         let is_identity = AllocatedBit::alloc(cs, || is_identity_val)?;
@@ -100,7 +100,7 @@ impl<C: Curve> CurvePoint<C> {
             y: Num::from(y),
             is_identity: is_identity.into(),
         })
-        */
+        //*/
     }
 
     /// Witness an arbitrary curve point
