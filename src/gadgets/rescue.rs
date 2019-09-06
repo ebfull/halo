@@ -304,7 +304,7 @@ mod test {
         circuits::{is_satisfied, Circuit, ConstraintSystem, SynthesisError},
         fields::Fp,
         gadgets::AllocatedNum,
-        rescue::Rescue,
+        rescue::{Rescue, SPONGE_RATE},
         Basic,
     };
 
@@ -364,6 +364,105 @@ mod test {
                 },
                 &[expected_s, expected_s2]
             ),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn saturate_sponge() {
+        struct TestCircuit {
+            expected_s: Fp,
+        }
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let mut g = RescueGadget::new(cs)?;
+
+                for i in 0..2 * SPONGE_RATE + 1 {
+                    let n = AllocatedNum::alloc(cs, || Ok(Fp::from(i as u64 + 1)))?;
+                    g.absorb(cs, n)?;
+                }
+
+                let s = g.squeeze(cs)?;
+
+                if let Some(s) = s.get_value() {
+                    println!("Computed s: {:?}", s);
+                }
+
+                let expected_s = AllocatedNum::alloc_input(cs, || Ok(self.expected_s))?;
+
+                cs.enforce_zero(expected_s.lc() - &s.lc());
+
+                Ok(())
+            }
+        }
+
+        let mut r = Rescue::new();
+
+        for i in 0..2 * SPONGE_RATE + 1 {
+            r.absorb(Fp::from(i as u64 + 1));
+        }
+
+        let expected_s = r.squeeze();
+
+        println!("Expected s: {:?}", expected_s);
+        println!();
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit { expected_s }, &[expected_s]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn squeeze_dry() {
+        struct TestCircuit {
+            expected_s: Fp,
+        }
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let mut g = RescueGadget::new(cs)?;
+                let n = AllocatedNum::alloc(cs, || Ok(Fp::from(7)))?;
+
+                for i in 0..2 * SPONGE_RATE + 1 {
+                    g.squeeze(cs)?;
+                }
+
+                let s = g.squeeze(cs)?;
+
+                if let Some(s) = s.get_value() {
+                    println!("Computed s: {:?}", s);
+                }
+
+                let expected_s = AllocatedNum::alloc_input(cs, || Ok(self.expected_s))?;
+
+                cs.enforce_zero(expected_s.lc() - &s.lc());
+
+                Ok(())
+            }
+        }
+
+        let mut r = Rescue::new();
+        r.absorb(Fp::from(7));
+
+        for _ in 0..2 * SPONGE_RATE + 1 {
+            r.squeeze();
+        }
+
+        let expected_s = r.squeeze();
+
+        println!("Expected s: {:?}", expected_s);
+        println!();
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit { expected_s }, &[expected_s]),
             Ok(true)
         );
     }
