@@ -1,8 +1,8 @@
 use std::time::Instant;
 
-extern crate subsonic;
+extern crate halo;
 
-use subsonic::*;
+use halo::*;
 
 trait OptionExt<T> {
     fn open(self) -> Result<T, SynthesisError>;

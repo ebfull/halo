@@ -2,7 +2,7 @@
 extern crate hex_literal;
 
 use std::iter;
-use subsonic::{
+use halo::{
     is_satisfied, sha256::sha256, unpack_fe, AllocatedBit, AllocatedNum, Basic, Boolean, Circuit,
     Coeff, ConstraintSystem, Field, Fp, LinearCombination, SynthesisError, UInt64,
 };
