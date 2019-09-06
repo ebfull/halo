@@ -59,6 +59,28 @@ where
             circuit.base_case = Some(true);
         }
 
+        {
+            let mut inputs = vec![];
+            inputs.extend(new_payload.iter().cloned());
+            inputs.extend(old_leftovers.to_bytes());
+            inputs.extend(new_leftovers.to_bytes());
+            inputs.extend(newdeferred.to_bytes());
+
+            let mut realinputs = vec![];
+            for byte in inputs {
+                for i in 0..8 {
+                    let bit = ((byte >> i) & 1) == 1;
+                    if bit {
+                        realinputs.push(Field::one());
+                    } else {
+                        realinputs.push(Field::zero());
+                    }
+                }
+            }
+
+            assert!(is_satisfied::<_, _, Basic>(&circuit, &realinputs)?);
+        }
+
         // Now make the proof...
         let (proof, _) = Proof::new::<_, Basic>(e1params, &circuit, &old_leftovers)?;
 
@@ -494,13 +516,13 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
 
         let y_cur = self.get_challenge(cs, transcript)?;
 
-        let s_cur_commitment = CurvePoint::witness(cs, || {
+        let s_cur_commitment = CurvePoint::witness_test(cs, || {
             Ok(self
                 .proof
                 .map(|proof| proof.proof.s_cur_commitment)
                 .unwrap_or(E2::zero()))
         })?;
-        self.commit_point(cs, transcript, &s_cur_commitment)?;
+        //self.commit_point(cs, transcript, &s_cur_commitment)?;
         /*
         let t_positive_commitment = CurvePoint::witness(cs, || {
             Ok(self.proof.map(|proof| proof.proof.t_positive_commitment).unwrap_or(E2::zero()))

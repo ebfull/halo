@@ -463,7 +463,7 @@ impl<C: Curve> Proof<C> {
         let mut tx = util::multiply_polynomials(rx.clone(), r_primex);
         assert_eq!(tx.len(), 7 * params.n + 1);
         //assert_eq!(tx[4 * params.n], params.compute_opening(&ky, y_cur, false) * &y_cur.pow(&[params.n as u64, 0, 0, 0]));
-        tx[4 * params.n] = C::Scalar::zero(); // -k(y)
+        //tx[4 * params.n] = C::Scalar::zero(); // -k(y)
 
         // Commit to t^+(X, y)
         let tx_positive = &tx[4 * params.n + 1..];
@@ -506,6 +506,11 @@ impl<C: Curve> Proof<C> {
 
         // Send openings
         let ky_opening = params.compute_opening(&ky, y_cur, false);
+        // TODO: remove
+        assert_eq!(
+            tx[4 * params.n],
+            ky_opening * &y_cur.pow(&[params.n as u64, 0, 0, 0])
+        );
         append_scalar::<C>(&mut transcript, &ky_opening);
         let rx_opening = params.compute_opening(&rx, x, true);
         append_scalar::<C>(&mut transcript, &rx_opening);
