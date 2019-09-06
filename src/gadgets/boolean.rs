@@ -274,7 +274,7 @@ pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
 ) -> Result<Vec<AllocatedBit>, SynthesisError> {
     let values = match num.get_value() {
         Some(value) => {
-            let mut tmp = Vec::with_capacity(F::NUM_BITS as usize);
+            let mut tmp = Vec::with_capacity(256);
             let bytes = value.to_bytes();
 
             for byte in &bytes[0..] {
@@ -286,7 +286,7 @@ pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
 
             tmp
         }
-        None => vec![None; F::NUM_BITS as usize],
+        None => vec![None; 256],
     };
 
     let mut bools = vec![];

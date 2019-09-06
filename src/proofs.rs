@@ -1378,14 +1378,14 @@ impl<F: Field> SxEval<F> {
 impl<'a, F: Field> Backend<F> for &'a mut SxEval<F> {
     type LinearConstraintIndex = F;
 
-    /// Set the value of a variable. Might error if this backend expects to know it.
-    fn set_var<FF>(&mut self, _var: Variable, value: FF) -> Result<(), SynthesisError>
-    where
-        FF: FnOnce() -> Result<F, SynthesisError>,
-    {
-        value();
-        Ok(())
-    }
+    // /// Set the value of a variable. Might error if this backend expects to know it.
+    // fn set_var<FF>(&mut self, _var: Variable, value: FF) -> Result<(), SynthesisError>
+    // where
+    //     FF: FnOnce() -> Result<F, SynthesisError>,
+    // {
+    //     value();
+    //     Ok(())
+    // }
 
     fn new_multiplication_gate(&mut self) {
         self.u.push(F::zero());
@@ -1483,14 +1483,14 @@ impl<F: Field> SyEval<F> {
 impl<'a, F: Field> Backend<F> for &'a mut SyEval<F> {
     type LinearConstraintIndex = usize;
 
-    /// Set the value of a variable. Might error if this backend expects to know it.
-    fn set_var<FF>(&mut self, _var: Variable, value: FF) -> Result<(), SynthesisError>
-    where
-        FF: FnOnce() -> Result<F, SynthesisError>,
-    {
-        value();
-        Ok(())
-    }
+    // /// Set the value of a variable. Might error if this backend expects to know it.
+    // fn set_var<FF>(&mut self, _var: Variable, value: FF) -> Result<(), SynthesisError>
+    // where
+    //     FF: FnOnce() -> Result<F, SynthesisError>,
+    // {
+    //     value();
+    //     Ok(())
+    // }
 
     fn new_linear_constraint(&mut self) -> usize {
         let index = self.poly.len();

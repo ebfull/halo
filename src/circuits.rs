@@ -54,17 +54,17 @@ pub trait ConstraintSystem<FF: Field> {
     }
 }
 
-// impl Variable {
-//     fn get_index(&self) -> usize {
-//         match *self {
-//             Variable::A(index) => index,
-//             Variable::B(index) => index,
-//             Variable::C(index) => index,
-//         }
-//     }
-// }
+impl Variable {
+    fn get_index(&self) -> usize {
+        match *self {
+            Variable::A(index) => index,
+            Variable::B(index) => index,
+            Variable::C(index) => index,
+        }
+    }
+}
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Coeff<F: Field> {
     Zero,
     One,
@@ -421,4 +421,181 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
     }
 
     Ok(true)
+}
+
+/// Checks if the circuit produces a satisfying assignment for the
+/// constraint system, given the particular public inputs.
+pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), SynthesisError> {
+    enum Event<F: Field> {
+        Alloc,
+        InputAlloc,
+        Multiplication,
+        EnforceZero(LinearCombination<F>),
+    }
+
+    struct Record<F: Field> {
+        vars: usize,
+        events: Vec<Event<F>>,
+    }
+
+    impl<FF: Field> ConstraintSystem<FF> for Record<FF> {
+        const ONE: Variable = Variable::A(0);
+
+        fn alloc<F, A, AR>(&mut self, annotation: A, value: F) -> Result<Variable, SynthesisError>
+        where
+            F: FnOnce() -> Result<FF, SynthesisError>,
+            A: FnOnce() -> AR,
+            AR: Into<String>,
+        {
+            self.events.push(Event::Alloc);
+
+            let var = Variable::A(self.vars);
+            self.vars += 1;
+            Ok(var)
+        }
+
+        fn alloc_input<F, A, AR>(
+            &mut self,
+            annotation: A,
+            value: F,
+        ) -> Result<Variable, SynthesisError>
+        where
+            F: FnOnce() -> Result<FF, SynthesisError>,
+            A: FnOnce() -> AR,
+            AR: Into<String>,
+        {
+            self.events.push(Event::InputAlloc);
+
+            let var = Variable::A(self.vars);
+            self.vars += 1;
+            Ok(var)
+        }
+
+        fn enforce_zero(&mut self, lc: LinearCombination<FF>) {
+            self.events.push(Event::EnforceZero(lc));
+        }
+
+        fn multiply<F>(
+            &mut self,
+            values: F,
+        ) -> Result<(Variable, Variable, Variable), SynthesisError>
+        where
+            F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
+        {
+            self.events.push(Event::Multiplication);
+
+            let a = Variable::A(self.vars);
+            self.vars += 1;
+            let b = Variable::A(self.vars);
+            self.vars += 1;
+            let c = Variable::A(self.vars);
+            self.vars += 1;
+
+            Ok((a, b, c))
+        }
+    }
+
+    let mut record = Record {
+        events: vec![],
+        vars: 1,
+    };
+
+    circuit.synthesize(&mut record)?;
+
+    struct Enforce<F: Field, I: Iterator<Item = Event<F>>> {
+        vars: usize,
+        events: I,
+    }
+
+    impl<FF: Field, I: Iterator<Item = Event<FF>>> ConstraintSystem<FF> for Enforce<FF, I> {
+        const ONE: Variable = Variable::A(0);
+
+        fn alloc<F, A, AR>(&mut self, annotation: A, value: F) -> Result<Variable, SynthesisError>
+        where
+            F: FnOnce() -> Result<FF, SynthesisError>,
+            A: FnOnce() -> AR,
+            AR: Into<String>,
+        {
+            value()?;
+            match self.events.next().unwrap() {
+                Event::Alloc => {}
+                _ => panic!("wrong"),
+            }
+
+            let var = Variable::A(self.vars);
+            self.vars += 1;
+            Ok(var)
+        }
+
+        fn alloc_input<F, A, AR>(
+            &mut self,
+            annotation: A,
+            value: F,
+        ) -> Result<Variable, SynthesisError>
+        where
+            F: FnOnce() -> Result<FF, SynthesisError>,
+            A: FnOnce() -> AR,
+            AR: Into<String>,
+        {
+            value()?;
+            match self.events.next().unwrap() {
+                Event::InputAlloc => {}
+                _ => panic!("wrong"),
+            }
+
+            let var = Variable::A(self.vars);
+            self.vars += 1;
+            Ok(var)
+        }
+
+        fn enforce_zero(&mut self, lc: LinearCombination<FF>) {
+            let other_lc = self.events.next().unwrap();
+            match other_lc {
+                Event::EnforceZero(other_lc) => {
+                    let a = other_lc.as_ref();
+                    let b = lc.as_ref();
+                    assert_eq!(a.len(), b.len());
+
+                    for (a, b) in a.iter().zip(b.iter()) {
+                        assert!(a.0.get_index() == b.0.get_index());
+                        assert!(a.1 == b.1);
+                    }
+                }
+                _ => panic!("wrong"),
+            }
+        }
+
+        fn multiply<F>(
+            &mut self,
+            values: F,
+        ) -> Result<(Variable, Variable, Variable), SynthesisError>
+        where
+            F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
+        {
+            values()?;
+
+            match self.events.next().unwrap() {
+                Event::Multiplication => {}
+                _ => panic!("wrong"),
+            }
+
+            let a = Variable::A(self.vars);
+            self.vars += 1;
+            let b = Variable::A(self.vars);
+            self.vars += 1;
+            let c = Variable::A(self.vars);
+            self.vars += 1;
+
+            Ok((a, b, c))
+        }
+    }
+
+    let mut enforce = Enforce {
+        events: record.events.into_iter(),
+        vars: 1,
+    };
+
+    circuit.synthesize(&mut enforce)?;
+
+    return Ok(());
 }
