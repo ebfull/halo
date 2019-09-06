@@ -59,28 +59,6 @@ where
             circuit.base_case = Some(true);
         }
 
-        {
-            let mut inputs = vec![];
-            inputs.extend(new_payload.iter().cloned());
-            inputs.extend(old_leftovers.to_bytes());
-            inputs.extend(new_leftovers.to_bytes());
-            inputs.extend(newdeferred.to_bytes());
-
-            let mut realinputs = vec![];
-            for byte in inputs {
-                for i in 0..8 {
-                    let bit = ((byte >> i) & 1) == 1;
-                    if bit {
-                        realinputs.push(Field::one());
-                    } else {
-                        realinputs.push(Field::zero());
-                    }
-                }
-            }
-
-            assert!(is_satisfied::<_, _, Basic>(&circuit, &realinputs)?);
-        }
-
         // Now make the proof...
         let (proof, _) = Proof::new::<_, Basic>(e1params, &circuit, &old_leftovers)?;
 
@@ -515,8 +493,9 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         self.commit_point(cs, transcript, &r_commitment)?;
 
         let y_cur = self.get_challenge(cs, transcript)?;
+        //println!("y_cur in circuit: {:?}", y_cur);
 
-        let s_cur_commitment = CurvePoint::witness_test(cs, || {
+        let s_cur_commitment = CurvePoint::witness(cs, || {
             Ok(self
                 .proof
                 .map(|proof| proof.proof.s_cur_commitment)
