@@ -1237,14 +1237,87 @@ impl<C: Curve> CurvePoint<C> {
         Ok(ret)
     }
 
-    /// Multiply by the inverse of a scalar
+    /// Multiply by the inverse of a little-endian scalar.
     pub fn multiply_inv<CS: ConstraintSystem<C::Base>>(
         &self,
         cs: &mut CS,
-        other: &[Boolean],
+        other: &[AllocatedBit],
     ) -> Result<Self, SynthesisError> {
-        // Will run into edge cases if during it we have an addition that runs into an edge case
-        unimplemented!()
+        let p = self
+            .x
+            .value()
+            .and_then(|x| self.y.value().map(|y| C::from_xy(x, y).unwrap()))
+            .ok_or(SynthesisError::AssignmentMissing);
+
+        let inverted_val = other
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                b.get_value().map(|b| {
+                    if b {
+                        let mut ret = C::Scalar::one();
+                        for _ in 0..i {
+                            ret = ret + &ret
+                        }
+                        ret
+                    } else {
+                        C::Scalar::zero()
+                    }
+                })
+            })
+            .fold(Some(C::Scalar::zero()), |acc, n| match (acc, n) {
+                (Some(acc), Some(n)) => Some(acc + &n),
+                _ => None,
+            })
+            .ok_or(SynthesisError::AssignmentMissing)
+            .and_then(|s| {
+                let inv_s = s.invert();
+                if inv_s.is_some().into() {
+                    p.map(|p| p * inv_s.unwrap())
+                } else {
+                    Err(SynthesisError::Unsatisfiable)
+                }
+            })
+            .map(|p| {
+                let coords = p.get_xy();
+                if coords.is_some().into() {
+                    let (x, y) = coords.unwrap();
+                    (x, y, false)
+                } else {
+                    let (x, y) = C::one().get_xy().unwrap();
+                    (x, y, true)
+                }
+            });
+
+        let x_inv_val = inverted_val.map(|(x, _, _)| x);
+        let y_inv_val = inverted_val.map(|(_, y, _)| y);
+        let is_identity_inv_val = inverted_val.map(|(_, _, b)| b);
+
+        let x_inv = AllocatedNum::alloc(cs, || x_inv_val)?;
+        let y_inv = AllocatedNum::alloc(cs, || y_inv_val)?;
+        let is_identity_inv = AllocatedBit::alloc(cs, || is_identity_inv_val)?;
+
+        let inverted = CurvePoint {
+            x: x_inv.into(),
+            y: y_inv.into(),
+            is_identity: is_identity_inv.into(),
+        };
+
+        let calculated = inverted.multiply(cs, &other)?;
+
+        let orig_x_lc = self.x.lc(cs);
+        let orig_y_lc = self.y.lc(cs);
+        let calculated_x_lc = calculated.x.lc(cs);
+        let calculated_y_lc = calculated.y.lc(cs);
+
+        cs.enforce_zero(orig_x_lc - &calculated_x_lc);
+        cs.enforce_zero(orig_y_lc - &calculated_y_lc);
+        cs.enforce_zero(
+            self.is_identity.lc(CS::ONE, Coeff::One)
+                - &calculated.is_identity.lc(CS::ONE, Coeff::One),
+        );
+
+        Ok(inverted)
     }
 }
 
@@ -1254,7 +1327,7 @@ mod test {
     use crate::{
         circuits::{is_satisfied, Circuit, Coeff, ConstraintSystem, SynthesisError},
         curves::{Curve, Ec1},
-        fields::Fp,
+        fields::{Fp, Fq},
         gadgets::boolean::{AllocatedBit, Boolean},
         Basic,
     };
@@ -1559,6 +1632,48 @@ mod test {
                 let (p5_x, p5_y) = p5.get_xy(cs)?;
                 cs.enforce_zero(p5_x.lc() - (Coeff::Full(five_x), CS::ONE));
                 cs.enforce_zero(p5_y.lc() - (Coeff::Full(five_y), CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn multiply_inv() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let one = Ec1::one();
+                let invfive = one * Fq::from(5).invert().unwrap();
+
+                let (one_x, one_y) = one.get_xy().unwrap();
+                let (invfive_x, invfive_y) = invfive.get_xy().unwrap();
+
+                let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
+
+                let scalar5 = [
+                    AllocatedBit::alloc(cs, || Ok(true))?,
+                    AllocatedBit::alloc(cs, || Ok(false))?,
+                    AllocatedBit::alloc(cs, || Ok(true))?,
+                    AllocatedBit::alloc(cs, || Ok(false))?,
+                    AllocatedBit::alloc(cs, || Ok(false))?,
+                    AllocatedBit::alloc(cs, || Ok(false))?,
+                ];
+
+                let pinv5 = p1.multiply_inv(cs, &scalar5)?;
+                let (pinv5_x, pinv5_y) = pinv5.get_xy(cs)?;
+                cs.enforce_zero(pinv5_x.lc() - (Coeff::Full(invfive_x), CS::ONE));
+                cs.enforce_zero(pinv5_y.lc() - (Coeff::Full(invfive_y), CS::ONE));
 
                 Ok(())
             }
