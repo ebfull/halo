@@ -1,7 +1,10 @@
 [package]
-name = "subsonic"
+name = "halo"
 version = "0.1.0"
-authors = ["Sean Bowe <ewillbefull@gmail.com>"]
+authors = [
+    "Sean Bowe <ewillbefull@gmail.com>",
+    "Jack Grigg <jack@z.cash>",
+]
 edition = "2018"
 
 [dependencies]
