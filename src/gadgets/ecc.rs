@@ -21,6 +21,17 @@ pub struct CurvePoint<C: Curve> {
 }
 
 impl<C: Curve> CurvePoint<C> {
+    /// Create a constant that is the identity.
+    pub fn identity() -> Self {
+        // Represent the identity internally as C::one().
+        let (x, y) = C::one().get_xy().unwrap();
+        CurvePoint {
+            x: Num::constant(x),
+            y: Num::constant(y),
+            is_identity: Boolean::constant(true),
+        }
+    }
+
     /// Create a constant that is assumed to not be the identity.
     pub fn constant(x: C::Base, y: C::Base) -> Self {
         CurvePoint {
@@ -1099,13 +1110,131 @@ impl<C: Curve> CurvePoint<C> {
         })
     }
 
-    /// Multiply by a scalar
+    /// Multiply by a little-endian scalar.
     pub fn multiply<CS: ConstraintSystem<C::Base>>(
         &self,
         cs: &mut CS,
-        other: &[Boolean],
+        other: &[AllocatedBit],
     ) -> Result<Self, SynthesisError> {
-        unimplemented!()
+        let mut ret = CurvePoint::identity();
+
+        for bit in other.iter().rev() {
+            let dbl = ret.add(cs, &ret)?;
+            let sum = dbl.add(cs, &self)?;
+
+            let bit_val = bit.get_value();
+
+            let x_out = AllocatedNum::alloc(cs, || {
+                bit_val
+                    .and_then(|b| if b { sum.x.value() } else { dbl.x.value() })
+                    .ok_or(SynthesisError::AssignmentMissing)
+            })?;
+            let y_out = AllocatedNum::alloc(cs, || {
+                bit_val
+                    .and_then(|b| if b { sum.y.value() } else { dbl.y.value() })
+                    .ok_or(SynthesisError::AssignmentMissing)
+            })?;
+            let is_identity_out = AllocatedBit::alloc(cs, || {
+                bit_val
+                    .and_then(|b| {
+                        if b {
+                            sum.is_identity.get_value()
+                        } else {
+                            dbl.is_identity.get_value()
+                        }
+                    })
+                    .ok_or(SynthesisError::AssignmentMissing)
+            })?;
+
+            // (x_out - x_dbl) = bit * (x_sum - x_dbl)
+            let (a_var, b_var, c_var) = cs.multiply(|| {
+                let bit = bit_val.ok_or(SynthesisError::AssignmentMissing)?;
+                let x_dbl = dbl.x.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let x_sum = sum.x.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let x_out = x_out.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+
+                let bit = if bit { C::Base::one() } else { C::Base::zero() };
+
+                Ok((bit, x_sum - &x_dbl, x_out - &x_dbl))
+            })?;
+            let x_dbl_lc = dbl.x.lc(cs);
+            let x_sum_lc = sum.x.lc(cs);
+            cs.enforce_zero(LinearCombination::from(bit.get_variable()) - a_var);
+            cs.enforce_zero(x_sum_lc - &x_dbl_lc - b_var);
+            cs.enforce_zero(x_out.lc() - &x_dbl_lc - c_var);
+
+            // (y_out - y_dbl) = bit * (y_sum - y_dbl)
+            let (d_var, e_var, f_var) = cs.multiply(|| {
+                let bit = bit_val.ok_or(SynthesisError::AssignmentMissing)?;
+                let y_dbl = dbl.y.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let y_sum = sum.y.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let y_out = y_out.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+
+                let bit = if bit { C::Base::one() } else { C::Base::zero() };
+
+                Ok((bit, y_sum - &y_dbl, y_out - &y_dbl))
+            })?;
+            let y_dbl_lc = dbl.y.lc(cs);
+            let y_sum_lc = sum.y.lc(cs);
+            cs.enforce_zero(LinearCombination::from(bit.get_variable()) - d_var);
+            cs.enforce_zero(y_sum_lc - &y_dbl_lc - e_var);
+            cs.enforce_zero(y_out.lc() - &y_dbl_lc - f_var);
+
+            // (is_identity_out - is_identity_dbl) = bit * (is_identity_sum - is_identity_dbl)
+            let (g_var, h_var, i_var) = cs.multiply(|| {
+                let bit = bit_val.ok_or(SynthesisError::AssignmentMissing)?;
+                let is_identity_dbl = dbl
+                    .is_identity
+                    .get_value()
+                    .ok_or(SynthesisError::AssignmentMissing)?;
+                let is_identity_sum = sum
+                    .is_identity
+                    .get_value()
+                    .ok_or(SynthesisError::AssignmentMissing)?;
+                let is_identity_out = is_identity_out
+                    .get_value()
+                    .ok_or(SynthesisError::AssignmentMissing)?;
+
+                let bit = if bit { C::Base::one() } else { C::Base::zero() };
+                let is_identity_dbl = if is_identity_dbl {
+                    C::Base::one()
+                } else {
+                    C::Base::zero()
+                };
+                let is_identity_sum = if is_identity_sum {
+                    C::Base::one()
+                } else {
+                    C::Base::zero()
+                };
+                let is_identity_out = if is_identity_out {
+                    C::Base::one()
+                } else {
+                    C::Base::zero()
+                };
+
+                Ok((
+                    bit,
+                    is_identity_sum - &is_identity_dbl,
+                    is_identity_out - &is_identity_dbl,
+                ))
+            })?;
+            let is_identity_dbl_lc = dbl.is_identity.lc(CS::ONE, Coeff::One);
+            cs.enforce_zero(LinearCombination::from(bit.get_variable()) - g_var);
+            cs.enforce_zero(sum.is_identity.lc(CS::ONE, Coeff::One) - &is_identity_dbl_lc - h_var);
+            cs.enforce_zero(
+                LinearCombination::from(is_identity_out.get_variable())
+                    - &is_identity_dbl_lc
+                    - i_var,
+            );
+
+            ret = CurvePoint {
+                x: x_out.into(),
+                y: y_out.into(),
+                is_identity: is_identity_out.into(),
+            };
+        }
+
+        Ok(ret)
     }
 
     /// Multiply by the inverse of a scalar
@@ -1126,7 +1255,7 @@ mod test {
         circuits::{is_satisfied, Circuit, Coeff, ConstraintSystem, SynthesisError},
         curves::{Curve, Ec1},
         fields::Fp,
-        gadgets::boolean::Boolean,
+        gadgets::boolean::{AllocatedBit, Boolean},
         Basic,
     };
 
@@ -1388,6 +1517,48 @@ mod test {
                 let (p3b_x, p3b_y) = p3b.get_xy(cs)?;
                 cs.enforce_zero(p3b_x.lc() - (Coeff::Full(one_x), CS::ONE));
                 cs.enforce_zero(p3b_y.lc() - (Coeff::Full(one_y), CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn multiply() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let one = Ec1::one();
+                let five = one.double().double() + one;
+
+                let (one_x, one_y) = one.get_xy().unwrap();
+                let (five_x, five_y) = five.get_xy().unwrap();
+
+                let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
+
+                let scalar5 = [
+                    AllocatedBit::alloc(cs, || Ok(true))?,
+                    AllocatedBit::alloc(cs, || Ok(false))?,
+                    AllocatedBit::alloc(cs, || Ok(true))?,
+                    AllocatedBit::alloc(cs, || Ok(false))?,
+                    AllocatedBit::alloc(cs, || Ok(false))?,
+                    AllocatedBit::alloc(cs, || Ok(false))?,
+                ];
+
+                let p5 = p1.multiply(cs, &scalar5)?;
+                let (p5_x, p5_y) = p5.get_xy(cs)?;
+                cs.enforce_zero(p5_x.lc() - (Coeff::Full(five_x), CS::ONE));
+                cs.enforce_zero(p5_y.lc() - (Coeff::Full(five_y), CS::ONE));
 
                 Ok(())
             }
