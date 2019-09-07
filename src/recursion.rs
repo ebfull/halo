@@ -748,7 +748,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
             k_commitment = k_commitment.add_conditionally(cs, &gen, &Boolean::from(bit.clone()))?;
         }
 
-        println!("k inside circuit: {:?}", k_commitment);
+        // println!("k inside circuit: {:?}", k_commitment);
 
         // Verify the deferred computations from the inner proof
 

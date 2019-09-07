@@ -351,9 +351,9 @@ impl<C: Curve> Proof<C> {
             inputs: vec![],
         };
 
-        println!("synthesizing witness");
+        //rintln!("synthesizing witness");
         S::synthesize(&mut assignment, circuit)?;
-        println!("DONE");
+        //println!("DONE");
 
         assert!(assignment.n < params.n);
         assert!(assignment.q < params.d);
@@ -734,10 +734,10 @@ impl<C: Curve> Proof<C> {
             Some(c) => c,
             None => params.commit(&ky, false),
         };
-        println!(
-            "k commitment in verifier: {:?}",
-            k_commitment.get_xy().unwrap()
-        );
+        // println!(
+        //     "k commitment in verifier: {:?}",
+        //     k_commitment.get_xy().unwrap()
+        // );
         append_point::<C>(&mut transcript, &k_commitment);
         append_point::<C>(&mut transcript, &self.r_commitment);
         let y_cur = get_challenge::<_, C::Scalar>(&mut transcript);
@@ -747,7 +747,7 @@ impl<C: Curve> Proof<C> {
         let x = get_challenge::<_, C::Scalar>(&mut transcript);
         append_point::<C>(&mut transcript, &self.c_commitment);
         let y_new = get_challenge::<_, C::Scalar>(&mut transcript);
-        println!("VERIFIER: y_new in the verifier: {:?}", y_new);
+        //println!("VERIFIER: y_new in the verifier: {:?}", y_new);
         append_point::<C>(&mut transcript, &self.s_new_commitment);
 
         // Openings
