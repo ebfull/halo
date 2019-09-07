@@ -447,6 +447,41 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         })
     }
 
+    fn equal_unless_base_case<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        cs: &mut CS,
+        base_case: AllocatedBit,
+        lhs: &[AllocatedBit],
+        rhs: &[AllocatedBit],
+    ) -> Result<(), SynthesisError> {
+        assert_eq!(lhs.len(), rhs.len());
+
+        let not_basecase = base_case
+            .get_value()
+            .map(|v| if v { Field::zero() } else { Field::one() });
+
+        for (lhs, rhs) in lhs.iter().zip(rhs.iter()) {
+            // lhs - rhs * (1 - base_case) = 0
+            // if base_case is true, then 1 - base_case will be zero
+            // if base_case is false, then lhs - rhs must be zero, and therefore they are equal
+            let (a, b, c) = cs.multiply(|| {
+                let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
+
+                let lhs: E1::Scalar = if lhs { Field::one() } else { Field::zero() };
+                let rhs: E1::Scalar = if rhs { Field::one() } else { Field::zero() };
+
+                Ok((lhs - &rhs, not_basecase, Field::zero()))
+            })?;
+            cs.enforce_zero(LinearCombination::from(a) - lhs.get_variable() + rhs.get_variable());
+            cs.enforce_zero(LinearCombination::from(b) - CS::ONE + base_case.get_variable());
+            cs.enforce_zero(LinearCombination::from(c))
+        }
+
+        Ok(())
+    }
+
     fn obtain_scalar_from_bits<CS: ConstraintSystem<E1::Scalar>>(
         &self,
         cs: &mut CS,
@@ -474,13 +509,41 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         Ok(newnum)
     }
 
+    fn witness_bits_from_fe<F: Field, CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        cs: &mut CS,
+        value: F,
+    ) -> Result<Vec<Boolean>, SynthesisError> {
+        let mut tmp = Vec::with_capacity(256);
+        let bytes = value.to_bytes();
+
+        for byte in &bytes[0..] {
+            for i in 0..8 {
+                let bit = ((*byte >> i) & 1) == 1;
+                tmp.push(bit);
+            }
+        }
+
+        let mut res = Vec::with_capacity(256);
+
+        for b in tmp {
+            res.push(AllocatedBit::alloc(cs, || Ok(b))?);
+        }
+
+        Ok(res.into_iter().map(|b| Boolean::from(b)).collect())
+    }
+
     fn verify_proof<CS: ConstraintSystem<E1::Scalar>>(
         &self,
         cs: &mut CS,
         k_commitment: &CurvePoint<E2>,
+        new_deferred: &[AllocatedBit],
+        new_leftovers: &[AllocatedBit],
     ) -> Result<(), SynthesisError> {
         let mut transcript = RescueGadget::new(cs)?;
         let transcript = &mut transcript;
+
+        // Commitments
 
         self.commit_point(cs, transcript, &k_commitment)?;
 
@@ -493,7 +556,6 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         self.commit_point(cs, transcript, &r_commitment)?;
 
         let y_cur = self.get_challenge(cs, transcript)?;
-        //println!("y_cur in circuit: {:?}", y_cur);
 
         let s_cur_commitment = CurvePoint::witness(cs, || {
             Ok(self
@@ -501,33 +563,134 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
                 .map(|proof| proof.proof.s_cur_commitment)
                 .unwrap_or(E2::zero()))
         })?;
-        //self.commit_point(cs, transcript, &s_cur_commitment)?;
-        /*
+        self.commit_point(cs, transcript, &s_cur_commitment)?;
+
         let t_positive_commitment = CurvePoint::witness(cs, || {
-            Ok(self.proof.map(|proof| proof.proof.t_positive_commitment).unwrap_or(E2::zero()))
+            Ok(self
+                .proof
+                .map(|proof| proof.proof.t_positive_commitment)
+                .unwrap_or(E2::zero()))
         })?;
         self.commit_point(cs, transcript, &t_positive_commitment)?;
+
         let t_negative_commitment = CurvePoint::witness(cs, || {
-            Ok(self.proof.map(|proof| proof.proof.t_negative_commitment).unwrap_or(E2::zero()))
+            Ok(self
+                .proof
+                .map(|proof| proof.proof.t_negative_commitment)
+                .unwrap_or(E2::zero()))
         })?;
         self.commit_point(cs, transcript, &t_negative_commitment)?;
 
         let x = self.get_challenge(cs, transcript)?;
 
         let c_commitment = CurvePoint::witness(cs, || {
-            Ok(self.proof.map(|proof| proof.proof.c_commitment).unwrap_or(E2::zero()))
+            Ok(self
+                .proof
+                .map(|proof| proof.proof.c_commitment)
+                .unwrap_or(E2::zero()))
         })?;
         self.commit_point(cs, transcript, &c_commitment)?;
 
         let y_new = self.get_challenge(cs, transcript)?;
 
         let s_new_commitment = CurvePoint::witness(cs, || {
-            Ok(self.proof.map(|proof| proof.proof.s_new_commitment).unwrap_or(E2::zero()))
+            Ok(self
+                .proof
+                .map(|proof| proof.proof.s_new_commitment)
+                .unwrap_or(E2::zero()))
         })?;
         self.commit_point(cs, transcript, &s_new_commitment)?;
 
-        println!("y_new in the circuit: {:?}", y_new);
-        */
+        // Openings
+
+        let g = {
+            let (x, y) = E2::one().get_xy().unwrap();
+            CurvePoint::<E2>::constant(x, y)
+        };
+
+        let ky_opening: Vec<Boolean> = new_deferred[256 * 4..256 * 5]
+            .iter()
+            .cloned()
+            .map(|b| Boolean::from(b))
+            .collect();
+        let ky_opening_pt = g.multiply(cs, &ky_opening)?;
+        self.commit_point(cs, transcript, &ky_opening_pt)?;
+
+        let rx_opening: Vec<Boolean> = new_deferred[256 * 8..256 * 9]
+            .iter()
+            .cloned()
+            .map(|b| Boolean::from(b))
+            .collect();
+        let rx_opening_pt = g.multiply(cs, &rx_opening)?;
+        self.commit_point(cs, transcript, &rx_opening_pt)?;
+
+        let rxy_opening: Vec<Boolean> = new_deferred[256 * 9..256 * 10]
+            .iter()
+            .cloned()
+            .map(|b| Boolean::from(b))
+            .collect();
+        let rxy_opening_pt = g.multiply(cs, &rxy_opening)?;
+        self.commit_point(cs, transcript, &rxy_opening_pt)?;
+
+        let sx_old_opening_pt = CurvePoint::witness(cs, || {
+            Ok(self
+                .proof
+                .map(|proof| E2::one() * &proof.proof.sx_old_opening)
+                .unwrap_or(E2::zero()))
+        })?;
+        self.commit_point(cs, transcript, &sx_old_opening_pt)?;
+
+        let sx_cur_opening: Vec<Boolean> = new_deferred[256 * 7..256 * 8]
+            .iter()
+            .cloned()
+            .map(|b| Boolean::from(b))
+            .collect();
+        let sx_cur_opening_pt = g.multiply(cs, &sx_cur_opening)?;
+        self.commit_point(cs, transcript, &sx_cur_opening_pt)?;
+
+        let tx_positive_opening: Vec<Boolean> = new_deferred[256 * 5..256 * 6]
+            .iter()
+            .cloned()
+            .map(|b| Boolean::from(b))
+            .collect();
+        let tx_positive_opening_pt = g.multiply(cs, &tx_positive_opening)?;
+        self.commit_point(cs, transcript, &tx_positive_opening_pt)?;
+
+        let tx_negative_opening: Vec<Boolean> = new_deferred[256 * 6..256 * 7]
+            .iter()
+            .cloned()
+            .map(|b| Boolean::from(b))
+            .collect();
+        let tx_negative_opening_pt = g.multiply(cs, &tx_negative_opening)?;
+        self.commit_point(cs, transcript, &tx_negative_opening_pt)?;
+
+        let sx_new_opening_pt = CurvePoint::witness(cs, || {
+            Ok(self
+                .proof
+                .map(|proof| E2::one() * &proof.proof.sx_new_opening)
+                .unwrap_or(E2::zero()))
+        })?;
+        self.commit_point(cs, transcript, &sx_new_opening_pt)?;
+
+        let gx_old_opening: Vec<Boolean> = new_deferred
+            [256 * (10 + self.params.k)..256 * (11 + self.params.k)]
+            .iter()
+            .cloned()
+            .map(|b| Boolean::from(b))
+            .collect();
+        let gx_old_opening_pt = g.multiply(cs, &gx_old_opening)?;
+
+        // let mut val = 0u128;
+        // for b in y_cur.iter().rev() {
+        //     val = val + val;
+        //     if let Some(b) = b.get_value() {
+        //         if b {
+        //             val = val + 1;
+        //         }
+        //     }
+        // }
+
+        // println!("y_cur in circuit: {:?}", val);
 
         Ok(())
     }
@@ -750,10 +913,15 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
 
         // println!("k inside circuit: {:?}", k_commitment);
 
-        // Verify the deferred computations from the inner proof
-
         self.verify_deferred(cs, &old_deferred)?;
-        self.verify_proof(cs, &k_commitment)?;
+        //self.verify_proof(cs, &k_commitment, &deferred, &leftovers2)?;
+
+        self.equal_unless_base_case(
+            cs,
+            base_case,
+            &deferred[256 * 10..256 * (10 + self.params.k)],
+            &old_leftovers1[256 * 3..],
+        )?;
 
         self.inner_circuit.synthesize(cs)
     }

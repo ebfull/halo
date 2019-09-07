@@ -68,24 +68,24 @@ impl<C: Curve> Leftovers<C> {
 */
 #[derive(Clone)]
 pub struct Deferred<F: Field> {
-    x: F,
-    y_old: F,
-    y_cur: F,
-    y_new: F,
-    ky_opening: F,
-    tx_positive_opening: F,
-    tx_negative_opening: F,
-    sx_cur_opening: F,
-    rx_opening: F,
-    rxy_opening: F,
-    challenges_old: Vec<F>,
-    gx_old_opening: F,
-    challenges_new: Vec<F>,
-    b_x: F,
-    b_xy: F,
-    b_y_old: F,
-    b_y_cur: F,
-    b_y_new: F,
+    pub x: F,
+    pub y_old: F,
+    pub y_cur: F,
+    pub y_new: F,
+    pub ky_opening: F,
+    pub tx_positive_opening: F,
+    pub tx_negative_opening: F,
+    pub sx_cur_opening: F,
+    pub rx_opening: F,
+    pub rxy_opening: F,
+    pub challenges_old: Vec<F>,
+    pub gx_old_opening: F,
+    pub challenges_new: Vec<F>,
+    pub b_x: F,
+    pub b_xy: F,
+    pub b_y_old: F,
+    pub b_y_cur: F,
+    pub b_y_new: F,
 }
 
 impl<F: Field> Deferred<F> {
@@ -351,9 +351,9 @@ impl<C: Curve> Proof<C> {
             inputs: vec![],
         };
 
-        //rintln!("synthesizing witness");
+        println!("synthesizing witness");
         S::synthesize(&mut assignment, circuit)?;
-        //println!("DONE");
+        println!("DONE");
 
         assert!(assignment.n < params.n);
         assert!(assignment.q < params.d);
@@ -738,16 +738,20 @@ impl<C: Curve> Proof<C> {
         //     "k commitment in verifier: {:?}",
         //     k_commitment.get_xy().unwrap()
         // );
+        //println!(
+        //    "r commitment in verifier: {:?}",
+        //    self.r_commitment.get_xy().unwrap()
+        //);
         append_point::<C>(&mut transcript, &k_commitment);
         append_point::<C>(&mut transcript, &self.r_commitment);
         let y_cur = get_challenge::<_, C::Scalar>(&mut transcript);
+        //println!("VERIFIER: y_cur in the verifier: {:?}", y_cur);
         append_point::<C>(&mut transcript, &self.s_cur_commitment);
         append_point::<C>(&mut transcript, &self.t_positive_commitment);
         append_point::<C>(&mut transcript, &self.t_negative_commitment);
         let x = get_challenge::<_, C::Scalar>(&mut transcript);
         append_point::<C>(&mut transcript, &self.c_commitment);
         let y_new = get_challenge::<_, C::Scalar>(&mut transcript);
-        //println!("VERIFIER: y_new in the verifier: {:?}", y_new);
         append_point::<C>(&mut transcript, &self.s_new_commitment);
 
         // Openings
