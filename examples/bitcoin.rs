@@ -10,15 +10,22 @@ use std::iter;
 
 fn bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
-    data: &[u8],
+    data: Option<&[u8]>,
+    len: usize,
 ) -> Result<Vec<Boolean>, SynthesisError> {
     let mut bits = vec![];
 
-    for (byte_i, byte) in data.iter().enumerate() {
+    for byte_i in 0..len {
         for bit_i in (0..8).rev() {
             let cs = cs.namespace(|| format!("input bit {} {}", byte_i, bit_i));
 
-            bits.push(AllocatedBit::alloc(cs, || Ok((byte >> bit_i) & 1u8 == 1u8))?.into());
+            bits.push(
+                AllocatedBit::alloc(cs, || {
+                    data.map(|bytes| (bytes[byte_i] >> bit_i) & 1u8 == 1u8)
+                        .ok_or(SynthesisError::AssignmentMissing)
+                })?
+                .into(),
+            );
         }
     }
 
@@ -27,18 +34,23 @@ fn bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
 
 fn input_bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
-    data: &[u8],
+    data: Option<&[u8]>,
+    len: usize,
 ) -> Result<Vec<Boolean>, SynthesisError> {
     let mut bits = vec![];
 
-    for (byte_i, byte) in data.iter().enumerate() {
+    for byte_i in 0..len {
         for bit_i in (0..8).rev() {
             let cs = cs.namespace(|| format!("input bit {} {}", byte_i, bit_i));
 
-            let value = (byte >> bit_i) & 1u8 == 1u8;
-            let alloc_bit = AllocatedBit::alloc(cs, || Ok(value))?;
-            let input_bit =
-                AllocatedNum::alloc_input(cs, || Ok(if value { F::one() } else { F::zero() }))?;
+            let value = data.map(|bytes| (bytes[byte_i] >> bit_i) & 1u8 == 1u8);
+            let alloc_bit =
+                AllocatedBit::alloc(cs, || value.ok_or(SynthesisError::AssignmentMissing))?;
+            let input_bit = AllocatedNum::alloc_input(cs, || {
+                value
+                    .map(|value| if value { F::one() } else { F::zero() })
+                    .ok_or(SynthesisError::AssignmentMissing)
+            })?;
             cs.enforce_zero(input_bit.lc() - alloc_bit.get_variable());
 
             bits.push(alloc_bit.into());
@@ -82,25 +94,32 @@ fn lc_from_bits<F: Field, CS: ConstraintSystem<F>>(bits: &[Boolean]) -> LinearCo
 }
 
 struct CompactBits {
-    mantissa: [u8; 3],
-    size: usize,
+    mantissa: Option<[u8; 3]>,
+    size: Option<usize>,
     mantissa_bits: Vec<Boolean>,
     mantissa_sign_bit: Boolean,
     size_bits: Vec<Boolean>,
 }
 
 impl CompactBits {
-    fn from_header(bytes: &[u8], bits: &[Boolean]) -> Self {
+    fn from_header(bytes: Option<&[u8; 80]>, bits: &[Boolean]) -> Self {
         const NBITS_START: usize = 4 + 32 + 32 + 4;
 
-        let mut mantissa = [0; 3];
-        mantissa.copy_from_slice(&bytes[NBITS_START..NBITS_START + 3]);
-        mantissa[2] &= 0xfe; // TODO or 0x7f?
-        let size = bytes[NBITS_START + 3] as usize;
+        let (mantissa, size) = match bytes {
+            Some(bytes) => {
+                let mut mantissa = [0; 3];
+                mantissa.copy_from_slice(&bytes[NBITS_START..NBITS_START + 3]);
+                mantissa[2] &= 0xfe; // TODO or 0x7f?
+                let size = bytes[NBITS_START + 3] as usize;
 
-        // Assert that the size is at least 4, so the mantissa doesn't collide with the
-        // lowest byte, and we can just set the lowest bit to get (target + 1)
-        assert!(size >= 4);
+                // Assert that the size is at least 4, so the mantissa doesn't collide with the
+                // lowest byte, and we can just set the lowest bit to get (target + 1)
+                assert!(size >= 4);
+
+                (Some(mantissa), Some(size))
+            }
+            None => (None, None),
+        };
 
         let mantissa_bits = bits[8 * NBITS_START..(8 * NBITS_START) + 23]
             .iter()
@@ -130,13 +149,21 @@ impl CompactBits {
         cs.enforce_zero(self.mantissa_sign_bit.lc(CS::ONE, Coeff::One));
 
         // Construct the target from the size and mantissa, and witness it
-        let target = {
-            let mut bytes = [0; 32];
-            bytes[self.size - 3] = self.mantissa[0];
-            bytes[self.size - 2] = self.mantissa[1];
-            bytes[self.size - 1] = self.mantissa[2];
-            bytes_to_bits(cs.namespace(|| "target"), &bytes)?
+        let target_val = match (self.mantissa, self.size) {
+            (Some(mantissa), Some(size)) => {
+                let mut bytes = [0; 32];
+                bytes[size - 3] = mantissa[0];
+                bytes[size - 2] = mantissa[1];
+                bytes[size - 1] = mantissa[2];
+                Some(bytes)
+            }
+            _ => None,
         };
+        let target = bytes_to_bits(
+            cs.namespace(|| "target"),
+            target_val.as_ref().map(|b| &b[..]),
+            32,
+        )?;
 
         // We enforce that target is correctly derived from nBits:
         //   mantissa * 256^(size - 3) = target
@@ -210,20 +237,28 @@ impl CompactBits {
             cs.enforce_zero(pow_size.lc() - &sq.lc() - c_var);
         }
 
-        let b_val = base_val.pow(&[self.size as u64 - 3, 0, 0, 0]);
+        let b_val = self
+            .size
+            .map(|size| base_val.pow(&[size as u64 - 3, 0, 0, 0]));
         let (a_var, b_var, c_var) = cs.multiply(|| {
+            let mantissa = self.mantissa.ok_or(SynthesisError::AssignmentMissing)?;
+            let b_val = b_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let target = target_val.ok_or(SynthesisError::AssignmentMissing)?;
+
             let mantissa_val = {
                 let mut bytes = [0; 8];
-                bytes[0..3].copy_from_slice(&self.mantissa);
+                bytes[0..3].copy_from_slice(&mantissa);
                 F::from_u64(u64::from_le_bytes(bytes))
             };
 
             // Build target value with double-and-add
             let mut target_val = F::zero();
-            for bit in target.iter().rev() {
-                target_val = target_val + target_val;
-                if bit.get_value().ok_or(SynthesisError::AssignmentMissing)? {
-                    target_val = target_val + F::one();
+            for byte in target.iter().rev() {
+                for i in 0..8 {
+                    target_val = target_val + target_val;
+                    if (byte >> i) & 1u8 == 1u8 {
+                        target_val = target_val + F::one();
+                    }
                 }
             }
 
@@ -232,8 +267,12 @@ impl CompactBits {
 
         // 256^3
         let base_pow3 = F::from_u64(0x01000000);
-        let (d_var, e_var, f_var) =
-            cs.multiply(|| Ok((b_val, base_pow3, base_val.pow(&[self.size as u64, 0, 0, 0]))))?;
+        let (d_var, e_var, f_var) = cs.multiply(|| {
+            let b_val = b_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let size = self.size.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((b_val, base_pow3, base_val.pow(&[size as u64, 0, 0, 0])))
+        })?;
 
         let mantissa_lc = lc_from_bits::<F, CS>(&self.mantissa_bits);
         let target_lc = lc_from_bits::<F, CS>(&target);
@@ -248,23 +287,39 @@ impl CompactBits {
 }
 
 struct BitcoinHeaderCircuit<F: Field> {
-    header: [u8; 80],
-    block_work: F,
-    remainder: F,
-    prev_height: F,
-    prev_hash: [u8; 32],
-    prev_chain_work: F,
+    header: Option<[u8; 80]>,
+    block_work: Option<F>,
+    remainder: Option<F>,
+    prev_height: Option<F>,
+    prev_hash: Option<[u8; 32]>,
+    prev_chain_work: Option<F>,
 }
 
 impl<F: Field> BitcoinHeaderCircuit<F> {
-    fn new(header: [u8; 80], block_work: F, remainder: F, prev: (F, [u8; 32], F)) -> Self {
+    fn from_witnesses(
+        header: [u8; 80],
+        block_work: F,
+        remainder: F,
+        prev: (F, [u8; 32], F),
+    ) -> Self {
         BitcoinHeaderCircuit {
-            header,
-            block_work,
-            remainder,
-            prev_height: prev.0,
-            prev_hash: prev.1,
-            prev_chain_work: prev.2,
+            header: Some(header),
+            block_work: Some(block_work),
+            remainder: Some(remainder),
+            prev_height: Some(prev.0),
+            prev_hash: Some(prev.1),
+            prev_chain_work: Some(prev.2),
+        }
+    }
+
+    fn for_verification() -> Self {
+        BitcoinHeaderCircuit {
+            header: None,
+            block_work: None,
+            remainder: None,
+            prev_height: None,
+            prev_hash: None,
+            prev_chain_work: None,
         }
     }
 }
@@ -272,22 +327,31 @@ impl<F: Field> BitcoinHeaderCircuit<F> {
 impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
     fn synthesize<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
         // Witness the previous height
-        let prev_height = AllocatedNum::alloc(cs, || Ok(self.prev_height))?;
+        let prev_height = AllocatedNum::alloc(cs, || {
+            self.prev_height.ok_or(SynthesisError::AssignmentMissing)
+        })?;
 
         // Expose the current block height as an input
         let height = AllocatedNum::alloc_input(cs, || {
-            prev_height
-                .get_value()
+            self.prev_height
                 .map(|h| h + F::one())
                 .ok_or(SynthesisError::AssignmentMissing)
         })?;
         cs.enforce_zero(height.lc() - &prev_height.lc() - CS::ONE);
 
         // Witness the header
-        let header_bits = bytes_to_bits(cs.namespace(|| "header"), &self.header)?;
+        let header_bits = bytes_to_bits(
+            cs.namespace(|| "header"),
+            self.header.as_ref().map(|b| &b[..]),
+            80,
+        )?;
 
         // Witness the previous hash
-        let prev_bits = bytes_to_bits(cs.namespace(|| "prev"), &self.prev_hash)?;
+        let prev_bits = bytes_to_bits(
+            cs.namespace(|| "prev"),
+            self.prev_hash.as_ref().map(|b| &b[..]),
+            32,
+        )?;
 
         // Enforce that header contains the previous hash
         enforce_equality(cs, &header_bits[32..32 + 256], &prev_bits);
@@ -299,13 +363,19 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
         };
 
         // Expose the hash as an input
-        let hash_value = Sha256::digest(&Sha256::digest(&self.header));
-        let hash_bits = input_bytes_to_bits(cs.namespace(|| "hash"), &hash_value)?;
+        let hash_value = self
+            .header
+            .map(|header| Sha256::digest(&Sha256::digest(&header)));
+        let hash_bits = input_bytes_to_bits(
+            cs.namespace(|| "hash"),
+            hash_value.as_ref().map(|b| &b[..]),
+            32,
+        )?;
         assert_eq!(result.len(), hash_bits.len());
         enforce_equality(cs, &result, &hash_bits);
 
         // Unpack nBits as the block target
-        let target = CompactBits::from_header(&self.header, &header_bits).unpack(cs)?;
+        let target = CompactBits::from_header(self.header.as_ref(), &header_bits).unpack(cs)?;
 
         // TODO: Range check hash <= target
 
@@ -334,7 +404,9 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
         ];
 
         // Witness the work for this block
-        let block_work = AllocatedNum::alloc(cs, || Ok(self.block_work))?;
+        let block_work = AllocatedNum::alloc(cs, || {
+            self.block_work.ok_or(SynthesisError::AssignmentMissing)
+        })?;
 
         // Load block_work into four 64-bit limbs
         let work_bits: Vec<_> = unpack_fe(cs, &block_work)?
@@ -349,7 +421,9 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
         ];
 
         // Witness the remainder for this block
-        let remainder = AllocatedNum::alloc(cs, || Ok(self.remainder))?;
+        let remainder = AllocatedNum::alloc(cs, || {
+            self.remainder.ok_or(SynthesisError::AssignmentMissing)
+        })?;
 
         // TODO: Range check remainder <= target
 
@@ -393,7 +467,10 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
         cs.enforce_zero(w[7].lc::<_, CS>());
 
         // Witness the previous block's chain work
-        let prev_chain_work = AllocatedNum::alloc(cs, || Ok(self.prev_chain_work))?;
+        let prev_chain_work = AllocatedNum::alloc(cs, || {
+            self.prev_chain_work
+                .ok_or(SynthesisError::AssignmentMissing)
+        })?;
 
         // Compute this block's chain work and expose it as an input
         let chain_work_value = prev_chain_work
@@ -489,7 +566,7 @@ fn main() {
 
         assert_eq!(
             is_satisfied::<_, _, Basic>(
-                &BitcoinHeaderCircuit::new(header, block_work, remainder, prev),
+                &BitcoinHeaderCircuit::from_witnesses(header, block_work, remainder, prev),
                 &input,
             ),
             Ok(true)
