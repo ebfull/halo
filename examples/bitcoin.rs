@@ -1,12 +1,19 @@
 #[macro_use]
 extern crate hex_literal;
 
+#[macro_use]
+extern crate uint;
+
 use halo::{
     is_satisfied, sha256::sha256, unpack_fe, AllocatedBit, AllocatedNum, Basic, Boolean, Circuit,
     Coeff, ConstraintSystem, Field, Fp, LinearCombination, SynthesisError, UInt64,
 };
 use sha2::{Digest, Sha256};
 use std::iter;
+
+construct_uint! {
+    pub struct U256(4);
+}
 
 fn bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
@@ -143,7 +150,7 @@ impl CompactBits {
     fn unpack<F: Field, CS: ConstraintSystem<F>>(
         self,
         cs: &mut CS,
-    ) -> Result<Vec<Boolean>, SynthesisError> {
+    ) -> Result<(Vec<Boolean>, Option<U256>), SynthesisError> {
         // Enforce that the mantissa sign bit is zero. A negative target is invalid under
         // the Bitcoin consensus rules.
         cs.enforce_zero(self.mantissa_sign_bit.lc(CS::ONE, Coeff::One));
@@ -282,13 +289,15 @@ impl CompactBits {
         cs.enforce_zero(LinearCombination::from(e_var) - (Coeff::Full(base_pow3), CS::ONE));
         cs.enforce_zero(pow_size.lc() - f_var);
 
-        Ok(target)
+        Ok((
+            target,
+            target_val.map(|bytes| U256::from_little_endian(&bytes)),
+        ))
     }
 }
 
 struct BitcoinHeaderCircuit<F: Field> {
     header: Option<[u8; 80]>,
-    block_work: Option<F>,
     remainder: Option<F>,
     prev_height: Option<F>,
     prev_hash: Option<[u8; 32]>,
@@ -296,15 +305,9 @@ struct BitcoinHeaderCircuit<F: Field> {
 }
 
 impl<F: Field> BitcoinHeaderCircuit<F> {
-    fn from_witnesses(
-        header: [u8; 80],
-        block_work: F,
-        remainder: F,
-        prev: (F, [u8; 32], F),
-    ) -> Self {
+    fn from_witnesses(header: [u8; 80], remainder: F, prev: (F, [u8; 32], F)) -> Self {
         BitcoinHeaderCircuit {
             header: Some(header),
-            block_work: Some(block_work),
             remainder: Some(remainder),
             prev_height: Some(prev.0),
             prev_hash: Some(prev.1),
@@ -315,7 +318,6 @@ impl<F: Field> BitcoinHeaderCircuit<F> {
     fn for_verification() -> Self {
         BitcoinHeaderCircuit {
             header: None,
-            block_work: None,
             remainder: None,
             prev_height: None,
             prev_hash: None,
@@ -375,7 +377,8 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
         enforce_equality(cs, &result, &hash_bits);
 
         // Unpack nBits as the block target
-        let target = CompactBits::from_header(self.header.as_ref(), &header_bits).unpack(cs)?;
+        let (target, target_val) =
+            CompactBits::from_header(self.header.as_ref(), &header_bits).unpack(cs)?;
 
         // TODO: Range check hash <= target
 
@@ -404,9 +407,22 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
         ];
 
         // Witness the work for this block
-        let block_work = AllocatedNum::alloc(cs, || {
-            self.block_work.ok_or(SynthesisError::AssignmentMissing)
-        })?;
+        let block_work_val = target_val
+            .ok_or(SynthesisError::AssignmentMissing)
+            .and_then(|target| {
+                let work = (!target / (target + 1)) + 1;
+
+                let mut bytes = [0; 32];
+                work.to_little_endian(&mut bytes);
+
+                let fe = F::from_bytes(&bytes);
+                if fe.is_some().into() {
+                    Ok(fe.unwrap())
+                } else {
+                    Err(SynthesisError::Unsatisfiable)
+                }
+            });
+        let block_work = AllocatedNum::alloc(cs, || block_work_val)?;
 
         // Load block_work into four 64-bit limbs
         let work_bits: Vec<_> = unpack_fe(cs, &block_work)?
@@ -528,13 +544,6 @@ fn main() {
         hex!("0000000000000000000000000000000000000000000000000000000b000b000b"),
     ];
 
-    // Block work is fixed within each difficulty adjustment period
-    let block_work = {
-        let mut first_work = chain_work[0];
-        first_work.reverse();
-        Fp::from_bytes(&first_work).unwrap()
-    };
-
     // Remainder is fixed for a given block target
     let remainder = {
         let mut r = hex!("000000000000fffffffffffffffffffffffffffffffffffffffffffefffeffff");
@@ -566,7 +575,7 @@ fn main() {
 
         assert_eq!(
             is_satisfied::<_, _, Basic>(
-                &BitcoinHeaderCircuit::from_witnesses(header, block_work, remainder, prev),
+                &BitcoinHeaderCircuit::from_witnesses(header, remainder, prev),
                 &input,
             ),
             Ok(true)
