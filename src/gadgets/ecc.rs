@@ -11,7 +11,7 @@ use subtle::CtOption;
 ///
 /// Internally it is represented with coordinates that always satisfy the curve
 /// equation, and a [`Boolean`] tracking whether it is the identity.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CurvePoint<C: Curve> {
     x: Num<C::Base>,
     y: Num<C::Base>,

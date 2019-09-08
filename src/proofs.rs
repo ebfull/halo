@@ -1135,18 +1135,18 @@ pub struct PolynomialOpening<C: Curve> {
 
 #[derive(Clone)]
 pub struct MultiPolynomialOpening<C: Curve> {
-    rounds: Vec<InnerProductRound<C>>,
-    a: Vec<C::Scalar>,
-    g: C,
+    pub rounds: Vec<InnerProductRound<C>>,
+    pub a: Vec<C::Scalar>,
+    pub g: C,
 }
 
 #[derive(Clone)]
 #[allow(non_snake_case)]
 pub struct InnerProductRound<C: Curve> {
-    L: Vec<C>,
-    R: Vec<C>,
-    l: Vec<C::Scalar>,
-    r: Vec<C::Scalar>,
+    pub L: Vec<C>,
+    pub R: Vec<C>,
+    pub l: Vec<C::Scalar>,
+    pub r: Vec<C::Scalar>,
 }
 
 impl<C: Curve> InnerProductRound<C> {

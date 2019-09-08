@@ -700,7 +700,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         let p_commitment = p_commitment * &z + self.s_new_commitment;
         let p_commitment = p_commitment * &z + leftovers.g_new;
         */
-        let p_commitment = r_commitment;
+        let p_commitment = r_commitment.clone();
         let p_commitment = p_commitment.mock_multiply(cs, &z)?;
         let p_commitment = p_commitment.mock_add(cs, &s_old_commitment)?;
         let p_commitment = p_commitment.mock_multiply(cs, &z)?;
@@ -746,9 +746,182 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         let q_commitment = q_commitment.mock_add(cs, &c_commitment)?;
 
         let qy_opening = ky_opening_pt.mock_multiply(cs, &z)?;
-        let qy_opening = qy_opening.mock_add(cs, &sx_cur_opening_pt);
+        let qy_opening = qy_opening.mock_add(cs, &sx_cur_opening_pt)?;
+
+        let (g_new, challenges_new) = self.verify_inner_product(
+            cs,
+            &base_case,
+            transcript,
+            &[
+                p_commitment,
+                r_commitment,
+                c_commitment.clone(),
+                q_commitment,
+                c_commitment,
+            ],
+            &[
+                p_opening,
+                rxy_opening_pt,
+                sx_old_opening_pt,
+                qy_opening,
+                sx_new_opening_pt,
+            ],
+        )?;
+
+        // new_leftovers
+        {
+            let (x, y) = s_new_commitment.get_xy(cs)?;
+            let x = unpack_fe(cs, &x)?;
+            let y = unpack_fe(cs, &y)?;
+            self.equal_unless_base_case(cs, base_case.clone(), &x, &new_leftovers[0..256])?;
+            self.equal_unless_base_case(cs, base_case.clone(), &y, &new_leftovers[256..512])?;
+        }
+
+        {
+            self.equal_unless_base_case(
+                cs,
+                base_case.clone(),
+                &y_new,
+                &new_leftovers[512..512 + 128],
+            )?;
+            for i in 0..128 {
+                cs.enforce_zero(LinearCombination::from(
+                    new_leftovers[512 + 128 + i].get_variable(),
+                ));
+            }
+        }
+
+        {
+            let (x, y) = g_new.get_xy(cs)?;
+            let x = unpack_fe(cs, &x)?;
+            let y = unpack_fe(cs, &y)?;
+            self.equal_unless_base_case(
+                cs,
+                base_case.clone(),
+                &x,
+                &new_leftovers[256 * 3..256 * 4],
+            )?;
+            self.equal_unless_base_case(
+                cs,
+                base_case.clone(),
+                &y,
+                &new_leftovers[256 * 4..256 * 5],
+            )?;
+        }
+
+        for (i, challenge) in challenges_new.into_iter().enumerate() {
+            self.equal_unless_base_case(
+                cs,
+                base_case.clone(),
+                &challenge,
+                &new_leftovers[256 * 5 + 256 * i..256 * 5 + 256 * i + 128],
+            )?;
+            for j in 0..128 {
+                cs.enforce_zero(LinearCombination::from(
+                    new_leftovers[256 * 5 + 256 * i + 128 + j].get_variable(),
+                ));
+            }
+
+            // k + 11 is the start on deferred for the new challenges
+            self.equal_unless_base_case(
+                cs,
+                base_case.clone(),
+                &challenge,
+                &new_deferred[256 * (11 + self.params.k) + i * 256
+                    ..256 * (11 + self.params.k) + i * 256 + 128],
+            )?;
+            for j in 0..128 {
+                cs.enforce_zero(LinearCombination::from(
+                    new_deferred[256 * (11 + self.params.k) + i * 256 + 128 + j].get_variable(),
+                ));
+            }
+        }
+
+        // TODO: constrain x, y_cur for deferred
 
         Ok(())
+    }
+
+    fn verify_inner_product<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        cs: &mut CS,
+        base_case: &AllocatedBit,
+        transcript: &mut RescueGadget<E1::Scalar>,
+        commitments: &[CurvePoint<E2>],
+        openings: &[CurvePoint<E2>],
+    ) -> Result<(CurvePoint<E2>, Vec<Vec<AllocatedBit>>), SynthesisError> {
+        assert_eq!(commitments.len(), openings.len());
+        let mut challenges = vec![];
+
+        for i in 0..self.params.k {
+            for j in 0..commitments.len() {
+                let L = CurvePoint::witness(cs, || {
+                    Ok(self
+                        .proof
+                        .map(|proof| proof.proof.inner_product.rounds[i].L[j])
+                        .unwrap_or(E2::zero()))
+                })?;
+                let R = CurvePoint::witness(cs, || {
+                    Ok(self
+                        .proof
+                        .map(|proof| proof.proof.inner_product.rounds[i].R[j])
+                        .unwrap_or(E2::zero()))
+                })?;
+                let l = CurvePoint::witness(cs, || {
+                    Ok(self
+                        .proof
+                        .map(|proof| E2::one() * &proof.proof.inner_product.rounds[i].l[j])
+                        .unwrap_or(E2::zero()))
+                })?;
+                let r = CurvePoint::witness(cs, || {
+                    Ok(self
+                        .proof
+                        .map(|proof| E2::one() * &proof.proof.inner_product.rounds[i].r[j])
+                        .unwrap_or(E2::zero()))
+                })?;
+
+                self.commit_point(cs, transcript, &L)?;
+                self.commit_point(cs, transcript, &R)?;
+                self.commit_point(cs, transcript, &l)?;
+                self.commit_point(cs, transcript, &r)?;
+            }
+
+            let challenge = self.get_challenge(cs, transcript)?;
+            challenges.push(challenge);
+        }
+        /*
+        for round in &self.rounds {
+            for j in 0..instances.len() {
+                append_point(transcript, &round.L[j]);
+                append_point(transcript, &round.R[j]);
+                append_scalar::<C>(transcript, &round.l[j]);
+                append_scalar::<C>(transcript, &round.r[j]);
+            }
+
+            let challenge = get_challenge::<_, C::Scalar>(transcript);
+
+            challenges.push(challenge);
+            challenges_inv.push(challenge_inv);
+            challenges_sq.push(challenge_sq);
+            challenges_inv_sq.push(challenge_inv_sq);
+
+            for j in 0..instances.len() {
+                p[j] = p[j] + (round.L[j] * challenge_sq);
+                p[j] = p[j] + (round.R[j] * challenge_inv_sq);
+                v[j] = v[j] + &(round.l[j] * &challenge_sq);
+                v[j] = v[j] + &(round.r[j] * &challenge_inv_sq);
+            }
+        }
+        */
+
+        let g_new = CurvePoint::witness(cs, || {
+            Ok(self
+                .proof
+                .map(|proof| proof.proof.inner_product.g)
+                .unwrap_or(E2::zero()))
+        })?;
+
+        Ok((g_new, challenges))
     }
 
     fn commit_point<CS: ConstraintSystem<E1::Scalar>>(
