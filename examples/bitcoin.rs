@@ -247,7 +247,6 @@ impl CompactBits {
 }
 
 struct BitcoinHeaderCircuit<F: Field> {
-    height: F,
     header: [u8; 80],
     hash: [u8; 32],
     block_work: F,
@@ -259,7 +258,6 @@ struct BitcoinHeaderCircuit<F: Field> {
 
 impl<F: Field> BitcoinHeaderCircuit<F> {
     fn new(
-        height: F,
         header: [u8; 80],
         hash: [u8; 32],
         block_work: F,
@@ -267,7 +265,6 @@ impl<F: Field> BitcoinHeaderCircuit<F> {
         prev: (F, [u8; 32], F),
     ) -> Self {
         BitcoinHeaderCircuit {
-            height,
             header,
             hash,
             block_work,
@@ -284,10 +281,13 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
         // Witness the previous height
         let prev_height = AllocatedNum::alloc(cs, || Ok(self.prev_height))?;
 
-        // Bring the block height in as an input
-        let height = AllocatedNum::alloc_input(cs, || Ok(self.height))?;
-
-        // Enforce that the heights are sequential
+        // Expose the current block height as an input
+        let height = AllocatedNum::alloc_input(cs, || {
+            prev_height
+                .get_value()
+                .map(|h| h + F::one())
+                .ok_or(SynthesisError::AssignmentMissing)
+        })?;
         cs.enforce_zero(height.lc() - &prev_height.lc() - CS::ONE);
 
         // Witness the header
@@ -497,7 +497,7 @@ fn main() {
 
         assert_eq!(
             is_satisfied::<_, _, Basic>(
-                &BitcoinHeaderCircuit::new(height, header, hash, block_work, remainder, prev),
+                &BitcoinHeaderCircuit::new(header, hash, block_work, remainder, prev),
                 &input,
             ),
             Ok(true)
