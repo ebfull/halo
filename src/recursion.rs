@@ -536,6 +536,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
     fn verify_proof<CS: ConstraintSystem<E1::Scalar>>(
         &self,
         cs: &mut CS,
+        base_case: AllocatedBit,
         k_commitment: &CurvePoint<E2>,
         old_leftovers: &[AllocatedBit],
         new_deferred: &[AllocatedBit],
@@ -651,6 +652,45 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
 
         let z = self.get_challenge(cs, transcript)?;
 
+        // old_leftovers
+        let s_old_commitment = CurvePoint::witness(cs, || {
+            Ok(self
+                .proof
+                .map(|proof| proof.oldproof1.s_new_commitment)
+                .unwrap_or(E2::zero()))
+        })?;
+        {
+            let (x, y) = s_old_commitment.get_xy(cs)?;
+            let x = unpack_fe(cs, &x)?;
+            let y = unpack_fe(cs, &y)?;
+            self.equal_unless_base_case(cs, base_case.clone(), &x, &old_leftovers[0..256])?;
+            self.equal_unless_base_case(cs, base_case.clone(), &y, &old_leftovers[256..512])?;
+        }
+
+        let g_old = CurvePoint::witness(cs, || {
+            Ok(self
+                .proof
+                .map(|proof| proof.oldproof1.g_new)
+                .unwrap_or(E2::zero()))
+        })?;
+        {
+            let (x, y) = g_old.get_xy(cs)?;
+            let x = unpack_fe(cs, &x)?;
+            let y = unpack_fe(cs, &y)?;
+            self.equal_unless_base_case(
+                cs,
+                base_case.clone(),
+                &x,
+                &old_leftovers[256 * 3..256 * 4],
+            )?;
+            self.equal_unless_base_case(
+                cs,
+                base_case.clone(),
+                &y,
+                &old_leftovers[256 * 4..256 * 5],
+            )?;
+        }
+
         /*
         let p_commitment = self.r_commitment;
         let p_commitment = p_commitment * &z + leftovers.s_new_commitment;
@@ -659,19 +699,10 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         let p_commitment = p_commitment * &z + self.t_negative_commitment;
         let p_commitment = p_commitment * &z + self.s_new_commitment;
         let p_commitment = p_commitment * &z + leftovers.g_new;
-
-        let p_opening = self.rx_opening;
-        let p_opening = p_opening * &z + &self.sx_old_opening;
-        let p_opening = p_opening * &z + &self.sx_cur_opening;
-        let p_opening = p_opening * &z + &self.tx_positive_opening;
-        let p_opening = p_opening * &z + &self.tx_negative_opening;
-        let p_opening = p_opening * &z + &self.sx_new_opening;
-        let p_opening = p_opening * &z + &gx_old_opening;
         */
-
         let p_commitment = r_commitment;
         let p_commitment = p_commitment.mock_multiply(cs, &z)?;
-        let p_commitment = p_commitment.mock_add(cs, &s_new_commitment)?;
+        let p_commitment = p_commitment.mock_add(cs, &s_old_commitment)?;
         let p_commitment = p_commitment.mock_multiply(cs, &z)?;
         let p_commitment = p_commitment.mock_add(cs, &s_cur_commitment)?;
         let p_commitment = p_commitment.mock_multiply(cs, &z)?;
@@ -680,19 +711,42 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         let p_commitment = p_commitment.mock_add(cs, &t_negative_commitment)?;
         let p_commitment = p_commitment.mock_multiply(cs, &z)?;
         let p_commitment = p_commitment.mock_add(cs, &s_new_commitment)?;
-        // TODO: we need to grab g_old from old_leftovers
+        let p_commitment = p_commitment.mock_multiply(cs, &z)?;
+        let p_commitment = p_commitment.mock_add(cs, &g_old)?;
 
-        // let mut val = 0u128;
-        // for b in z.iter().rev() {
-        //     val = val + val;
-        //     if let Some(b) = b.get_value() {
-        //         if b {
-        //             val = val + 1;
-        //         }
-        //     }
-        // }
+        /*
+        let p_opening = self.rx_opening;
+        let p_opening = p_opening * &z + &self.sx_old_opening;
+        let p_opening = p_opening * &z + &self.sx_cur_opening;
+        let p_opening = p_opening * &z + &self.tx_positive_opening;
+        let p_opening = p_opening * &z + &self.tx_negative_opening;
+        let p_opening = p_opening * &z + &self.sx_new_opening;
+        let p_opening = p_opening * &z + &gx_old_opening;
+        */
+        let p_opening = rx_opening_pt;
+        let p_opening = p_opening.mock_multiply(cs, &z)?;
+        let p_opening = p_opening.mock_add(cs, &sx_old_opening_pt)?;
+        let p_opening = p_opening.mock_multiply(cs, &z)?;
+        let p_opening = p_opening.mock_add(cs, &sx_cur_opening_pt)?;
+        let p_opening = p_opening.mock_multiply(cs, &z)?;
+        let p_opening = p_opening.mock_add(cs, &tx_positive_opening_pt)?;
+        let p_opening = p_opening.mock_multiply(cs, &z)?;
+        let p_opening = p_opening.mock_add(cs, &tx_negative_opening_pt)?;
+        let p_opening = p_opening.mock_multiply(cs, &z)?;
+        let p_opening = p_opening.mock_add(cs, &sx_new_opening_pt)?;
+        let p_opening = p_opening.mock_multiply(cs, &z)?;
+        let p_opening = p_opening.mock_add(cs, &gx_old_opening_pt)?;
 
-        // println!("z in circuit: {:?}", val);
+        /*
+        let q_commitment = self.c_commitment + (k_commitment * &z);
+        let qy_opening = self.sx_cur_opening + &(ky_opening * &z);
+        */
+
+        let q_commitment = k_commitment.mock_multiply(cs, &z)?;
+        let q_commitment = q_commitment.mock_add(cs, &c_commitment)?;
+
+        let qy_opening = ky_opening_pt.mock_multiply(cs, &z)?;
+        let qy_opening = qy_opening.mock_add(cs, &sx_cur_opening_pt);
 
         Ok(())
     }
@@ -757,8 +811,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
         // 2. Leftovers resulting from verifying the inner proof
         // 3. New "deferred" computations
 
-        // + 256 * (3 + k)
-        // + 256 * (3 + k)
+        // + 256 * (5 + k)
+        // + 256 * (5 + k)
         // + 256 * deferred.len()
 
         let mut payload_bits = vec![];
@@ -779,8 +833,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
                 }
             }
         } else {
-            // 256 * (3 + k)
-            let num_bits = 256 * (3 + self.params.k);
+            // 256 * (5 + k)
+            let num_bits = 256 * (5 + self.params.k);
             for i in 0..num_bits {
                 leftovers1.push(AllocatedBit::alloc_input_unchecked(cs, || Ok(false))?);
             }
@@ -796,8 +850,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
                 }
             }
         } else {
-            // 256 * (3 + k)
-            let num_bits = 256 * (3 + self.params.k);
+            // 256 * (5 + k)
+            let num_bits = 256 * (5 + self.params.k);
             for i in 0..num_bits {
                 leftovers2.push(AllocatedBit::alloc_input_unchecked(cs, || Ok(false))?);
             }
@@ -873,8 +927,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
                 }
             }
         } else {
-            // 256 * (3 + k)
-            let num_bits = 256 * (3 + self.params.k);
+            // 256 * (5 + k)
+            let num_bits = 256 * (5 + self.params.k);
             for _ in 0..num_bits {
                 old_leftovers1.push(AllocatedBit::alloc(cs, || Ok(false))?);
             }
@@ -910,19 +964,36 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
             .zip(self.params.generators_xy[2..].iter())
         {
             let gen = CurvePoint::constant(gen.0, gen.1);
-            k_commitment = k_commitment.add_conditionally_incomplete(cs, &gen, &Boolean::from(bit.clone()))?;
+            k_commitment =
+                k_commitment.add_conditionally_incomplete(cs, &gen, &Boolean::from(bit.clone()))?;
         }
 
         // println!("k inside circuit: {:?}", k_commitment);
 
         self.verify_deferred(cs, &old_deferred)?;
-        self.verify_proof(cs, &k_commitment, &old_leftovers1, &deferred, &leftovers2)?;
+        self.verify_proof(
+            cs,
+            base_case.clone(),
+            &k_commitment,
+            &old_leftovers1,
+            &deferred,
+            &leftovers2,
+        )?;
 
+        // deferred old challenges should be the same
         self.equal_unless_base_case(
             cs,
-            base_case,
+            base_case.clone(),
             &deferred[256 * 10..256 * (10 + self.params.k)],
-            &old_leftovers1[256 * 3..],
+            &old_leftovers1[256 * 5..],
+        )?;
+
+        // deferred y_old should be the same
+        self.equal_unless_base_case(
+            cs,
+            base_case.clone(),
+            &deferred[256 * 1..256 * 2],
+            &old_leftovers1[256 * 2..256 * 3],
         )?;
 
         self.inner_circuit.synthesize(cs)

@@ -1,5 +1,7 @@
 use crate::rescue::Rescue;
+use crate::util::CtOptionExt;
 use crate::*;
+use subtle::{Choice, CtOption};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Leftovers<C: Curve> {
@@ -13,10 +15,32 @@ impl<C: Curve> Leftovers<C> {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut ret = vec![];
 
-        ret.extend(self.s_new_commitment.to_bytes()[..].iter().cloned());
+        {
+            let xy = self.s_new_commitment.get_xy();
+
+            if bool::from(xy.is_some()) {
+                let (x, y) = xy.unwrap();
+                ret.extend(x.to_bytes()[..].iter().cloned());
+                ret.extend(y.to_bytes()[..].iter().cloned());
+            } else {
+                ret.extend(C::Base::zero().to_bytes()[..].iter().cloned());
+                ret.extend(C::Base::zero().to_bytes()[..].iter().cloned());
+            }
+        }
         // TODO: This is 128-bit
         ret.extend(self.y_new.to_bytes()[..].iter().cloned());
-        ret.extend(self.g_new.to_bytes()[..].iter().cloned());
+        {
+            let xy = self.g_new.get_xy();
+
+            if bool::from(xy.is_some()) {
+                let (x, y) = xy.unwrap();
+                ret.extend(x.to_bytes()[..].iter().cloned());
+                ret.extend(y.to_bytes()[..].iter().cloned());
+            } else {
+                ret.extend(C::Base::zero().to_bytes()[..].iter().cloned());
+                ret.extend(C::Base::zero().to_bytes()[..].iter().cloned());
+            }
+        }
         for challenge in &self.challenges_new {
             ret.extend(challenge.to_bytes()[..].iter().cloned());
         }

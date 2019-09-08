@@ -27,8 +27,8 @@ impl<F: Field> Circuit<F> for MyCircuit {
 fn main() {
     println!("Making parameters");
     let start = Instant::now();
-    let params0: Params<Ec0> = Params::new(20);
-    let params1: Params<Ec1> = Params::new(20);
+    let params0: Params<Ec0> = Params::new(21);
+    let params1: Params<Ec1> = Params::new(21);
     println!("done, took {:?}", start.elapsed());
 
     let mycircuit = MyCircuit;
@@ -94,5 +94,22 @@ fn main() {
     println!("verifying proof4");
     let start = Instant::now();
     assert!(proof4.verify(&params0, &params1, &mycircuit).unwrap());
+    println!("done, took {:?}", start.elapsed());
+
+    println!("creating proof5");
+    let start = Instant::now();
+    let proof5 = RecursiveProof::<Ec1, Ec0>::create_proof(
+        &params1,
+        &params0,
+        Some(&proof4),
+        &mycircuit,
+        &[],
+    )
+    .unwrap();
+    println!("done, took {:?}", start.elapsed());
+
+    println!("verifying proof5");
+    let start = Instant::now();
+    assert!(proof5.verify(&params1, &params0, &mycircuit).unwrap());
     println!("done, took {:?}", start.elapsed());
 }
