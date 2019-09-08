@@ -837,7 +837,50 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
             }
         }
 
-        // TODO: constrain x, y_cur for deferred
+        // x (deferred)
+        {
+            self.equal_unless_base_case(
+                cs,
+                base_case.clone(),
+                &x,
+                &new_deferred[0..128],
+            )?;
+            for i in 0..128 {
+                cs.enforce_zero(LinearCombination::from(
+                    new_deferred[128 + i].get_variable(),
+                ));
+            }
+        }
+
+        // y_cur (deferred)
+        {
+            self.equal_unless_base_case(
+                cs,
+                base_case.clone(),
+                &y_cur,
+                &new_deferred[256*2..256*2 + 128],
+            )?;
+            for i in 0..128 {
+                cs.enforce_zero(LinearCombination::from(
+                    new_deferred[256*2 + 128 + i].get_variable(),
+                ));
+            }
+        }
+
+        // y_new (deferred)
+        {
+            self.equal_unless_base_case(
+                cs,
+                base_case.clone(),
+                &y_new,
+                &new_deferred[256*3..256*3 + 128],
+            )?;
+            for i in 0..128 {
+                cs.enforce_zero(LinearCombination::from(
+                    new_deferred[256*3 + 128 + i].get_variable(),
+                ));
+            }
+        }
 
         Ok(())
     }

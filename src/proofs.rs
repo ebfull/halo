@@ -5,9 +5,13 @@ use subtle::{Choice, CtOption};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Leftovers<C: Curve> {
+    // comes from circuit
     pub s_new_commitment: C,
+    // comes from circuit
     pub y_new: C::Scalar,
+    // comes from circuit
     pub g_new: C,
+    // comes from circuit
     pub challenges_new: Vec<C::Scalar>,
 }
 
@@ -92,19 +96,29 @@ impl<C: Curve> Leftovers<C> {
 */
 #[derive(Clone)]
 pub struct Deferred<F: Field> {
+    // comes from circuit
     pub x: F,
+    // enforced to equal old leftovers
     pub y_old: F,
+    // comes from circuit
     pub y_cur: F,
+    // comes from circuit
     pub y_new: F,
+    // enforced
     pub ky_opening: F,
     pub tx_positive_opening: F,
     pub tx_negative_opening: F,
     pub sx_cur_opening: F,
     pub rx_opening: F,
     pub rxy_opening: F,
+
+    // enforces to equal old leftovers
     pub challenges_old: Vec<F>,
+    // fed to circuit
     pub gx_old_opening: F,
+    // comes from circuit
     pub challenges_new: Vec<F>,
+    // fed to circuit
     pub b_x: F,
     pub b_xy: F,
     pub b_y_old: F,
