@@ -5,6 +5,7 @@ use halo::{
     is_satisfied, sha256::sha256, unpack_fe, AllocatedBit, AllocatedNum, Basic, Boolean, Circuit,
     Coeff, ConstraintSystem, Field, Fp, LinearCombination, SynthesisError, UInt64,
 };
+use sha2::{Digest, Sha256};
 use std::iter;
 
 fn bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
@@ -248,7 +249,6 @@ impl CompactBits {
 
 struct BitcoinHeaderCircuit<F: Field> {
     header: [u8; 80],
-    hash: [u8; 32],
     block_work: F,
     remainder: F,
     prev_height: F,
@@ -257,16 +257,9 @@ struct BitcoinHeaderCircuit<F: Field> {
 }
 
 impl<F: Field> BitcoinHeaderCircuit<F> {
-    fn new(
-        header: [u8; 80],
-        hash: [u8; 32],
-        block_work: F,
-        remainder: F,
-        prev: (F, [u8; 32], F),
-    ) -> Self {
+    fn new(header: [u8; 80], block_work: F, remainder: F, prev: (F, [u8; 32], F)) -> Self {
         BitcoinHeaderCircuit {
             header,
-            hash,
             block_work,
             remainder,
             prev_height: prev.0,
@@ -305,11 +298,10 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
             sha256(cs, &mid)?
         };
 
-        // Bring the expected hash in as an input
-        let hash_bits = input_bytes_to_bits(cs.namespace(|| "hash"), &self.hash)?;
+        // Expose the hash as an input
+        let hash_value = Sha256::digest(&Sha256::digest(&self.header));
+        let hash_bits = input_bytes_to_bits(cs.namespace(|| "hash"), &hash_value)?;
         assert_eq!(result.len(), hash_bits.len());
-
-        // Enforce equality between the computed and expected hash
         enforce_equality(cs, &result, &hash_bits);
 
         // Unpack nBits as the block target
@@ -497,7 +489,7 @@ fn main() {
 
         assert_eq!(
             is_satisfied::<_, _, Basic>(
-                &BitcoinHeaderCircuit::new(header, hash, block_work, remainder, prev),
+                &BitcoinHeaderCircuit::new(header, block_work, remainder, prev),
                 &input,
             ),
             Ok(true)
