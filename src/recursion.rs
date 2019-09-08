@@ -601,84 +601,51 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         })?;
         self.commit_point(cs, transcript, &s_new_commitment)?;
 
-        // Openings
+        // // Openings
 
-        let g = {
-            let (x, y) = E2::one().get_xy().unwrap();
-            CurvePoint::<E2>::constant(x, y)
-        };
+        // let g = {
+        //     let (x, y) = E2::one().get_xy().unwrap();
+        //     CurvePoint::<E2>::constant(x, y)
+        // };
 
-        let ky_opening: Vec<Boolean> = new_deferred[256 * 4..256 * 5]
-            .iter()
-            .cloned()
-            .map(|b| Boolean::from(b))
-            .collect();
-        let ky_opening_pt = g.multiply(cs, &ky_opening)?;
-        self.commit_point(cs, transcript, &ky_opening_pt)?;
+        // let ky_opening_pt = g.multiply(cs, &new_deferred[256 * 4..256 * 5])?;
+        // self.commit_point(cs, transcript, &ky_opening_pt)?;
 
-        let rx_opening: Vec<Boolean> = new_deferred[256 * 8..256 * 9]
-            .iter()
-            .cloned()
-            .map(|b| Boolean::from(b))
-            .collect();
-        let rx_opening_pt = g.multiply(cs, &rx_opening)?;
-        self.commit_point(cs, transcript, &rx_opening_pt)?;
+        // let rx_opening_pt = g.multiply(cs, &new_deferred[256 * 8..256 * 9])?;
+        // self.commit_point(cs, transcript, &rx_opening_pt)?;
 
-        let rxy_opening: Vec<Boolean> = new_deferred[256 * 9..256 * 10]
-            .iter()
-            .cloned()
-            .map(|b| Boolean::from(b))
-            .collect();
-        let rxy_opening_pt = g.multiply(cs, &rxy_opening)?;
-        self.commit_point(cs, transcript, &rxy_opening_pt)?;
+        // let rxy_opening_pt = g.multiply(cs, &new_deferred[256 * 9..256 * 10])?;
+        // self.commit_point(cs, transcript, &rxy_opening_pt)?;
 
-        let sx_old_opening_pt = CurvePoint::witness(cs, || {
-            Ok(self
-                .proof
-                .map(|proof| E2::one() * &proof.proof.sx_old_opening)
-                .unwrap_or(E2::zero()))
-        })?;
-        self.commit_point(cs, transcript, &sx_old_opening_pt)?;
+        // let sx_old_opening_pt = CurvePoint::witness(cs, || {
+        //     Ok(self
+        //         .proof
+        //         .map(|proof| E2::one() * &proof.proof.sx_old_opening)
+        //         .unwrap_or(E2::zero()))
+        // })?;
+        // self.commit_point(cs, transcript, &sx_old_opening_pt)?;
 
-        let sx_cur_opening: Vec<Boolean> = new_deferred[256 * 7..256 * 8]
-            .iter()
-            .cloned()
-            .map(|b| Boolean::from(b))
-            .collect();
-        let sx_cur_opening_pt = g.multiply(cs, &sx_cur_opening)?;
-        self.commit_point(cs, transcript, &sx_cur_opening_pt)?;
+        // let sx_cur_opening_pt = g.multiply(cs, &new_deferred[256 * 7..256 * 8])?;
+        // self.commit_point(cs, transcript, &sx_cur_opening_pt)?;
 
-        let tx_positive_opening: Vec<Boolean> = new_deferred[256 * 5..256 * 6]
-            .iter()
-            .cloned()
-            .map(|b| Boolean::from(b))
-            .collect();
-        let tx_positive_opening_pt = g.multiply(cs, &tx_positive_opening)?;
-        self.commit_point(cs, transcript, &tx_positive_opening_pt)?;
+        // let tx_positive_opening_pt = g.multiply(cs, &new_deferred[256 * 5..256 * 6])?;
+        // self.commit_point(cs, transcript, &tx_positive_opening_pt)?;
 
-        let tx_negative_opening: Vec<Boolean> = new_deferred[256 * 6..256 * 7]
-            .iter()
-            .cloned()
-            .map(|b| Boolean::from(b))
-            .collect();
-        let tx_negative_opening_pt = g.multiply(cs, &tx_negative_opening)?;
-        self.commit_point(cs, transcript, &tx_negative_opening_pt)?;
+        // let tx_negative_opening_pt = g.multiply(cs, &new_deferred[256 * 6..256 * 7])?;
+        // self.commit_point(cs, transcript, &tx_negative_opening_pt)?;
 
-        let sx_new_opening_pt = CurvePoint::witness(cs, || {
-            Ok(self
-                .proof
-                .map(|proof| E2::one() * &proof.proof.sx_new_opening)
-                .unwrap_or(E2::zero()))
-        })?;
-        self.commit_point(cs, transcript, &sx_new_opening_pt)?;
+        // let sx_new_opening_pt = CurvePoint::witness(cs, || {
+        //     Ok(self
+        //         .proof
+        //         .map(|proof| E2::one() * &proof.proof.sx_new_opening)
+        //         .unwrap_or(E2::zero()))
+        // })?;
+        // self.commit_point(cs, transcript, &sx_new_opening_pt)?;
 
-        let gx_old_opening: Vec<Boolean> = new_deferred
-            [256 * (10 + self.params.k)..256 * (11 + self.params.k)]
-            .iter()
-            .cloned()
-            .map(|b| Boolean::from(b))
-            .collect();
-        let gx_old_opening_pt = g.multiply(cs, &gx_old_opening)?;
+        // let gx_old_opening_pt = g.multiply(
+        //     cs,
+        //     &new_deferred[256 * (10 + self.params.k)..256 * (11 + self.params.k)],
+        // )?;
 
         // let mut val = 0u128;
         // for b in y_cur.iter().rev() {
@@ -908,13 +875,13 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
             .zip(self.params.generators_xy[2..].iter())
         {
             let gen = CurvePoint::constant(gen.0, gen.1);
-            k_commitment = k_commitment.add_conditionally(cs, &gen, &Boolean::from(bit.clone()))?;
+            k_commitment = k_commitment.add_conditionally_incomplete(cs, &gen, &Boolean::from(bit.clone()))?;
         }
 
         // println!("k inside circuit: {:?}", k_commitment);
 
         self.verify_deferred(cs, &old_deferred)?;
-        //self.verify_proof(cs, &k_commitment, &deferred, &leftovers2)?;
+        self.verify_proof(cs, &k_commitment, &deferred, &leftovers2)?;
 
         self.equal_unless_base_case(
             cs,
