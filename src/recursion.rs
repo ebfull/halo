@@ -537,6 +537,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         &self,
         cs: &mut CS,
         k_commitment: &CurvePoint<E2>,
+        old_leftovers: &[AllocatedBit],
         new_deferred: &[AllocatedBit],
         new_leftovers: &[AllocatedBit],
     ) -> Result<(), SynthesisError> {
@@ -603,52 +604,86 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
 
         // // Openings
 
-        // let g = {
-        //     let (x, y) = E2::one().get_xy().unwrap();
-        //     CurvePoint::<E2>::constant(x, y)
-        // };
+        let g = {
+            let (x, y) = E2::one().get_xy().unwrap();
+            CurvePoint::<E2>::constant(x, y)
+        };
 
-        // let ky_opening_pt = g.multiply(cs, &new_deferred[256 * 4..256 * 5])?;
-        // self.commit_point(cs, transcript, &ky_opening_pt)?;
+        let ky_opening_pt = g.mock_multiply(cs, &new_deferred[256 * 4..256 * 5])?;
+        self.commit_point(cs, transcript, &ky_opening_pt)?;
 
-        // let rx_opening_pt = g.multiply(cs, &new_deferred[256 * 8..256 * 9])?;
-        // self.commit_point(cs, transcript, &rx_opening_pt)?;
+        let rx_opening_pt = g.mock_multiply(cs, &new_deferred[256 * 8..256 * 9])?;
+        self.commit_point(cs, transcript, &rx_opening_pt)?;
 
-        // let rxy_opening_pt = g.multiply(cs, &new_deferred[256 * 9..256 * 10])?;
-        // self.commit_point(cs, transcript, &rxy_opening_pt)?;
+        let rxy_opening_pt = g.mock_multiply(cs, &new_deferred[256 * 9..256 * 10])?;
+        self.commit_point(cs, transcript, &rxy_opening_pt)?;
 
-        // let sx_old_opening_pt = CurvePoint::witness(cs, || {
-        //     Ok(self
-        //         .proof
-        //         .map(|proof| E2::one() * &proof.proof.sx_old_opening)
-        //         .unwrap_or(E2::zero()))
-        // })?;
-        // self.commit_point(cs, transcript, &sx_old_opening_pt)?;
+        let sx_old_opening_pt = CurvePoint::witness(cs, || {
+            Ok(self
+                .proof
+                .map(|proof| E2::one() * &proof.proof.sx_old_opening)
+                .unwrap_or(E2::zero()))
+        })?;
+        self.commit_point(cs, transcript, &sx_old_opening_pt)?;
 
-        // let sx_cur_opening_pt = g.multiply(cs, &new_deferred[256 * 7..256 * 8])?;
-        // self.commit_point(cs, transcript, &sx_cur_opening_pt)?;
+        let sx_cur_opening_pt = g.mock_multiply(cs, &new_deferred[256 * 7..256 * 8])?;
+        self.commit_point(cs, transcript, &sx_cur_opening_pt)?;
 
-        // let tx_positive_opening_pt = g.multiply(cs, &new_deferred[256 * 5..256 * 6])?;
-        // self.commit_point(cs, transcript, &tx_positive_opening_pt)?;
+        let tx_positive_opening_pt = g.mock_multiply(cs, &new_deferred[256 * 5..256 * 6])?;
+        self.commit_point(cs, transcript, &tx_positive_opening_pt)?;
 
-        // let tx_negative_opening_pt = g.multiply(cs, &new_deferred[256 * 6..256 * 7])?;
-        // self.commit_point(cs, transcript, &tx_negative_opening_pt)?;
+        let tx_negative_opening_pt = g.mock_multiply(cs, &new_deferred[256 * 6..256 * 7])?;
+        self.commit_point(cs, transcript, &tx_negative_opening_pt)?;
 
-        // let sx_new_opening_pt = CurvePoint::witness(cs, || {
-        //     Ok(self
-        //         .proof
-        //         .map(|proof| E2::one() * &proof.proof.sx_new_opening)
-        //         .unwrap_or(E2::zero()))
-        // })?;
-        // self.commit_point(cs, transcript, &sx_new_opening_pt)?;
+        let sx_new_opening_pt = CurvePoint::witness(cs, || {
+            Ok(self
+                .proof
+                .map(|proof| E2::one() * &proof.proof.sx_new_opening)
+                .unwrap_or(E2::zero()))
+        })?;
+        self.commit_point(cs, transcript, &sx_new_opening_pt)?;
 
-        // let gx_old_opening_pt = g.multiply(
-        //     cs,
-        //     &new_deferred[256 * (10 + self.params.k)..256 * (11 + self.params.k)],
-        // )?;
+        let gx_old_opening_pt = g.mock_multiply(
+            cs,
+            &new_deferred[256 * (10 + self.params.k)..256 * (11 + self.params.k)],
+        )?;
+        self.commit_point(cs, transcript, &gx_old_opening_pt)?;
+
+        let z = self.get_challenge(cs, transcript)?;
+
+        /*
+        let p_commitment = self.r_commitment;
+        let p_commitment = p_commitment * &z + leftovers.s_new_commitment;
+        let p_commitment = p_commitment * &z + self.s_cur_commitment;
+        let p_commitment = p_commitment * &z + self.t_positive_commitment;
+        let p_commitment = p_commitment * &z + self.t_negative_commitment;
+        let p_commitment = p_commitment * &z + self.s_new_commitment;
+        let p_commitment = p_commitment * &z + leftovers.g_new;
+
+        let p_opening = self.rx_opening;
+        let p_opening = p_opening * &z + &self.sx_old_opening;
+        let p_opening = p_opening * &z + &self.sx_cur_opening;
+        let p_opening = p_opening * &z + &self.tx_positive_opening;
+        let p_opening = p_opening * &z + &self.tx_negative_opening;
+        let p_opening = p_opening * &z + &self.sx_new_opening;
+        let p_opening = p_opening * &z + &gx_old_opening;
+        */
+
+        let p_commitment = r_commitment;
+        let p_commitment = p_commitment.mock_multiply(cs, &z)?;
+        let p_commitment = p_commitment.mock_add(cs, &s_new_commitment)?;
+        let p_commitment = p_commitment.mock_multiply(cs, &z)?;
+        let p_commitment = p_commitment.mock_add(cs, &s_cur_commitment)?;
+        let p_commitment = p_commitment.mock_multiply(cs, &z)?;
+        let p_commitment = p_commitment.mock_add(cs, &t_positive_commitment)?;
+        let p_commitment = p_commitment.mock_multiply(cs, &z)?;
+        let p_commitment = p_commitment.mock_add(cs, &t_negative_commitment)?;
+        let p_commitment = p_commitment.mock_multiply(cs, &z)?;
+        let p_commitment = p_commitment.mock_add(cs, &s_new_commitment)?;
+        // TODO: we need to grab g_old from old_leftovers
 
         // let mut val = 0u128;
-        // for b in y_cur.iter().rev() {
+        // for b in z.iter().rev() {
         //     val = val + val;
         //     if let Some(b) = b.get_value() {
         //         if b {
@@ -657,7 +692,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         //     }
         // }
 
-        // println!("y_cur in circuit: {:?}", val);
+        // println!("z in circuit: {:?}", val);
 
         Ok(())
     }
@@ -881,7 +916,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
         // println!("k inside circuit: {:?}", k_commitment);
 
         self.verify_deferred(cs, &old_deferred)?;
-        self.verify_proof(cs, &k_commitment, &deferred, &leftovers2)?;
+        self.verify_proof(cs, &k_commitment, &old_leftovers1, &deferred, &leftovers2)?;
 
         self.equal_unless_base_case(
             cs,

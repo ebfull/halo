@@ -529,13 +529,12 @@ impl<C: Curve> Proof<C> {
         let sx_new_opening = params.compute_opening(&sx_new, x, false);
         append_scalar::<C>(&mut transcript, &sx_new_opening);
 
-        // We don't add this to the transcript, the verifier computes it.
-        // That's the whole trick!
         let gx_old_opening = params.compute_opening(&gx_old, x, false);
         assert_eq!(
             gx_old_opening,
             compute_b(x, &old_leftovers.challenges_new, &challenges_old_inv)
         );
+        append_scalar::<C>(&mut transcript, &gx_old_opening);
 
         // Obtain the challenge z
 
@@ -769,10 +768,11 @@ impl<C: Curve> Proof<C> {
         for c in &mut challenges_old_inv {
             *c = c.invert().unwrap()
         }
-        // Not added to the transcript; we computed it.
         let gx_old_opening = compute_b(x, &leftovers.challenges_new, &challenges_old_inv);
+        append_scalar::<C>(&mut transcript, &gx_old_opening);
 
         let z = get_challenge::<_, C::Scalar>(&mut transcript);
+        println!("VERIFIER: z in the verifier: {:?}", z);
 
         let p_commitment = self.r_commitment;
         let p_commitment = p_commitment * &z + leftovers.s_new_commitment;

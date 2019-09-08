@@ -1110,6 +1110,77 @@ impl<C: Curve> CurvePoint<C> {
         })
     }
 
+    /// Mock addition
+    pub fn mock_add<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: &mut CS,
+        other: &Self,
+    ) -> Result<Self, SynthesisError> {
+        let mut p1 = None;
+        self.is_identity.get_value().map(|is_identity| {
+            self.x.value().map(|x| {
+                self.y.value().map(|y| {
+                    if is_identity {
+                        p1 = Some(C::zero());
+                    } else {
+                        p1 = Some(C::from_xy(x, y).unwrap());
+                    }
+                })
+            })
+        });
+
+        let mut p2 = None;
+        other.is_identity.get_value().map(|is_identity| {
+            other.x.value().map(|x| {
+                other.y.value().map(|y| {
+                    if is_identity {
+                        p2 = Some(C::zero());
+                    } else {
+                        p2 = Some(C::from_xy(x, y).unwrap());
+                    }
+                })
+            })
+        });
+
+        let p3 = p1.and_then(|p1| p2.and_then(|p2| Some(p1 + p2)));
+
+        Self::witness(cs, || p3.ok_or(SynthesisError::AssignmentMissing))
+    }
+
+    /// Mock scalar multiplication
+    pub fn mock_multiply<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: &mut CS,
+        other: &[AllocatedBit],
+    ) -> Result<Self, SynthesisError> {
+        let mut p = None;
+        self.is_identity.get_value().map(|is_identity| {
+            self.x.value().map(|x| {
+                self.y.value().map(|y| {
+                    if is_identity {
+                        p = Some(C::zero());
+                    } else {
+                        p = Some(C::from_xy(x, y).unwrap());
+                    }
+                })
+            })
+        });
+
+        let mut mulby = C::Scalar::zero();
+        for bit in other.iter().rev() {
+            mulby = mulby + &mulby;
+            if let Some(bit) = bit.get_value() {
+                if bit {
+                    mulby = mulby + &C::Scalar::one();
+                }
+            }
+        }
+
+        let p = p.map(|p| p * &mulby);
+
+        Self::witness(cs, || p.ok_or(SynthesisError::AssignmentMissing))
+    }
+
     /// Multiply by a little-endian scalar.
     pub fn multiply<CS: ConstraintSystem<C::Base>>(
         &self,
