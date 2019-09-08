@@ -129,8 +129,8 @@ fn generate_key_schedule<F: Field, CS: ConstraintSystem<F>>(
 
 fn pad<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
-    input: &[Option<AllocatedNum<F>>; SPONGE_RATE],
-) -> Result<[AllocatedNum<F>; SPONGE_RATE], SynthesisError> {
+    input: &[Option<Num<F>>; SPONGE_RATE],
+) -> Result<[Num<F>; SPONGE_RATE], SynthesisError> {
     let one = AllocatedNum::alloc(cs, || Ok(F::one()))?;
     cs.enforce_zero(one.lc() - CS::ONE);
 
@@ -141,7 +141,7 @@ fn pad<F: Field, CS: ConstraintSystem<F>>(
         } else {
             // No more elements; apply necessary padding
             // TODO: Decide on a padding strategy (currently padding with all-ones)
-            padded.push(one);
+            padded.push(one.into());
         }
     }
 
@@ -156,7 +156,7 @@ fn pad<F: Field, CS: ConstraintSystem<F>>(
 fn rescue_duplex<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
     state: &mut [Combination<F>; RESCUE_M],
-    input: &[Option<AllocatedNum<F>>; SPONGE_RATE],
+    input: &[Option<Num<F>>; SPONGE_RATE],
     mds_matrix: &[[F; RESCUE_M]; RESCUE_M],
     key_schedule: &[[Num<F>; RESCUE_M]; 2 * RESCUE_ROUNDS + 1],
 ) -> Result<(), SynthesisError> {
@@ -170,12 +170,12 @@ fn rescue_duplex<F: Field, CS: ConstraintSystem<F>>(
 }
 
 enum SpongeState<F: Field> {
-    Absorbing([Option<AllocatedNum<F>>; SPONGE_RATE]),
+    Absorbing([Option<Num<F>>; SPONGE_RATE]),
     Squeezing([bool; SPONGE_RATE]),
 }
 
 impl<F: Field> SpongeState<F> {
-    fn absorb(val: AllocatedNum<F>) -> Self {
+    fn absorb(val: Num<F>) -> Self {
         let mut input = [None; SPONGE_RATE];
         input[0] = Some(val);
         SpongeState::Absorbing(input)
@@ -223,7 +223,7 @@ impl<F: Field> RescueGadget<F> {
     pub fn absorb<CS: ConstraintSystem<F>>(
         &mut self,
         cs: &mut CS,
-        val: AllocatedNum<F>,
+        val: Num<F>,
     ) -> Result<(), SynthesisError> {
         match self.sponge {
             SpongeState::Absorbing(ref mut input) => {
@@ -323,8 +323,8 @@ mod test {
                 let mut g = RescueGadget::new(cs)?;
 
                 let (n, n2) = AllocatedNum::alloc_and_square(cs, || Ok(Fp::from(3)))?;
-                g.absorb(cs, n)?;
-                g.absorb(cs, n2)?;
+                g.absorb(cs, n.into())?;
+                g.absorb(cs, n2.into())?;
 
                 let s = g.squeeze(cs)?;
                 let s2 = g.squeeze(cs)?;
@@ -383,7 +383,7 @@ mod test {
 
                 for i in 0..2 * SPONGE_RATE + 1 {
                     let n = AllocatedNum::alloc(cs, || Ok(Fp::from(i as u64 + 1)))?;
-                    g.absorb(cs, n)?;
+                    g.absorb(cs, n.into())?;
                 }
 
                 let s = g.squeeze(cs)?;

@@ -345,7 +345,7 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
         let block_work = AllocatedNum::alloc(cs, || Ok(self.block_work))?;
 
         // Load block_work into four 64-bit limbs
-        let work_bits: Vec<_> = unpack_fe(cs, &block_work)?
+        let work_bits: Vec<_> = unpack_fe(cs, &block_work.into())?
             .into_iter()
             .map(Boolean::from)
             .collect();
@@ -363,7 +363,7 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
 
         // Prepare the 64-bit output limbs, loading remainder into the lower four limbs
         // (so that it is added via UInt64::mul_acc2).
-        let remainder_bits: Vec<_> = unpack_fe(cs, &remainder)?
+        let remainder_bits: Vec<_> = unpack_fe(cs, &remainder.into())?
             .into_iter()
             .map(Boolean::from)
             .collect();

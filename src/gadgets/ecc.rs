@@ -9,8 +9,9 @@ use subtle::CtOption;
 
 /// A curve point. It is either the identity, or a valid curve point.
 ///
-/// Internally it is represented with coordinates that always satisfy the curve
-/// equation, and a [`Boolean`] tracking whether it is the identity.
+/// Internally it is represented either with coordinates that satisfy the
+/// curve equation, or (0, 0). We also maintain a [`Boolean`] tracking whether
+/// it is the identity.
 #[derive(Debug, Clone)]
 pub struct CurvePoint<C: Curve> {
     x: Num<C::Base>,
@@ -23,11 +24,10 @@ pub struct CurvePoint<C: Curve> {
 impl<C: Curve> CurvePoint<C> {
     /// Create a constant that is the identity.
     pub fn identity() -> Self {
-        // Represent the identity internally as C::one().
-        let (x, y) = C::one().get_xy().unwrap();
+        // Represent the identity internally as (0, 0).
         CurvePoint {
-            x: Num::constant(x),
-            y: Num::constant(y),
+            x: Num::constant(C::Base::zero()),
+            y: Num::constant(C::Base::zero()),
             is_identity: Boolean::constant(true),
         }
     }
@@ -48,15 +48,14 @@ impl<C: Curve> CurvePoint<C> {
         P: FnOnce() -> Result<C, SynthesisError>,
     {
         // If get_xy returns None, then the point is the identity, so represent
-        // it internally as C::one() which does satisfy the curve equation.
+        // it internally as (0, 0).
         let point = point().map(|p| {
             let coords = p.get_xy();
             if coords.is_some().into() {
                 let (x, y) = coords.unwrap();
                 (x, y, false)
             } else {
-                let (x, y) = C::one().get_xy().unwrap();
-                (x, y, true)
+                (C::Base::zero(), C::Base::zero(), true)
             }
         });
         let x_val = point.map(|(x, _, _)| x);
@@ -80,6 +79,11 @@ impl<C: Curve> CurvePoint<C> {
         // g = f
         // h = x
         // i := x^3
+        //
+        // j * k = l
+        // j = i + B - c
+        // k = (1 - is_identity)
+        // l = 0
 
         let ysq = y_val.map(|y| y * &y);
         let xsq = x_val.map(|x| x * &x);
@@ -104,7 +108,22 @@ impl<C: Curve> CurvePoint<C> {
         cs.enforce_zero(LinearCombination::from(f_var) - g_var);
         cs.enforce_zero(x.lc() - h_var);
 
-        cs.enforce_zero(LinearCombination::from(i_var) + (Coeff::Full(C::b()), CS::ONE) - c_var);
+        let (j_var, k_var, l_var) = cs.multiply(|| {
+            let is_not_identity = if !is_identity_val? {
+                C::Base::one()
+            } else {
+                C::Base::zero()
+            };
+
+            Ok((xcub? + &C::b() - &ysq?, is_not_identity, C::Base::zero()))
+        })?;
+        cs.enforce_zero(
+            LinearCombination::from(i_var) + (Coeff::Full(C::b()), CS::ONE) - c_var - j_var,
+        );
+        cs.enforce_zero(
+            LinearCombination::zero() + (Coeff::One, CS::ONE) - is_identity.get_variable() - k_var,
+        );
+        cs.enforce_zero(LinearCombination::from(l_var));
 
         Ok(CurvePoint {
             x: Num::from(x),
@@ -130,63 +149,10 @@ impl<C: Curve> CurvePoint<C> {
     pub fn get_xy<CS: ConstraintSystem<C::Base>>(
         &self,
         cs: &mut CS,
-    ) -> Result<(AllocatedNum<C::Base>, AllocatedNum<C::Base>), SynthesisError> {
-        // We want to constrain the output to (0, 0) if is_identity is true, and
-        // (x, y) if is_identity is false. We do this with two selection constraints:
-        //
-        // x_out = (1 - b) * x
-        // y_out = (1 - b) * y
-
-        let x_val = self.x.value();
-        let y_val = self.y.value();
-        let bit_val = self.is_identity.not().get_value().map(|b| {
-            if b {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            }
-        });
-        let x_out_val = self
-            .is_identity
-            .not()
-            .get_value()
-            .and_then(|b| x_val.map(|x| if b { x } else { C::Base::zero() }));
-        let y_out_val = self
-            .is_identity
-            .not()
-            .get_value()
-            .and_then(|b| y_val.map(|y| if b { y } else { C::Base::zero() }));
-
-        let x_out = AllocatedNum::alloc(cs, || x_out_val.ok_or(SynthesisError::AssignmentMissing))?;
-        let y_out = AllocatedNum::alloc(cs, || y_out_val.ok_or(SynthesisError::AssignmentMissing))?;
-
-        let x_lc = self.x.lc(cs);
-        let y_lc = self.y.lc(cs);
-        let is_identity_lc = self.is_identity.not().lc(CS::ONE, Coeff::One);
-
-        let (a_var, b_var, c_var) = cs.multiply(|| {
-            let x = x_val.ok_or(SynthesisError::AssignmentMissing)?;
-            let x_out = x_out_val.ok_or(SynthesisError::AssignmentMissing)?;
-            let b = bit_val.ok_or(SynthesisError::AssignmentMissing)?;
-
-            Ok((b, x, x_out))
-        })?;
-        cs.enforce_zero(is_identity_lc.clone() - a_var);
-        cs.enforce_zero(x_lc - b_var);
-        cs.enforce_zero(x_out.lc() - c_var);
-
-        let (s_var, t_var, u_var) = cs.multiply(|| {
-            let y = y_val.ok_or(SynthesisError::AssignmentMissing)?;
-            let y_out = y_out_val.ok_or(SynthesisError::AssignmentMissing)?;
-            let b = bit_val.ok_or(SynthesisError::AssignmentMissing)?;
-
-            Ok((b, y, y_out))
-        })?;
-        cs.enforce_zero(is_identity_lc - s_var);
-        cs.enforce_zero(y_lc - t_var);
-        cs.enforce_zero(y_out.lc() - u_var);
-
-        Ok((x_out, y_out))
+    ) -> Result<(Num<C::Base>, Num<C::Base>), SynthesisError> {
+        // We represent the identity internally as (0, 0), so we can just return
+        // (x, y).
+        Ok((self.x, self.y))
     }
 
     /// Adds a point to another point.
@@ -1475,13 +1441,17 @@ mod test {
 
                 let p1 = CurvePoint::witness(cs, || Ok(one))?;
                 let (x1, y1) = p1.get_xy(cs)?;
-                cs.enforce_zero(x1.lc() - (Coeff::Full(one_coords.0), CS::ONE));
-                cs.enforce_zero(y1.lc() - (Coeff::Full(one_coords.1), CS::ONE));
+                let x1_lc = x1.lc(cs);
+                let y1_lc = y1.lc(cs);
+                cs.enforce_zero(x1_lc - (Coeff::Full(one_coords.0), CS::ONE));
+                cs.enforce_zero(y1_lc - (Coeff::Full(one_coords.1), CS::ONE));
 
                 let p2 = CurvePoint::witness(cs, || Ok(Ec1::zero()))?;
                 let (x2, y2) = p2.get_xy(cs)?;
-                cs.enforce_zero(x2.lc() - (Coeff::Zero, CS::ONE));
-                cs.enforce_zero(y2.lc() - (Coeff::Zero, CS::ONE));
+                let x2_lc = x2.lc(cs);
+                let y2_lc = y2.lc(cs);
+                cs.enforce_zero(x2_lc - (Coeff::Zero, CS::ONE));
+                cs.enforce_zero(y2_lc - (Coeff::Zero, CS::ONE));
 
                 Ok(())
             }
@@ -1516,8 +1486,10 @@ mod test {
 
                 let p3 = p1.add(cs, &p2)?;
                 let (p3_x, p3_y) = p3.get_xy(cs)?;
-                cs.enforce_zero(p3_x.lc() - (Coeff::Full(three_x), CS::ONE));
-                cs.enforce_zero(p3_y.lc() - (Coeff::Full(three_y), CS::ONE));
+                let p3_x_lc = p3_x.lc(cs);
+                let p3_y_lc = p3_y.lc(cs);
+                cs.enforce_zero(p3_x_lc - (Coeff::Full(three_x), CS::ONE));
+                cs.enforce_zero(p3_y_lc - (Coeff::Full(three_y), CS::ONE));
 
                 Ok(())
             }
@@ -1549,8 +1521,10 @@ mod test {
 
                 let psum = p1.add(cs, &p0)?;
                 let (psum_x, psum_y) = psum.get_xy(cs)?;
-                cs.enforce_zero(psum_x.lc() - (Coeff::Full(one_x), CS::ONE));
-                cs.enforce_zero(psum_y.lc() - (Coeff::Full(one_y), CS::ONE));
+                let psum_x_lc = psum_x.lc(cs);
+                let psum_y_lc = psum_y.lc(cs);
+                cs.enforce_zero(psum_x_lc - (Coeff::Full(one_x), CS::ONE));
+                cs.enforce_zero(psum_y_lc - (Coeff::Full(one_y), CS::ONE));
 
                 Ok(())
             }
@@ -1583,8 +1557,10 @@ mod test {
 
                 let psum = p0.add(cs, &p2)?;
                 let (psum_x, psum_y) = psum.get_xy(cs)?;
-                cs.enforce_zero(psum_x.lc() - (Coeff::Full(two_x), CS::ONE));
-                cs.enforce_zero(psum_y.lc() - (Coeff::Full(two_y), CS::ONE));
+                let psum_x_lc = psum_x.lc(cs);
+                let psum_y_lc = psum_y.lc(cs);
+                cs.enforce_zero(psum_x_lc - (Coeff::Full(two_x), CS::ONE));
+                cs.enforce_zero(psum_y_lc - (Coeff::Full(two_y), CS::ONE));
 
                 Ok(())
             }
@@ -1611,8 +1587,10 @@ mod test {
 
                 let psum = p0.add(cs, &p0)?;
                 let (psum_x, psum_y) = psum.get_xy(cs)?;
-                cs.enforce_zero(psum_x.lc() - (Coeff::Full(Fp::zero()), CS::ONE));
-                cs.enforce_zero(psum_y.lc() - (Coeff::Full(Fp::zero()), CS::ONE));
+                let psum_x_lc = psum_x.lc(cs);
+                let psum_y_lc = psum_y.lc(cs);
+                cs.enforce_zero(psum_x_lc - (Coeff::Full(Fp::zero()), CS::ONE));
+                cs.enforce_zero(psum_y_lc - (Coeff::Full(Fp::zero()), CS::ONE));
 
                 Ok(())
             }
@@ -1647,13 +1625,17 @@ mod test {
 
                 let p3a = p1.add_conditionally(cs, &p2, &Boolean::constant(true))?;
                 let (p3a_x, p3a_y) = p3a.get_xy(cs)?;
-                cs.enforce_zero(p3a_x.lc() - (Coeff::Full(three_x), CS::ONE));
-                cs.enforce_zero(p3a_y.lc() - (Coeff::Full(three_y), CS::ONE));
+                let p3a_x_lc = p3a_x.lc(cs);
+                let p3a_y_lc = p3a_y.lc(cs);
+                cs.enforce_zero(p3a_x_lc - (Coeff::Full(three_x), CS::ONE));
+                cs.enforce_zero(p3a_y_lc - (Coeff::Full(three_y), CS::ONE));
 
                 let p3b = p1.add_conditionally(cs, &p2, &Boolean::constant(false))?;
                 let (p3b_x, p3b_y) = p3b.get_xy(cs)?;
-                cs.enforce_zero(p3b_x.lc() - (Coeff::Full(one_x), CS::ONE));
-                cs.enforce_zero(p3b_y.lc() - (Coeff::Full(one_y), CS::ONE));
+                let p3b_x_lc = p3b_x.lc(cs);
+                let p3b_y_lc = p3b_y.lc(cs);
+                cs.enforce_zero(p3b_x_lc - (Coeff::Full(one_x), CS::ONE));
+                cs.enforce_zero(p3b_y_lc - (Coeff::Full(one_y), CS::ONE));
 
                 Ok(())
             }
@@ -1688,13 +1670,17 @@ mod test {
 
                 let p3a = p1.add_conditionally_incomplete(cs, &p2, &Boolean::constant(true))?;
                 let (p3a_x, p3a_y) = p3a.get_xy(cs)?;
-                cs.enforce_zero(p3a_x.lc() - (Coeff::Full(three_x), CS::ONE));
-                cs.enforce_zero(p3a_y.lc() - (Coeff::Full(three_y), CS::ONE));
+                let p3a_x_lc = p3a_x.lc(cs);
+                let p3a_y_lc = p3a_y.lc(cs);
+                cs.enforce_zero(p3a_x_lc - (Coeff::Full(three_x), CS::ONE));
+                cs.enforce_zero(p3a_y_lc - (Coeff::Full(three_y), CS::ONE));
 
                 let p3b = p1.add_conditionally_incomplete(cs, &p2, &Boolean::constant(false))?;
                 let (p3b_x, p3b_y) = p3b.get_xy(cs)?;
-                cs.enforce_zero(p3b_x.lc() - (Coeff::Full(one_x), CS::ONE));
-                cs.enforce_zero(p3b_y.lc() - (Coeff::Full(one_y), CS::ONE));
+                let p3b_x_lc = p3b_x.lc(cs);
+                let p3b_y_lc = p3b_y.lc(cs);
+                cs.enforce_zero(p3b_x_lc - (Coeff::Full(one_x), CS::ONE));
+                cs.enforce_zero(p3b_y_lc - (Coeff::Full(one_y), CS::ONE));
 
                 Ok(())
             }
@@ -1735,8 +1721,10 @@ mod test {
 
                 let p5 = p1.multiply(cs, &scalar5)?;
                 let (p5_x, p5_y) = p5.get_xy(cs)?;
-                cs.enforce_zero(p5_x.lc() - (Coeff::Full(five_x), CS::ONE));
-                cs.enforce_zero(p5_y.lc() - (Coeff::Full(five_y), CS::ONE));
+                let p5_x_lc = p5_x.lc(cs);
+                let p5_y_lc = p5_y.lc(cs);
+                cs.enforce_zero(p5_x_lc - (Coeff::Full(five_x), CS::ONE));
+                cs.enforce_zero(p5_y_lc - (Coeff::Full(five_y), CS::ONE));
 
                 Ok(())
             }
@@ -1777,8 +1765,10 @@ mod test {
 
                 let pinv5 = p1.multiply_inv(cs, &scalar5)?;
                 let (pinv5_x, pinv5_y) = pinv5.get_xy(cs)?;
-                cs.enforce_zero(pinv5_x.lc() - (Coeff::Full(invfive_x), CS::ONE));
-                cs.enforce_zero(pinv5_y.lc() - (Coeff::Full(invfive_y), CS::ONE));
+                let pinv5_x_lc = pinv5_x.lc(cs);
+                let pinv5_y_lc = pinv5_y.lc(cs);
+                cs.enforce_zero(pinv5_x_lc - (Coeff::Full(invfive_x), CS::ONE));
+                cs.enforce_zero(pinv5_y_lc - (Coeff::Full(invfive_y), CS::ONE));
 
                 Ok(())
             }
