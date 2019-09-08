@@ -298,17 +298,15 @@ impl CompactBits {
 
 struct BitcoinHeaderCircuit<F: Field> {
     header: Option<[u8; 80]>,
-    remainder: Option<F>,
     prev_height: Option<F>,
     prev_hash: Option<[u8; 32]>,
     prev_chain_work: Option<F>,
 }
 
 impl<F: Field> BitcoinHeaderCircuit<F> {
-    fn from_witnesses(header: [u8; 80], remainder: F, prev: (F, [u8; 32], F)) -> Self {
+    fn from_witnesses(header: [u8; 80], prev: (F, [u8; 32], F)) -> Self {
         BitcoinHeaderCircuit {
             header: Some(header),
-            remainder: Some(remainder),
             prev_height: Some(prev.0),
             prev_hash: Some(prev.1),
             prev_chain_work: Some(prev.2),
@@ -318,7 +316,6 @@ impl<F: Field> BitcoinHeaderCircuit<F> {
     fn for_verification() -> Self {
         BitcoinHeaderCircuit {
             header: None,
-            remainder: None,
             prev_height: None,
             prev_hash: None,
             prev_chain_work: None,
@@ -437,9 +434,22 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
         ];
 
         // Witness the remainder for this block
-        let remainder = AllocatedNum::alloc(cs, || {
-            self.remainder.ok_or(SynthesisError::AssignmentMissing)
-        })?;
+        let remainder_val = target_val
+            .ok_or(SynthesisError::AssignmentMissing)
+            .and_then(|target| {
+                let (_, remainder) = (!target).div_mod(target + 1);
+
+                let mut bytes = [0; 32];
+                remainder.to_little_endian(&mut bytes);
+
+                let fe = F::from_bytes(&bytes);
+                if fe.is_some().into() {
+                    Ok(fe.unwrap())
+                } else {
+                    Err(SynthesisError::Unsatisfiable)
+                }
+            });
+        let remainder = AllocatedNum::alloc(cs, || remainder_val)?;
 
         // TODO: Range check remainder <= target
 
@@ -544,13 +554,6 @@ fn main() {
         hex!("0000000000000000000000000000000000000000000000000000000b000b000b"),
     ];
 
-    // Remainder is fixed for a given block target
-    let remainder = {
-        let mut r = hex!("000000000000fffffffffffffffffffffffffffffffffffffffffffefffeffff");
-        r.reverse();
-        Fp::from_bytes(&r).unwrap()
-    };
-
     let mut prev = (
         -Fp::one(),
         hex!("0000000000000000000000000000000000000000000000000000000000000000"),
@@ -575,7 +578,7 @@ fn main() {
 
         assert_eq!(
             is_satisfied::<_, _, Basic>(
-                &BitcoinHeaderCircuit::from_witnesses(header, remainder, prev),
+                &BitcoinHeaderCircuit::from_witnesses(header, prev),
                 &input,
             ),
             Ok(true)
