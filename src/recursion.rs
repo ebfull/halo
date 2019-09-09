@@ -447,6 +447,34 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         })
     }
 
+    fn num_equal_unless_base_case<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        cs: &mut CS,
+        base_case: AllocatedBit,
+        lhs: &AllocatedNum<E1::Scalar>,
+        rhs: &AllocatedNum<E1::Scalar>,
+    ) -> Result<(), SynthesisError> {
+        let not_basecase = base_case
+            .get_value()
+            .map(|v| if v { Field::zero() } else { Field::one() });
+
+        // lhs - rhs * (1 - base_case) = 0
+        // if base_case is true, then 1 - base_case will be zero
+        // if base_case is false, then lhs - rhs must be zero, and therefore they are equal
+        let (a, b, c) = cs.multiply(|| {
+            let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+            let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+            let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((lhs - &rhs, not_basecase, Field::zero()))
+        })?;
+        cs.enforce_zero(LinearCombination::from(a) - lhs.get_variable() + rhs.get_variable());
+        cs.enforce_zero(LinearCombination::from(b) - CS::ONE + base_case.get_variable());
+        cs.enforce_zero(LinearCombination::from(c));
+
+        Ok(())
+    }
+
     fn equal_unless_base_case<CS: ConstraintSystem<E1::Scalar>>(
         &self,
         cs: &mut CS,
@@ -513,7 +541,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         &self,
         cs: &mut CS,
         value: F,
-    ) -> Result<Vec<Boolean>, SynthesisError> {
+    ) -> Result<Vec<AllocatedBit>, SynthesisError> {
         let mut tmp = Vec::with_capacity(256);
         let bytes = value.to_bytes();
 
@@ -530,7 +558,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
             res.push(AllocatedBit::alloc(cs, || Ok(b))?);
         }
 
-        Ok(res.into_iter().map(|b| Boolean::from(b)).collect())
+        Ok(res)
     }
 
     fn verify_proof<CS: ConstraintSystem<E1::Scalar>>(
@@ -748,6 +776,14 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         let qy_opening = ky_opening_pt.mock_multiply(cs, &z)?;
         let qy_opening = qy_opening.mock_add(cs, &sx_cur_opening_pt)?;
 
+        let b = &[
+            &new_deferred[256 * (11 + 2 * self.params.k)..256 * (11 + 2 * self.params.k) + 256],
+            &new_deferred[256 * (12 + 2 * self.params.k)..256 * (12 + 2 * self.params.k) + 256],
+            &new_deferred[256 * (13 + 2 * self.params.k)..256 * (13 + 2 * self.params.k) + 256],
+            &new_deferred[256 * (14 + 2 * self.params.k)..256 * (14 + 2 * self.params.k) + 256],
+            &new_deferred[256 * (15 + 2 * self.params.k)..256 * (15 + 2 * self.params.k) + 256],
+        ];
+
         let (g_new, challenges_new) = self.verify_inner_product(
             cs,
             &base_case,
@@ -766,6 +802,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
                 qy_opening,
                 sx_new_opening_pt,
             ],
+            b,
         )?;
 
         // new_leftovers
@@ -839,12 +876,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
 
         // x (deferred)
         {
-            self.equal_unless_base_case(
-                cs,
-                base_case.clone(),
-                &x,
-                &new_deferred[0..128],
-            )?;
+            self.equal_unless_base_case(cs, base_case.clone(), &x, &new_deferred[0..128])?;
             for i in 0..128 {
                 cs.enforce_zero(LinearCombination::from(
                     new_deferred[128 + i].get_variable(),
@@ -858,11 +890,11 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
                 cs,
                 base_case.clone(),
                 &y_cur,
-                &new_deferred[256*2..256*2 + 128],
+                &new_deferred[256 * 2..256 * 2 + 128],
             )?;
             for i in 0..128 {
                 cs.enforce_zero(LinearCombination::from(
-                    new_deferred[256*2 + 128 + i].get_variable(),
+                    new_deferred[256 * 2 + 128 + i].get_variable(),
                 ));
             }
         }
@@ -873,11 +905,11 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
                 cs,
                 base_case.clone(),
                 &y_new,
-                &new_deferred[256*3..256*3 + 128],
+                &new_deferred[256 * 3..256 * 3 + 128],
             )?;
             for i in 0..128 {
                 cs.enforce_zero(LinearCombination::from(
-                    new_deferred[256*3 + 128 + i].get_variable(),
+                    new_deferred[256 * 3 + 128 + i].get_variable(),
                 ));
             }
         }
@@ -892,11 +924,17 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
         transcript: &mut RescueGadget<E1::Scalar>,
         commitments: &[CurvePoint<E2>],
         openings: &[CurvePoint<E2>],
+        b: &[&[AllocatedBit]],
     ) -> Result<(CurvePoint<E2>, Vec<Vec<AllocatedBit>>), SynthesisError> {
         assert_eq!(commitments.len(), openings.len());
         let mut challenges = vec![];
 
+        let mut p = commitments.to_vec();
+        let mut v = openings.to_vec();
+
         for i in 0..self.params.k {
+            let mut tmp = vec![];
+
             for j in 0..commitments.len() {
                 let L = CurvePoint::witness(cs, || {
                     Ok(self
@@ -927,35 +965,29 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
                 self.commit_point(cs, transcript, &R)?;
                 self.commit_point(cs, transcript, &l)?;
                 self.commit_point(cs, transcript, &r)?;
+
+                tmp.push((L, R, l, r));
             }
 
             let challenge = self.get_challenge(cs, transcript)?;
-            challenges.push(challenge);
-        }
-        /*
-        for round in &self.rounds {
-            for j in 0..instances.len() {
-                append_point(transcript, &round.L[j]);
-                append_point(transcript, &round.R[j]);
-                append_scalar::<C>(transcript, &round.l[j]);
-                append_scalar::<C>(transcript, &round.r[j]);
-            }
+            challenges.push(challenge.clone());
 
-            let challenge = get_challenge::<_, C::Scalar>(transcript);
+            for (j, tmp) in tmp.into_iter().enumerate() {
+                let L = tmp.0.mock_multiply(cs, &challenge)?;
+                let L = L.mock_multiply(cs, &challenge)?;
+                let R = tmp.1.mock_multiply_inv(cs, &challenge)?;
+                let R = R.mock_multiply_inv(cs, &challenge)?;
+                let l = tmp.2.mock_multiply(cs, &challenge)?;
+                let l = l.mock_multiply(cs, &challenge)?;
+                let r = tmp.3.mock_multiply_inv(cs, &challenge)?;
+                let r = r.mock_multiply_inv(cs, &challenge)?;
 
-            challenges.push(challenge);
-            challenges_inv.push(challenge_inv);
-            challenges_sq.push(challenge_sq);
-            challenges_inv_sq.push(challenge_inv_sq);
-
-            for j in 0..instances.len() {
-                p[j] = p[j] + (round.L[j] * challenge_sq);
-                p[j] = p[j] + (round.R[j] * challenge_inv_sq);
-                v[j] = v[j] + &(round.l[j] * &challenge_sq);
-                v[j] = v[j] + &(round.r[j] * &challenge_inv_sq);
+                p[j] = p[j].mock_add(cs, &L)?;
+                p[j] = p[j].mock_add(cs, &R)?;
+                v[j] = v[j].mock_add(cs, &l)?;
+                v[j] = v[j].mock_add(cs, &r)?;
             }
         }
-        */
 
         let g_new = CurvePoint::witness(cs, || {
             Ok(self
@@ -963,6 +995,47 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
                 .map(|proof| proof.proof.inner_product.g)
                 .unwrap_or(E2::zero()))
         })?;
+
+        /*
+        for j in 0..instances.len() {
+            let b = compute_b(instances[j].point, &challenges, &challenges_inv);
+
+            if p[j] != (self.g * self.a[j]) {
+                return (false, challenges, self.g);
+            }
+
+            if v[j] != (self.a[j] * &b) {
+                return (false, challenges, self.g);
+            }
+        }
+        */
+
+        let g = {
+            let (x, y) = E2::one().get_xy().unwrap();
+            CurvePoint::<E2>::constant(x, y)
+        };
+
+        for j in 0..commitments.len() {
+            let a = self.witness_bits_from_fe(
+                cs,
+                self.proof
+                    .map(|proof| proof.proof.inner_product.a[j])
+                    .unwrap_or(Field::zero()),
+            )?;
+
+            let (x1, y1) = p[j].get_xy(cs)?;
+            let (x2, y2) = g_new.mock_multiply(cs, &a)?.get_xy(cs)?;
+            self.num_equal_unless_base_case(cs, base_case.clone(), &x1, &x2)?;
+            self.num_equal_unless_base_case(cs, base_case.clone(), &y1, &y2)?;
+
+            let (x1, y1) = v[j].get_xy(cs)?;
+            let (x2, y2) = g
+                .mock_multiply(cs, &a)?
+                .mock_multiply(cs, b[j])?
+                .get_xy(cs)?;
+            self.num_equal_unless_base_case(cs, base_case.clone(), &x1, &x2)?;
+            self.num_equal_unless_base_case(cs, base_case.clone(), &y1, &y2)?;
+        }
 
         Ok((g_new, challenges))
     }

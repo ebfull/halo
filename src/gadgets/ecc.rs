@@ -1181,6 +1181,40 @@ impl<C: Curve> CurvePoint<C> {
         Self::witness(cs, || p.ok_or(SynthesisError::AssignmentMissing))
     }
 
+    /// Mock scalar multiplication
+    pub fn mock_multiply_inv<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: &mut CS,
+        other: &[AllocatedBit],
+    ) -> Result<Self, SynthesisError> {
+        let mut p = None;
+        self.is_identity.get_value().map(|is_identity| {
+            self.x.value().map(|x| {
+                self.y.value().map(|y| {
+                    if is_identity {
+                        p = Some(C::zero());
+                    } else {
+                        p = Some(C::from_xy(x, y).unwrap());
+                    }
+                })
+            })
+        });
+
+        let mut mulby = C::Scalar::zero();
+        for bit in other.iter().rev() {
+            mulby = mulby + &mulby;
+            if let Some(bit) = bit.get_value() {
+                if bit {
+                    mulby = mulby + &C::Scalar::one();
+                }
+            }
+        }
+
+        let p = p.map(|p| p * &mulby.invert().unwrap());
+
+        Self::witness(cs, || p.ok_or(SynthesisError::AssignmentMissing))
+    }
+
     /// Multiply by a little-endian scalar.
     pub fn multiply<CS: ConstraintSystem<C::Base>>(
         &self,
