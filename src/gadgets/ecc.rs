@@ -155,6 +155,46 @@ impl<C: Curve> CurvePoint<C> {
         Ok((self.x, self.y))
     }
 
+    /// Returns -P if condition is true, else returns P.
+    pub fn conditional_neg<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: &mut CS,
+        condition: &Boolean,
+    ) -> Result<Self, SynthesisError> {
+        let y_ret_val = self
+            .y
+            .value()
+            .and_then(|y| condition.get_value().map(|b| if b { -y } else { y }));
+        let y_ret = AllocatedNum::alloc(cs, || y_ret_val.ok_or(SynthesisError::AssignmentMissing))?;
+
+        // y_self × (1 - 2.bit) = y_ret
+        let (y_self_var, negator, y_ret_var) = cs.multiply(|| {
+            let y_self = self.y.value().ok_or(SynthesisError::AssignmentMissing)?;
+            let y_ret = y_ret_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let bit = condition
+                .get_value()
+                .ok_or(SynthesisError::AssignmentMissing)?;
+
+            let negator = if bit { -C::Base::one() } else { C::Base::one() };
+
+            Ok((y_self, negator, y_ret))
+        })?;
+        let y_self_lc = self.y.lc(cs);
+        cs.enforce_zero(y_self_lc - y_self_var);
+        cs.enforce_zero(
+            LinearCombination::from(CS::ONE)
+                - &condition.lc(CS::ONE, Coeff::Full(C::Base::from_u64(2)))
+                - negator,
+        );
+        cs.enforce_zero(y_ret.lc() - y_ret_var);
+
+        Ok(CurvePoint {
+            x: self.x,
+            y: y_ret.into(),
+            is_identity: self.is_identity.clone(),
+        })
+    }
+
     /// Adds a point to another point.
     ///
     /// Handles all edge cases.
@@ -1452,6 +1492,48 @@ mod test {
                 let y2_lc = y2.lc(cs);
                 cs.enforce_zero(x2_lc - (Coeff::Zero, CS::ONE));
                 cs.enforce_zero(y2_lc - (Coeff::Zero, CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn conditional_negation() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let two = Ec1::one().double();
+                let negtwo = -two;
+
+                let (two_x, two_y) = two.get_xy().unwrap();
+                let (negtwo_x, negtwo_y) = negtwo.get_xy().unwrap();
+
+                let p = CurvePoint::<Ec1>::constant(two_x, two_y);
+
+                let ppos = p.conditional_neg(cs, &Boolean::constant(false))?;
+                let (ppos_x, ppos_y) = ppos.get_xy(cs)?;
+                let ppos_x_lc = ppos_x.lc(cs);
+                let ppos_y_lc = ppos_y.lc(cs);
+                cs.enforce_zero(ppos_x_lc - (Coeff::Full(two_x), CS::ONE));
+                cs.enforce_zero(ppos_y_lc - (Coeff::Full(two_y), CS::ONE));
+
+                let pneg = p.conditional_neg(cs, &Boolean::constant(true))?;
+                let (pneg_x, pneg_y) = pneg.get_xy(cs)?;
+                let pneg_x_lc = pneg_x.lc(cs);
+                let pneg_y_lc = pneg_y.lc(cs);
+                cs.enforce_zero(pneg_x_lc - (Coeff::Full(negtwo_x), CS::ONE));
+                cs.enforce_zero(pneg_y_lc - (Coeff::Full(negtwo_y), CS::ONE));
 
                 Ok(())
             }
