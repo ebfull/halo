@@ -1334,6 +1334,154 @@ impl<C: Curve> CurvePoint<C> {
         })
     }
 
+    /// Returns [2] P + Q.
+    ///
+    /// Requires P != Q, P != -Q, and neither being the identity.
+    pub fn double_and_add<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: &mut CS,
+        other: &Self,
+    ) -> Result<Self, SynthesisError> {
+        // Compute (P + Q) + P as:
+        // R = P + Q
+        // S = R + P
+
+        let x_p = self.x;
+        let y_p = self.y;
+        let x_p_val = self.x.value();
+        let y_p_val = self.y.value();
+        let x_p_lc = x_p.lc(cs);
+        let y_p_lc = y_p.lc(cs);
+
+        let x_q = other.x;
+        let y_q = other.y;
+        let x_q_val = other.x.value();
+        let y_q_val = other.y.value();
+        let x_q_lc = x_q.lc(cs);
+        let y_q_lc = y_q.lc(cs);
+
+        // lambda_1 = (y_q - y_p)/(x_q - x_p)
+        let lambda_1_val = match (x_q_val, y_q_val, x_p_val, y_p_val) {
+            (Some(x_q), Some(y_q), Some(x_p), Some(y_p)) => {
+                let inv_xqxp = (x_q - &x_p).invert();
+                if inv_xqxp.is_some().into() {
+                    Ok(inv_xqxp.unwrap() * &(y_q - &y_p))
+                } else {
+                    Err(SynthesisError::DivisionByZero)
+                }
+            }
+            _ => Err(SynthesisError::AssignmentMissing),
+        };
+
+        // x_r = lambda_1^2 - x_p - x_q
+        let x_r_val = match (x_p_val, x_q_val) {
+            (Some(x_p), Some(x_q)) => {
+                lambda_1_val.map(|lambda_1| (lambda_1 * &lambda_1) - &x_p - &x_q)
+            }
+            _ => Err(SynthesisError::AssignmentMissing),
+        };
+
+        // lambda_2 = 2 y_p /(x_p - x_r) - lambda_1
+        let lambda_2_val = match (x_p_val, y_p_val) {
+            (Some(x_p), Some(y_p)) => x_r_val.and_then(|x_r| {
+                lambda_1_val.and_then(|lambda_1| {
+                    let inv_xpxr = (x_p - &x_r).invert();
+                    if inv_xpxr.is_some().into() {
+                        Ok((inv_xpxr.unwrap() * &(y_p + &y_p)) - &lambda_1)
+                    } else {
+                        Err(SynthesisError::DivisionByZero)
+                    }
+                })
+            }),
+            _ => Err(SynthesisError::AssignmentMissing),
+        };
+
+        // x_s = lambda_2^2 - x_r - x_p
+        // y_s = lambda_2 (x_p - x_s) - y_p
+        let x_s_val = x_p_val
+            .ok_or(SynthesisError::AssignmentMissing)
+            .and_then(|x_p| {
+                x_r_val.and_then(|x_r| {
+                    lambda_2_val.map(|lambda_2| (lambda_2 * &lambda_2) - &x_r - &x_p)
+                })
+            });
+        let y_s_val = match (x_p_val, y_p_val) {
+            (Some(x_p), Some(y_p)) => x_s_val
+                .and_then(|x_s| lambda_2_val.map(|lambda_2| (lambda_2 * &(x_p - &x_s)) - &y_p)),
+            _ => Err(SynthesisError::AssignmentMissing),
+        };
+
+        let x_s = AllocatedNum::alloc(cs, || x_s_val)?;
+        let y_s = AllocatedNum::alloc(cs, || y_s_val)?;
+
+        //
+        // Constraints:
+        //
+
+        // (x_q - x_p) * lambda_1 = (y_q - y_p)
+        let (a_var, lambda_1, c_var) = cs.multiply(|| {
+            let x_p = x_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let y_p = y_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let x_q = x_q_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let y_q = y_q_val.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((x_q - &x_p, lambda_1_val?, y_q - &y_p))
+        })?;
+        cs.enforce_zero(x_q_lc.clone() - &x_p_lc - a_var);
+        cs.enforce_zero(y_q_lc - &y_p_lc - c_var);
+
+        // lambda_1 * lambda_1 = (x_p + x_q + x_r)
+        let (d_var, e_var, f_var) = cs.multiply(|| {
+            let x_p = x_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let x_q = x_q_val.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((lambda_1_val?, lambda_1_val?, x_p + &x_q + &x_r_val?))
+        })?;
+        cs.enforce_zero(LinearCombination::from(lambda_1) - d_var);
+        cs.enforce_zero(LinearCombination::from(lambda_1) - e_var);
+
+        // lambda_2 * lambda_2 = (x_r + x_p + x_s)
+        let (lambda_2, k_var, l_var) = cs.multiply(|| {
+            let x_p = x_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((lambda_2_val?, lambda_2_val?, x_r_val? + &x_p + &x_s_val?))
+        })?;
+        cs.enforce_zero(LinearCombination::from(lambda_2) - k_var);
+        cs.enforce_zero(x_s.lc() + f_var - &x_q_lc - l_var);
+
+        // (x_p - x_r) × (lambda_1 + lambda_2) = (2 y_p)
+        let (g_var, h_var, i_var) = cs.multiply(|| {
+            let x_p = x_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let y_p = y_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((x_p - &x_r_val?, lambda_1_val? + &lambda_2_val?, y_p + &y_p))
+        })?;
+        cs.enforce_zero(x_p_lc.clone() - f_var + &x_p_lc + &x_q_lc - g_var);
+        cs.enforce_zero(LinearCombination::from(lambda_1) + lambda_2 - h_var);
+        cs.enforce_zero(y_p_lc.clone() + &y_p_lc - i_var);
+
+        // (x_p - x_s) × lambda_2 = (y_p + y_s)
+        let (g_var, h_var, i_var) = cs.multiply(|| {
+            let x_p = x_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let y_p = y_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((x_p - &x_s_val?, lambda_2_val?, y_p + &y_s_val?))
+        })?;
+        cs.enforce_zero(x_p_lc - &x_s.lc() - g_var);
+        cs.enforce_zero(LinearCombination::from(lambda_2) - h_var);
+        cs.enforce_zero(y_p_lc + &y_s.lc() - i_var);
+
+        // Enforce that neither P nor Q is the identity
+        cs.enforce_zero(self.is_identity.lc(CS::ONE, Coeff::One));
+        cs.enforce_zero(other.is_identity.lc(CS::ONE, Coeff::One));
+
+        Ok(CurvePoint {
+            x: x_s.into(),
+            y: y_s.into(),
+            is_identity: Boolean::constant(false),
+        })
+    }
+
     /// Multiply by a little-endian scalar.
     pub fn multiply<CS: ConstraintSystem<C::Base>>(
         &self,
@@ -1940,6 +2088,45 @@ mod test {
                 let p_dbl_y_lc = p_dbl_y.lc(cs);
                 cs.enforce_zero(p_dbl_x_lc);
                 cs.enforce_zero(p_dbl_y_lc);
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn double_and_add() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let one = Ec1::one();
+                let two = one.double();
+                let five = two.double() + one;
+
+                let (one_x, one_y) = one.get_xy().unwrap();
+                let (two_x, two_y) = two.get_xy().unwrap();
+                let (five_x, five_y) = five.get_xy().unwrap();
+
+                let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
+                let p2 = CurvePoint::<Ec1>::constant(two_x, two_y);
+
+                let p5 = p2.double_and_add(cs, &p1)?;
+
+                let (p5_x, p5_y) = p5.get_xy(cs)?;
+                let p5_x_lc = p5_x.lc(cs);
+                let p5_y_lc = p5_y.lc(cs);
+                cs.enforce_zero(p5_x_lc - (Coeff::Full(five_x), CS::ONE));
+                cs.enforce_zero(p5_y_lc - (Coeff::Full(five_y), CS::ONE));
 
                 Ok(())
             }
