@@ -1785,12 +1785,15 @@ impl<C: Curve> CurvePoint<C> {
         })
     }
 
-    /// Multiply by the inverse of a little-endian scalar.
-    pub fn multiply_inv<CS: ConstraintSystem<C::Base>>(
+    fn inv_helper<CS: ConstraintSystem<C::Base>, F>(
         &self,
         cs: &mut CS,
         other: &[AllocatedBit],
-    ) -> Result<Self, SynthesisError> {
+        mul_func: F,
+    ) -> Result<Self, SynthesisError>
+    where
+        F: FnOnce(&mut CS, &Self) -> Result<Self, SynthesisError>,
+    {
         let p = self
             .x
             .value()
@@ -1851,7 +1854,7 @@ impl<C: Curve> CurvePoint<C> {
             is_identity: is_identity_inv.into(),
         };
 
-        let calculated = inverted.multiply(cs, &other)?;
+        let calculated = mul_func(cs, &inverted)?;
 
         let orig_x_lc = self.x.lc(cs);
         let orig_y_lc = self.y.lc(cs);
@@ -1866,6 +1869,26 @@ impl<C: Curve> CurvePoint<C> {
         );
 
         Ok(inverted)
+    }
+
+    /// Multiply by the inverse of a little-endian scalar.
+    pub fn multiply_inv<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: &mut CS,
+        other: &[AllocatedBit],
+    ) -> Result<Self, SynthesisError> {
+        self.inv_helper(cs, other, |cs, inverted| inverted.multiply(cs, other))
+    }
+
+    /// Multiply by the inverse of a little-endian scalar.
+    ///
+    /// Requires that the top bit of other is set.
+    pub fn multiply_inv_fast<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: &mut CS,
+        other: &[AllocatedBit],
+    ) -> Result<Self, SynthesisError> {
+        self.inv_helper(cs, other, |cs, inverted| inverted.multiply_fast(cs, other))
     }
 }
 
@@ -2433,6 +2456,47 @@ mod test {
                 ];
 
                 let pinv5 = p1.multiply_inv(cs, &scalar5)?;
+                let (pinv5_x, pinv5_y) = pinv5.get_xy(cs)?;
+                let pinv5_x_lc = pinv5_x.lc(cs);
+                let pinv5_y_lc = pinv5_y.lc(cs);
+                cs.enforce_zero(pinv5_x_lc - (Coeff::Full(invfive_x), CS::ONE));
+                cs.enforce_zero(pinv5_y_lc - (Coeff::Full(invfive_y), CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn multiply_inv_fast() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let one = Ec1::one();
+                let invfive = one * Fq::from(5).invert().unwrap();
+
+                let (one_x, one_y) = one.get_xy().unwrap();
+                let (invfive_x, invfive_y) = invfive.get_xy().unwrap();
+
+                let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
+
+                let scalar5 = [
+                    AllocatedBit::alloc(cs, || Ok(true))?,
+                    AllocatedBit::alloc(cs, || Ok(false))?,
+                    AllocatedBit::alloc(cs, || Ok(true))?,
+                ];
+
+                let pinv5 = p1.multiply_inv_fast(cs, &scalar5)?;
                 let (pinv5_x, pinv5_y) = pinv5.get_xy(cs)?;
                 let pinv5_x_lc = pinv5_x.lc(cs);
                 let pinv5_y_lc = pinv5_y.lc(cs);
