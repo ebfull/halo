@@ -5,6 +5,7 @@ use crate::{
     fields::Field,
     Curve,
 };
+use std::iter;
 use subtle::CtOption;
 
 /// A curve point. It is either the identity, or a valid curve point.
@@ -1609,6 +1610,181 @@ impl<C: Curve> CurvePoint<C> {
         Ok(ret)
     }
 
+    /// Multiply by a little-endian scalar.
+    ///
+    /// Requires that the top bit of other is set.
+    pub fn multiply_fast<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: &mut CS,
+        other: &[AllocatedBit],
+    ) -> Result<Self, SynthesisError> {
+        // From https://github.com/zcash/zcash/issues/3924
+        //
+        // Goal: [other] self = [2^n + k] T
+        //
+        // Acc := [2] T
+        // for i from n-1 down to 0 {
+        //     Q := k[i+1] ? T : −T
+        //     Acc := (Acc + Q) + Acc
+        // }
+        // return (k[0] = 0) ? (Acc - T) : Acc
+        //
+        // Note that k is still n + 1 bits, i.e. k[n] = 0
+
+        let k_0_var = other[0].get_variable();
+        let k_0_val = other[0].get_value();
+
+        // We must have a scalar, and the top bit must be set
+        if let Some(b) = other.last().unwrap().get_value() {
+            assert_eq!(b, true);
+        }
+        let mut acc = self.double(cs)?;
+
+        for bit in iter::once(Boolean::constant(false)).chain(
+            other
+                .iter()
+                // Skip the LSB (we handle it after the loop)
+                .skip(1)
+                .cloned()
+                .map(Boolean::from)
+                // Scan over the scalar bits in big-endian order
+                .rev()
+                // Replace the MSB (already accumulated) with a fixed 0-bit
+                .skip(1),
+        ) {
+            let t = self.conditional_neg(cs, &bit.not())?;
+            acc = acc.double_and_add(cs, &t)?;
+        }
+
+        // Compute Acc - T = P + (-T)
+        let x_p = acc.x;
+        let y_p = acc.y;
+        let x_p_val = x_p.value();
+        let y_p_val = y_p.value();
+
+        let x_q = self.x;
+        let y_q = -self.y;
+        let x_q_val = x_q.value();
+        let y_q_val = y_q.value();
+
+        // lambda = (y_q - y_p)/(x_q - x_p)
+        let lambda_val = match (x_q_val, y_q_val, x_p_val, y_p_val) {
+            (Some(x_q), Some(y_q), Some(x_p), Some(y_p)) => {
+                let inv_xqxp = (x_q - &x_p).invert();
+                if inv_xqxp.is_some().into() {
+                    Ok(inv_xqxp.unwrap() * &(y_q - &y_p))
+                } else {
+                    Err(SynthesisError::DivisionByZero)
+                }
+            }
+            _ => Err(SynthesisError::AssignmentMissing),
+        };
+
+        // x_r = lambda^2 - x_p - x_q
+        // y_r = lambda (x_p - x_r) - y_p
+        let x_r_val = match (x_p_val, x_q_val) {
+            (Some(x_p), Some(x_q)) => lambda_val.map(|lambda| (lambda * &lambda) - &x_p - &x_q),
+            _ => Err(SynthesisError::AssignmentMissing),
+        };
+        let y_r_val = match (x_p_val, y_p_val) {
+            (Some(x_p), Some(y_p)) => {
+                x_r_val.and_then(|x_r| lambda_val.map(|lambda| (lambda * &(x_p - &x_r)) - &y_p))
+            }
+            _ => Err(SynthesisError::AssignmentMissing),
+        };
+
+        // x_out = k[0] ? x_p : x_r
+        // y_out = k[0] ? y_p : y_r
+        let x_out_val = match (x_p_val, k_0_val) {
+            (Some(x_p), Some(k_0)) => x_r_val.map(|x_r| if k_0 { x_p } else { x_r }),
+            _ => Err(SynthesisError::AssignmentMissing),
+        };
+        let y_out_val = match (y_p_val, k_0_val) {
+            (Some(y_p), Some(k_0)) => y_r_val.map(|y_r| if k_0 { y_p } else { y_r }),
+            _ => Err(SynthesisError::AssignmentMissing),
+        };
+
+        let x_out = AllocatedNum::alloc(cs, || x_out_val)?;
+        let y_out = AllocatedNum::alloc(cs, || y_out_val)?;
+
+        //
+        // Constraints:
+        //
+
+        let x_p_lc = x_p.lc(cs);
+        let y_p_lc = y_p.lc(cs);
+        let x_q_lc = x_q.lc(cs);
+        let y_q_lc = y_q.lc(cs);
+
+        // (x_q - x_p) * lambda = (y_q - y_p)
+        let (a_var, lambda, c_var) = cs.multiply(|| {
+            let x_p = x_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let y_p = y_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let x_q = x_q_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let y_q = y_q_val.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((x_q - &x_p, lambda_val?, y_q - &y_p))
+        })?;
+        cs.enforce_zero(x_q_lc.clone() - &x_p_lc - a_var);
+        cs.enforce_zero(y_q_lc - &y_p_lc - c_var);
+
+        // lambda * lambda = (x_p + x_q + x_r)
+        let (d_var, e_var, f_var) = cs.multiply(|| {
+            let x_p = x_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let x_q = x_q_val.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((lambda_val?, lambda_val?, x_p + &x_q + &x_r_val?))
+        })?;
+        cs.enforce_zero(LinearCombination::from(lambda) - d_var);
+        cs.enforce_zero(LinearCombination::from(lambda) - e_var);
+        let x_r_lc = LinearCombination::from(f_var) - &x_p_lc - &x_q_lc;
+
+        // (x_p - x_r) * lambda = (y_p + y_r)
+        let (g_var, h_var, i_var) = cs.multiply(|| {
+            let x_p = x_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let y_p = y_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((x_p - &x_r_val?, lambda_val?, y_p + &y_r_val?))
+        })?;
+        cs.enforce_zero(x_p_lc.clone() - &x_r_lc - g_var);
+        cs.enforce_zero(LinearCombination::from(lambda) - h_var);
+        let y_r_lc = LinearCombination::from(i_var) - &y_p_lc;
+
+        // (x_p - x_r) * k_0 = (x_out - x_r)
+        let (j_var, k_var, l_var) = cs.multiply(|| {
+            let x_p = x_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let x_r = x_r_val?;
+            let k_0 = k_0_val.ok_or(SynthesisError::AssignmentMissing)?;
+
+            let k_0 = if k_0 { C::Base::one() } else { C::Base::zero() };
+
+            Ok((x_p - &x_r, k_0, x_out_val? - &x_r))
+        })?;
+        cs.enforce_zero(x_p_lc - &x_r_lc - j_var);
+        cs.enforce_zero(LinearCombination::from(k_0_var) - k_var);
+        cs.enforce_zero(x_out.lc() - &x_r_lc - l_var);
+
+        // (y_p - y_r) * k_0 = (y_out - y_r)
+        let (m_var, n_var, o_var) = cs.multiply(|| {
+            let y_p = y_p_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let y_r = y_r_val?;
+            let k_0 = k_0_val.ok_or(SynthesisError::AssignmentMissing)?;
+
+            let k_0 = if k_0 { C::Base::one() } else { C::Base::zero() };
+
+            Ok((y_p - &y_r, k_0, y_out_val? - &y_r))
+        })?;
+        cs.enforce_zero(y_p_lc - &y_r_lc - m_var);
+        cs.enforce_zero(LinearCombination::from(k_0_var) - n_var);
+        cs.enforce_zero(y_out.lc() - &y_r_lc - o_var);
+
+        Ok(CurvePoint {
+            x: x_out.into(),
+            y: y_out.into(),
+            is_identity: self.is_identity.clone(),
+        })
+    }
+
     /// Multiply by the inverse of a little-endian scalar.
     pub fn multiply_inv<CS: ConstraintSystem<C::Base>>(
         &self,
@@ -2167,6 +2343,53 @@ mod test {
 
                 let p5 = p1.multiply(cs, &scalar5)?;
                 let (p5_x, p5_y) = p5.get_xy(cs)?;
+                let p5_x_lc = p5_x.lc(cs);
+                let p5_y_lc = p5_y.lc(cs);
+                cs.enforce_zero(p5_x_lc - (Coeff::Full(five_x), CS::ONE));
+                cs.enforce_zero(p5_y_lc - (Coeff::Full(five_y), CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn multiply_fast() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let one = Ec1::one();
+                let five = one.double().double() + one;
+
+                let (one_x, one_y) = one.get_xy().unwrap();
+                let (five_x, five_y) = five.get_xy().unwrap();
+                println!("five.x = {:?}", five_x);
+                println!("five.y = {:?}", five_y);
+
+                let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
+
+                let scalar5 = [
+                    AllocatedBit::alloc(cs, || Ok(true))?,
+                    AllocatedBit::alloc(cs, || Ok(false))?,
+                    AllocatedBit::alloc(cs, || Ok(true))?,
+                ];
+
+                let p5 = p1.multiply_fast(cs, &scalar5)?;
+                let (p5_x, p5_y) = p5.get_xy(cs)?;
+                if let (Some(x), Some(y)) = (p5_x.value(), p5_y.value()) {
+                    println!("p5.x = {:?}", x);
+                    println!("p5.y = {:?}", y);
+                }
                 let p5_x_lc = p5_x.lc(cs);
                 let p5_y_lc = p5_y.lc(cs);
                 cs.enforce_zero(p5_x_lc - (Coeff::Full(five_x), CS::ONE));
