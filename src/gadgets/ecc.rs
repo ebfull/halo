@@ -1822,45 +1822,26 @@ impl<C: Curve> CurvePoint<C> {
             .and_then(|x| self.y.value().map(|y| C::from_xy(x, y).unwrap()))
             .ok_or(SynthesisError::AssignmentMissing);
 
-        let inverted_val = other
-            .iter()
-            .enumerate()
-            .map(|(i, b)| {
-                b.get_value().map(|b| {
-                    if b {
-                        let mut ret = C::Scalar::one();
-                        for _ in 0..i {
-                            ret = ret + &ret
-                        }
-                        ret
-                    } else {
-                        C::Scalar::zero()
-                    }
-                })
-            })
-            .fold(Some(C::Scalar::zero()), |acc, n| match (acc, n) {
-                (Some(acc), Some(n)) => Some(acc + &n),
-                _ => None,
-            })
-            .ok_or(SynthesisError::AssignmentMissing)
-            .and_then(|s| {
-                let inv_s = s.invert();
-                if inv_s.is_some().into() {
-                    p.map(|p| p * inv_s.unwrap())
-                } else {
-                    Err(SynthesisError::Unsatisfiable)
+        let mut mulby = C::Scalar::zero();
+        for bit in other.iter().rev() {
+            mulby = mulby + &mulby;
+            if let Some(bit) = bit.get_value() {
+                if bit {
+                    mulby = mulby + &C::Scalar::one();
                 }
-            })
-            .map(|p| {
-                let coords = p.get_xy();
-                if coords.is_some().into() {
-                    let (x, y) = coords.unwrap();
-                    (x, y, false)
-                } else {
-                    let (x, y) = C::one().get_xy().unwrap();
-                    (x, y, true)
-                }
-            });
+            }
+        }
+
+        let inverted_val = p.map(|p| {
+            let inv = p * mulby.invert().unwrap();
+            let coords = inv.get_xy();
+            if coords.is_some().into() {
+                let (x, y) = coords.unwrap();
+                (x, y, false)
+            } else {
+                (C::Base::zero(), C::Base::zero(), true)
+            }
+        });
 
         let x_inv_val = inverted_val.map(|(x, _, _)| x);
         let y_inv_val = inverted_val.map(|(_, y, _)| y);
@@ -2625,6 +2606,41 @@ mod test {
                 let pinv5_y_lc = pinv5_y.lc(cs);
                 cs.enforce_zero(pinv5_x_lc - (Coeff::Full(invfive_x), CS::ONE));
                 cs.enforce_zero(pinv5_y_lc - (Coeff::Full(invfive_y), CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn multiply_inv_fast_identity() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let p = CurvePoint::<Ec1>::identity();
+
+                let scalar5 = [
+                    AllocatedBit::alloc(cs, || Ok(true))?,
+                    AllocatedBit::alloc(cs, || Ok(false))?,
+                    AllocatedBit::alloc(cs, || Ok(true))?,
+                ];
+
+                let pinv5 = p.multiply_inv_fast(cs, &scalar5)?;
+                let (pinv5_x, pinv5_y) = pinv5.get_xy(cs)?;
+                let pinv5_x_lc = pinv5_x.lc(cs);
+                let pinv5_y_lc = pinv5_y.lc(cs);
+                cs.enforce_zero(pinv5_x_lc);
+                cs.enforce_zero(pinv5_y_lc);
 
                 Ok(())
             }
