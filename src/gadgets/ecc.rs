@@ -1650,8 +1650,8 @@ impl<C: Curve> CurvePoint<C> {
         //
         // Goal: [other] self = [2^n + k] T
         //
-        // Acc := [2] T
-        // for i from n-1 down to 0 {
+        // Acc := [3] T
+        // for i from n-2 down to 0 {
         //     Q := k[i+1] ? T : −T
         //     Acc := (Acc + Q) + Acc
         // }
@@ -1667,19 +1667,19 @@ impl<C: Curve> CurvePoint<C> {
             assert_eq!(b, true);
         }
         let mut acc = self.double(cs)?;
+        acc = acc.add_incomplete(cs, self)?;
 
-        for bit in iter::once(Boolean::constant(false)).chain(
-            other
-                .iter()
-                // Skip the LSB (we handle it after the loop)
-                .skip(1)
-                .cloned()
-                .map(Boolean::from)
-                // Scan over the scalar bits in big-endian order
-                .rev()
-                // Replace the MSB (already accumulated) with a fixed 0-bit
-                .skip(1),
-        ) {
+        for bit in other
+            .iter()
+            // Skip the LSB (we handle it after the loop)
+            .skip(1)
+            .cloned()
+            .map(Boolean::from)
+            // Scan over the scalar bits in big-endian order
+            .rev()
+            // Skip the MSB (already accumulated)
+            .skip(1)
+        {
             let t = self.conditional_neg(cs, &bit.not())?;
             acc = acc.double_and_add_incomplete(cs, &t)?;
         }
