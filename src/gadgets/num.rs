@@ -314,8 +314,8 @@ impl<F: Field> Num<F> {
     pub fn lc<CS: ConstraintSystem<F>>(&self, _cs: &mut CS) -> LinearCombination<F> {
         LinearCombination::zero()
             + match self {
-                Num::Constant(v) => (Coeff::from(*v), CS::ONE),
-                Num::Allocated(coeff, num) => (Coeff::from(*coeff), num.var),
+                Num::Constant(v) => (*v, CS::ONE),
+                Num::Allocated(coeff, num) => (*coeff, num.var),
             }
     }
 }

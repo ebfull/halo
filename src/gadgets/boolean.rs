@@ -1,4 +1,3 @@
-use crate::gadgets::num::AllocatedNum;
 use crate::*;
 
 #[derive(Clone, Debug)]
@@ -44,15 +43,13 @@ impl AllocatedBit {
             || {
                 let v = value()?;
                 final_value = Some(v);
-                let fe = if v { F::one() } else { F::zero() };
-
-                Ok(fe)
+                Ok(v.into())
             },
         )?;
 
         Ok(AllocatedBit {
             value: final_value,
-            var: var,
+            var,
         })
     }
 
@@ -62,7 +59,7 @@ impl AllocatedBit {
     ) -> Result<(), SynthesisError> {
         let (a, b, c) = cs.multiply(|| {
             let val = self.value.ok_or(SynthesisError::AssignmentMissing)?;
-            let val = if val { F::one() } else { F::zero() };
+            let val: F = val.into();
 
             Ok((val, val, val))
         })?;
@@ -85,7 +82,7 @@ impl AllocatedBit {
         let (a, b, c) = cs.multiply(|| {
             let v = value()?;
             final_value = Some(v);
-            let fe = if v { F::one() } else { F::zero() };
+            let fe: F = v.into();
 
             Ok((fe, fe, fe))
         })?;
@@ -150,9 +147,9 @@ impl AllocatedBit {
             let b_val = b.value.ok_or(SynthesisError::AssignmentMissing)?;
             let c_val = result_value.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let a_val = if a_val { F::one() } else { F::zero() };
-            let b_val = if b_val { F::one() } else { F::zero() };
-            let c_val = if c_val { F::one() } else { F::zero() };
+            let a_val: F = a_val.into();
+            let b_val: F = b_val.into();
+            let c_val: F = c_val.into();
 
             let d_val = a_val + a_val;
             let e_val = b_val;
@@ -192,11 +189,7 @@ impl AllocatedBit {
             } else {
                 result_value = Some(false);
 
-                Ok((
-                    if a_val { F::one() } else { F::zero() },
-                    if b_val { F::one() } else { F::zero() },
-                    F::zero(),
-                ))
+                Ok((a_val.into(), b_val.into(), F::zero()))
             }
         })?;
         cs.enforce_zero(LinearCombination::from(a_var) - a.var);
@@ -224,15 +217,7 @@ impl AllocatedBit {
 
             result_value = Some(a_val & !b_val);
 
-            Ok((
-                if a_val { F::one() } else { F::zero() },
-                if b_val { F::zero() } else { F::one() },
-                if result_value.unwrap() {
-                    F::one()
-                } else {
-                    F::zero()
-                },
-            ))
+            Ok((a_val.into(), (!b_val).into(), result_value.unwrap().into()))
         })?;
         cs.enforce_zero(LinearCombination::from(a_var) - a.var);
         cs.enforce_zero(LinearCombination::from(not_b_var) + b.var - CS::ONE);
@@ -260,13 +245,9 @@ impl AllocatedBit {
             result_value = Some(!a_val & !b_val);
 
             Ok((
-                if a_val { F::zero() } else { F::one() },
-                if b_val { F::zero() } else { F::one() },
-                if result_value.unwrap() {
-                    F::one()
-                } else {
-                    F::zero()
-                },
+                (!a_val).into(),
+                (!b_val).into(),
+                result_value.unwrap().into(),
             ))
         })?;
         cs.enforce_zero(LinearCombination::from(not_a_var) + a.var - CS::ONE);
@@ -546,13 +527,9 @@ impl Boolean {
         let ch = cs.alloc(
             || "ch",
             || {
-                ch_value.ok_or(SynthesisError::AssignmentMissing).map(|v| {
-                    if v {
-                        F::one()
-                    } else {
-                        F::zero()
-                    }
-                })
+                ch_value
+                    .ok_or(SynthesisError::AssignmentMissing)
+                    .map(F::from)
             },
         )?;
 
@@ -568,10 +545,10 @@ impl Boolean {
             let c_val = c.get_value().ok_or(SynthesisError::AssignmentMissing)?;
             let ch_val = ch_value.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let a_val = if a_val { F::one() } else { F::zero() };
-            let b_val = if b_val { F::one() } else { F::zero() };
-            let c_val = if c_val { F::one() } else { F::zero() };
-            let ch_val = if ch_val { F::one() } else { F::zero() };
+            let a_val: F = a_val.into();
+            let b_val: F = b_val.into();
+            let c_val: F = c_val.into();
+            let ch_val: F = ch_val.into();
 
             let d_val = a_val;
             let e_val = b_val - c_val;
@@ -672,13 +649,9 @@ impl Boolean {
         let maj = cs.alloc(
             || "maj",
             || {
-                maj_value.ok_or(SynthesisError::AssignmentMissing).map(|v| {
-                    if v {
-                        F::one()
-                    } else {
-                        F::zero()
-                    }
-                })
+                maj_value
+                    .ok_or(SynthesisError::AssignmentMissing)
+                    .map(F::from)
             },
         )?;
 
@@ -705,11 +678,11 @@ impl Boolean {
             let bc_val = bc.get_value().ok_or(SynthesisError::AssignmentMissing)?;
             let maj_val = maj_value.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let a_val = if a_val { F::one() } else { F::zero() };
-            let b_val = if b_val { F::one() } else { F::zero() };
-            let c_val = if c_val { F::one() } else { F::zero() };
-            let bc_val = if bc_val { F::one() } else { F::zero() };
-            let maj_val = if maj_val { F::one() } else { F::zero() };
+            let a_val: F = a_val.into();
+            let b_val: F = b_val.into();
+            let c_val: F = c_val.into();
+            let bc_val: F = bc_val.into();
+            let maj_val: F = maj_val.into();
 
             let d_val = bc_val + bc_val - b_val - c_val;
             let e_val = a_val;

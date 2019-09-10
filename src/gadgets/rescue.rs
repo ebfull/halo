@@ -381,7 +381,7 @@ mod test {
             ) -> Result<(), SynthesisError> {
                 let mut g = RescueGadget::new(cs)?;
 
-                for i in 0..2 * SPONGE_RATE + 1 {
+                for i in 0..=2 * SPONGE_RATE {
                     let n = AllocatedNum::alloc(cs, || Ok(Fp::from(i as u64 + 1)))?;
                     g.absorb(cs, n.into())?;
                 }
@@ -402,7 +402,7 @@ mod test {
 
         let mut r = Rescue::new();
 
-        for i in 0..2 * SPONGE_RATE + 1 {
+        for i in 0..=2 * SPONGE_RATE {
             r.absorb(Fp::from(i as u64 + 1));
         }
 
@@ -431,7 +431,7 @@ mod test {
                 let mut g = RescueGadget::new(cs)?;
                 let n = AllocatedNum::alloc(cs, || Ok(Fp::from(7)))?;
 
-                for i in 0..2 * SPONGE_RATE + 1 {
+                for i in 0..=2 * SPONGE_RATE {
                     g.squeeze(cs)?;
                 }
 
@@ -452,7 +452,7 @@ mod test {
         let mut r = Rescue::new();
         r.absorb(Fp::from(7));
 
-        for _ in 0..2 * SPONGE_RATE + 1 {
+        for _ in 0..=2 * SPONGE_RATE {
             r.squeeze();
         }
 
