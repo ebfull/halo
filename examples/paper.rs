@@ -16,8 +16,19 @@ impl<T> OptionExt<T> for Option<T> {
 
 struct MyCircuit;
 
-impl<F: Field> Circuit<F> for MyCircuit {
-    fn synthesize<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
+impl<F: Field> RecursiveCircuit<F> for MyCircuit {
+    fn base_payload(&self) -> Vec<bool> {
+        vec![false, false, false, false, false, false, false, false]
+    }
+
+    fn synthesize<CS: ConstraintSystem<F>>(
+        &self,
+        cs: &mut CS,
+        old_payload: &[AllocatedBit],
+        new_payload: &[AllocatedBit],
+    ) -> Result<(), SynthesisError> {
+        assert_eq!(old_payload.len(), 8);
+        assert_eq!(new_payload.len(), 8);
         cs.multiply(|| Ok((F::from_u64(10), F::from_u64(10), F::from_u64(100))))?;
 
         Ok(())
@@ -36,7 +47,7 @@ fn main() {
     println!("creating proof1");
     let start = Instant::now();
     let proof1 =
-        RecursiveProof::<Ec1, Ec0>::create_proof(&params1, &params0, None, &mycircuit, &[])
+        RecursiveProof::<Ec1, Ec0>::create_proof(&params1, &params0, None, &mycircuit, &[0])
             .unwrap();
     println!("done, took {:?}", start.elapsed());
 
@@ -52,7 +63,7 @@ fn main() {
         &params1,
         Some(&proof1),
         &mycircuit,
-        &[],
+        &[0],
     )
     .unwrap();
     println!("done, took {:?}", start.elapsed());
@@ -69,7 +80,7 @@ fn main() {
         &params0,
         Some(&proof2),
         &mycircuit,
-        &[],
+        &[0],
     )
     .unwrap();
     println!("done, took {:?}", start.elapsed());
@@ -86,7 +97,7 @@ fn main() {
         &params1,
         Some(&proof3),
         &mycircuit,
-        &[],
+        &[0],
     )
     .unwrap();
     println!("done, took {:?}", start.elapsed());
@@ -103,7 +114,7 @@ fn main() {
         &params0,
         Some(&proof4),
         &mycircuit,
-        &[],
+        &[0],
     )
     .unwrap();
     println!("done, took {:?}", start.elapsed());

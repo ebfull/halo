@@ -19,7 +19,7 @@ where
     E1: Curve<Base = <E2 as Curve>::Scalar>,
     E2: Curve<Base = <E1 as Curve>::Scalar>,
 {
-    pub fn create_proof<CS: Circuit<E1::Scalar> + Circuit<E2::Scalar>>(
+    pub fn create_proof<CS: RecursiveCircuit<E1::Scalar> + RecursiveCircuit<E2::Scalar>>(
         e1params: &Params<E1>,
         e2params: &Params<E2>,
         old_proof: Option<&RecursiveProof<E2, E1>>,
@@ -71,7 +71,7 @@ where
         })
     }
 
-    fn verify_inner<CS: Circuit<E1::Scalar> + Circuit<E2::Scalar>>(
+    fn verify_inner<CS: RecursiveCircuit<E1::Scalar> + RecursiveCircuit<E2::Scalar>>(
         &self,
         e1params: &Params<E1>,
         e2params: &Params<E2>,
@@ -144,7 +144,7 @@ where
         Ok((worked, deferred, leftovers, self.oldproof2.clone()))
     }
 
-    pub fn verify<CS: Circuit<E1::Scalar> + Circuit<E2::Scalar>>(
+    pub fn verify<CS: RecursiveCircuit<E1::Scalar> + RecursiveCircuit<E2::Scalar>>(
         &self,
         e1params: &Params<E1>,
         e2params: &Params<E2>,
@@ -184,7 +184,7 @@ where
     }
 }
 
-struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: Circuit<C1::Scalar>> {
+struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: RecursiveCircuit<C1::Scalar>> {
     _marker: PhantomData<(C1, C2)>,
     params: &'a Params<C2>,
     base_case: Option<bool>,
@@ -196,7 +196,7 @@ struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: Circuit<C1::Scalar>> {
     deferred: Option<Deferred<C2::Scalar>>,
 }
 
-impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
+impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Scalar>>
     VerificationCircuit<'a, E1, E2, Inner>
 {
     fn verify_deferred<CS: ConstraintSystem<E1::Scalar>>(
@@ -1067,44 +1067,13 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
     }
 }
 
-impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Circuit<E1::Scalar>
+impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Scalar>> Circuit<E1::Scalar>
     for VerificationCircuit<'a, E1, E2, Inner>
 {
     fn synthesize<CS: ConstraintSystem<E1::Scalar>>(
         &self,
         cs: &mut CS,
     ) -> Result<(), SynthesisError> {
-        // Witness the commitment to r(X, Y)
-        // let r_commitment = CurvePoint::<E2>::alloc(cs, || {
-        //     let (x, y) = self.proof.r_commitment.get_xy().unwrap();
-        //     Ok((x, y))
-        // })?;
-
-        // // The transcript starts out with value zero.
-        // let transcript = AllocatedNum::alloc(cs, || {
-        //     Ok(E1::Scalar::zero())
-        // })?;
-        // cs.enforce_zero(transcript.lc());
-
-        // // Hash the commitment to r(X, Y)
-        // let transcript = append_point(cs, &transcript, &r_commitment)?;
-
-        // // Obtain the challenge y_cur
-        // let (transcript, y_cur) = obtain_challenge(cs, &transcript)?;
-
-        // let proof = self.proof.clone().unwrap();
-
-        // The public inputs to our circuit include
-        // 1. The new payload.
-        // 2. Leftovers from the previous proof, which will be used
-        // to construct the outer proof.
-        // 2. Leftovers resulting from verifying the inner proof
-        // 3. New "deferred" computations
-
-        // + 256 * (5 + k)
-        // + 256 * (5 + k)
-        // + 256 * deferred.len()
-
         let mut payload_bits = vec![];
         for (j, byte) in self.new_payload.into_iter().enumerate() {
             for i in 0..8 {
@@ -1191,19 +1160,42 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
         );
 
         // Attach payload for old proof
-        let mut bits_for_k_commitment = vec![];
+        let mut old_payload = vec![];
         if let Some(proof) = &self.proof {
             for byte in &proof.payload {
                 for i in 0..8 {
                     let bit = ((*byte >> i) & 1) == 1;
-                    bits_for_k_commitment.push(AllocatedBit::alloc(cs, || Ok(bit))?);
+                    old_payload.push(AllocatedBit::alloc(cs, || Ok(bit))?);
                 }
             }
         } else {
-            for _ in 0..(8 * self.new_payload.len()) {
-                // TODO: witness the base case payload?
-                bits_for_k_commitment.push(AllocatedBit::alloc(cs, || Ok(false))?);
+            for bit in self.inner_circuit.base_payload() {
+                old_payload.push(AllocatedBit::alloc(cs, || Ok(bit))?);
             }
+        }
+
+        let basecase_val = base_case
+            .get_value()
+            .map(|v| if v { Field::one() } else { Field::zero() });
+
+        for (bit, old_payload_bit) in self.inner_circuit.base_payload().into_iter().zip(old_payload.iter()) {
+            // bit - old_payload_bit * (base_case) = 0
+            let (a, b, c) = cs.multiply(|| {
+                let old_payload_bit = old_payload_bit.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                let basecase_val = basecase_val.ok_or(SynthesisError::AssignmentMissing)?;
+
+                let lhs: E1::Scalar = if bit { Field::one() } else { Field::zero() };
+                let rhs: E1::Scalar = if old_payload_bit { Field::one() } else { Field::zero() };
+
+                Ok((lhs - &rhs, basecase_val, Field::zero()))
+            })?;
+            if bit {
+                cs.enforce_zero(LinearCombination::from(a) - CS::ONE + old_payload_bit.get_variable());
+            } else {
+                cs.enforce_zero(LinearCombination::from(a) + old_payload_bit.get_variable());
+            }
+            cs.enforce_zero(LinearCombination::from(b) - base_case.get_variable());
+            cs.enforce_zero(LinearCombination::from(c));
         }
 
         let mut old_leftovers1 = vec![];
@@ -1245,6 +1237,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
             }
         }
 
+        let mut bits_for_k_commitment = vec![];
+        bits_for_k_commitment.extend(old_payload.clone());
         bits_for_k_commitment.extend(old_leftovers1.clone());
         bits_for_k_commitment.extend(leftovers1);
         bits_for_k_commitment.extend(old_deferred.clone());
@@ -1286,6 +1280,10 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>> Ci
             &old_leftovers1[256 * 2..256 * 3],
         )?;
 
-        self.inner_circuit.synthesize(cs)
+        self.inner_circuit.synthesize(
+            cs,
+            &old_payload,
+            &payload_bits,
+        )
     }
 }

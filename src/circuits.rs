@@ -16,6 +16,19 @@ pub enum SynthesisError {
     Violation,
 }
 
+use crate::AllocatedBit;
+
+pub trait RecursiveCircuit<F: Field> {
+    fn base_payload(&self) -> Vec<bool>;
+
+    fn synthesize<CS: ConstraintSystem<F>>(
+        &self,
+        cs: &mut CS,
+        old_payload: &[AllocatedBit],
+        new_payload: &[AllocatedBit]
+    ) -> Result<(), SynthesisError>;
+}
+
 pub trait Circuit<F: Field> {
     fn synthesize<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<(), SynthesisError>;
 }
