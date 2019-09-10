@@ -732,17 +732,17 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         */
         let p_commitment = r_commitment.clone();
         let p_commitment = p_commitment.mock_multiply(cs, &z)?;
-        let p_commitment = p_commitment.mock_add(cs, &s_old_commitment)?;
+        let p_commitment = p_commitment.add(cs, &s_old_commitment)?;
         let p_commitment = p_commitment.mock_multiply(cs, &z)?;
-        let p_commitment = p_commitment.mock_add(cs, &s_cur_commitment)?;
+        let p_commitment = p_commitment.add(cs, &s_cur_commitment)?;
         let p_commitment = p_commitment.mock_multiply(cs, &z)?;
-        let p_commitment = p_commitment.mock_add(cs, &t_positive_commitment)?;
+        let p_commitment = p_commitment.add(cs, &t_positive_commitment)?;
         let p_commitment = p_commitment.mock_multiply(cs, &z)?;
-        let p_commitment = p_commitment.mock_add(cs, &t_negative_commitment)?;
+        let p_commitment = p_commitment.add(cs, &t_negative_commitment)?;
         let p_commitment = p_commitment.mock_multiply(cs, &z)?;
-        let p_commitment = p_commitment.mock_add(cs, &s_new_commitment)?;
+        let p_commitment = p_commitment.add(cs, &s_new_commitment)?;
         let p_commitment = p_commitment.mock_multiply(cs, &z)?;
-        let p_commitment = p_commitment.mock_add(cs, &g_old)?;
+        let p_commitment = p_commitment.add(cs, &g_old)?;
 
         /*
         let p_opening = self.rx_opening;
@@ -755,17 +755,17 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         */
         let p_opening = rx_opening_pt;
         let p_opening = p_opening.mock_multiply(cs, &z)?;
-        let p_opening = p_opening.mock_add(cs, &sx_old_opening_pt)?;
+        let p_opening = p_opening.add(cs, &sx_old_opening_pt)?;
         let p_opening = p_opening.mock_multiply(cs, &z)?;
-        let p_opening = p_opening.mock_add(cs, &sx_cur_opening_pt)?;
+        let p_opening = p_opening.add(cs, &sx_cur_opening_pt)?;
         let p_opening = p_opening.mock_multiply(cs, &z)?;
-        let p_opening = p_opening.mock_add(cs, &tx_positive_opening_pt)?;
+        let p_opening = p_opening.add(cs, &tx_positive_opening_pt)?;
         let p_opening = p_opening.mock_multiply(cs, &z)?;
-        let p_opening = p_opening.mock_add(cs, &tx_negative_opening_pt)?;
+        let p_opening = p_opening.add(cs, &tx_negative_opening_pt)?;
         let p_opening = p_opening.mock_multiply(cs, &z)?;
-        let p_opening = p_opening.mock_add(cs, &sx_new_opening_pt)?;
+        let p_opening = p_opening.add(cs, &sx_new_opening_pt)?;
         let p_opening = p_opening.mock_multiply(cs, &z)?;
-        let p_opening = p_opening.mock_add(cs, &gx_old_opening_pt)?;
+        let p_opening = p_opening.add(cs, &gx_old_opening_pt)?;
 
         /*
         let q_commitment = self.c_commitment + (k_commitment * &z);
@@ -773,10 +773,10 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         */
 
         let q_commitment = k_commitment.mock_multiply(cs, &z)?;
-        let q_commitment = q_commitment.mock_add(cs, &c_commitment)?;
+        let q_commitment = q_commitment.add(cs, &c_commitment)?;
 
         let qy_opening = ky_opening_pt.mock_multiply(cs, &z)?;
-        let qy_opening = qy_opening.mock_add(cs, &sx_cur_opening_pt)?;
+        let qy_opening = qy_opening.add(cs, &sx_cur_opening_pt)?;
 
         let b = &[
             &new_deferred[256 * (11 + 2 * self.params.k)..256 * (11 + 2 * self.params.k) + 256],
@@ -984,10 +984,10 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 let r = tmp.3.mock_multiply_inv(cs, &challenge)?;
                 let r = r.mock_multiply_inv(cs, &challenge)?;
 
-                p[j] = p[j].mock_add(cs, &L)?;
-                p[j] = p[j].mock_add(cs, &R)?;
-                v[j] = v[j].mock_add(cs, &l)?;
-                v[j] = v[j].mock_add(cs, &r)?;
+                p[j] = p[j].add(cs, &L)?;
+                p[j] = p[j].add(cs, &R)?;
+                v[j] = v[j].add(cs, &l)?;
+                v[j] = v[j].add(cs, &r)?;
             }
         }
 
