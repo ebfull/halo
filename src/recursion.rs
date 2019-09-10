@@ -1069,8 +1069,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
     }
 }
 
-impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Scalar>> Circuit<E1::Scalar>
-    for VerificationCircuit<'a, E1, E2, Inner>
+impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Scalar>>
+    Circuit<E1::Scalar> for VerificationCircuit<'a, E1, E2, Inner>
 {
     fn synthesize<CS: ConstraintSystem<E1::Scalar>>(
         &self,
@@ -1180,19 +1180,32 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             .get_value()
             .map(|v| if v { Field::one() } else { Field::zero() });
 
-        for (bit, old_payload_bit) in self.inner_circuit.base_payload().into_iter().zip(old_payload.iter()) {
+        for (bit, old_payload_bit) in self
+            .inner_circuit
+            .base_payload()
+            .into_iter()
+            .zip(old_payload.iter())
+        {
             // bit - old_payload_bit * (base_case) = 0
             let (a, b, c) = cs.multiply(|| {
-                let old_payload_bit = old_payload_bit.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                let old_payload_bit = old_payload_bit
+                    .get_value()
+                    .ok_or(SynthesisError::AssignmentMissing)?;
                 let basecase_val = basecase_val.ok_or(SynthesisError::AssignmentMissing)?;
 
                 let lhs: E1::Scalar = if bit { Field::one() } else { Field::zero() };
-                let rhs: E1::Scalar = if old_payload_bit { Field::one() } else { Field::zero() };
+                let rhs: E1::Scalar = if old_payload_bit {
+                    Field::one()
+                } else {
+                    Field::zero()
+                };
 
                 Ok((lhs - &rhs, basecase_val, Field::zero()))
             })?;
             if bit {
-                cs.enforce_zero(LinearCombination::from(a) - CS::ONE + old_payload_bit.get_variable());
+                cs.enforce_zero(
+                    LinearCombination::from(a) - CS::ONE + old_payload_bit.get_variable(),
+                );
             } else {
                 cs.enforce_zero(LinearCombination::from(a) + old_payload_bit.get_variable());
             }
@@ -1282,10 +1295,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             &old_leftovers1[256 * 2..256 * 3],
         )?;
 
-        self.inner_circuit.synthesize(
-            cs,
-            &old_payload,
-            &payload_bits,
-        )
+        self.inner_circuit
+            .synthesize(cs, &old_payload, &payload_bits)
     }
 }

@@ -10,7 +10,8 @@ pub struct AllocatedBit {
 impl AllocatedBit {
     pub fn one<F, CS>(cs: &mut CS) -> Self
     where
-        F: Field, CS: ConstraintSystem<F>,
+        F: Field,
+        CS: ConstraintSystem<F>,
     {
         AllocatedBit {
             value: Some(true),

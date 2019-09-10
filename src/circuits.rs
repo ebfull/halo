@@ -25,7 +25,7 @@ pub trait RecursiveCircuit<F: Field> {
         &self,
         cs: &mut CS,
         old_payload: &[AllocatedBit],
-        new_payload: &[AllocatedBit]
+        new_payload: &[AllocatedBit],
     ) -> Result<(), SynthesisError>;
 }
 
