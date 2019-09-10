@@ -549,6 +549,6 @@ impl Field for Fp {
     fn get_lower_128(&self) -> u128 {
         let tmp = Fp::montgomery_reduce(self.0[0], self.0[1], self.0[2], self.0[3], 0, 0, 0, 0);
 
-        (tmp.0[0] as u128) | ((tmp.0[1] as u128) << 64)
+        u128::from(tmp.0[0]) | (u128::from(tmp.0[1]) << 64)
     }
 }

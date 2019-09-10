@@ -5,7 +5,6 @@ use crate::{
     fields::Field,
     Curve,
 };
-use std::iter;
 use subtle::CtOption;
 
 /// A curve point. It is either the identity, or a valid curve point.

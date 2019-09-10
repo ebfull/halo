@@ -34,7 +34,7 @@ pub fn compute_inner_product<F: Field>(a: &[F], b: &[F]) -> F {
     let mut acc = F::zero();
 
     for (a, b) in a.iter().zip(b.iter()) {
-        acc = acc + ((*a) * (*b));
+        acc += (*a) * (*b);
     }
 
     acc
@@ -132,7 +132,7 @@ pub fn multiexp<F: Field, C: Curve<Scalar = F>>(coeffs: &[C::Scalar], bases: &[C
             let coeff: F = *coeff;
             let base: C = *base;
             let product = base * coeff;
-            acc = acc + product;
+            acc += product;
         }
         acc
     }
@@ -178,7 +178,7 @@ pub fn multiply_polynomials<F: Field>(mut a: Vec<F>, mut b: Vec<F>) -> Vec<F> {
             for (a, b) in a.chunks_mut(chunk).zip(b.chunks(chunk)) {
                 scope.spawn(move |_| {
                     for (a, b) in a.iter_mut().zip(b.iter()) {
-                        *a = (*a) * (*b);
+                        *a *= *b;
                     }
                 });
             }
@@ -186,7 +186,7 @@ pub fn multiply_polynomials<F: Field>(mut a: Vec<F>, mut b: Vec<F>) -> Vec<F> {
         .unwrap();
     } else {
         for (a, b) in a.iter_mut().zip(b.iter()) {
-            *a = (*a) * (*b);
+            *a *= *b;
         }
     }
 
@@ -203,7 +203,7 @@ pub fn multiply_polynomials<F: Field>(mut a: Vec<F>, mut b: Vec<F>) -> Vec<F> {
             for a in a.chunks_mut(chunk) {
                 scope.spawn(move |_| {
                     for a in a.iter_mut() {
-                        *a = *a * minv;
+                        *a *= minv;
                     }
                 });
             }
@@ -211,7 +211,7 @@ pub fn multiply_polynomials<F: Field>(mut a: Vec<F>, mut b: Vec<F>) -> Vec<F> {
         .unwrap();
     } else {
         for a in a.iter_mut() {
-            *a = *a * minv;
+            *a *= minv;
         }
     }
 
@@ -265,17 +265,17 @@ fn serial_fft<F: Field>(a: &mut [F], omega: F, log_n: u32) {
 
     let mut m = 1;
     for _ in 0..log_n {
-        let w_m = omega.pow(&[(n / (2 * m)) as u64, 0, 0, 0]);
+        let w_m = omega.pow(&[u64::from(n / (2 * m)), 0, 0, 0]);
 
         let mut k = 0;
         while k < n {
             let mut w = F::one();
             for j in 0..m {
                 let mut t = a[(k + j + m) as usize];
-                t = t * w;
+                t *= w;
                 a[(k + j + m) as usize] = a[(k + j) as usize] - t;
-                a[(k + j) as usize] = a[(k + j) as usize] + t;
-                w = w * w_m;
+                a[(k + j) as usize] += t;
+                w *= w_m;
             }
 
             k += 2 * m;
@@ -307,11 +307,11 @@ fn parallel_fft<F: Field>(a: &mut [F], omega: F, log_n: u32, log_cpus: u32) {
                     for s in 0..num_cpus {
                         let idx = (i + (s << log_new_n)) % (1 << log_n);
                         let mut t = a[idx];
-                        t = t * elt;
-                        tmp[i] = tmp[i] + t;
-                        elt = elt * omega_step;
+                        t *= elt;
+                        tmp[i] += t;
+                        elt *= omega_step;
                     }
-                    elt = elt * omega_j;
+                    elt *= omega_j;
                 }
 
                 // Perform sub-FFT
@@ -332,7 +332,7 @@ fn parallel_fft<F: Field>(a: &mut [F], omega: F, log_n: u32, log_cpus: u32) {
 fn test_fft() {
     use crate::fields::Fp;
 
-    let a = (0..1000).map(|i| Fp::from_u64(i)).collect::<Vec<_>>();
+    let a = (0..1000).map(Fp::from_u64).collect::<Vec<_>>();
     let b = (0..1000)
         .map(|i| Fp::from_u64(i + 1000))
         .collect::<Vec<_>>();
@@ -340,7 +340,7 @@ fn test_fft() {
     let mut naive_product = vec![Fp::zero(); (a.len() + b.len()) - 1];
     for (i, a) in a.iter().enumerate() {
         for (j, b) in b.iter().enumerate() {
-            naive_product[i + j] = naive_product[i + j] + ((*a) * (*b));
+            naive_product[i + j] += (*a) * (*b);
         }
     }
     let valid_product = multiply_polynomials(a, b);
@@ -349,7 +349,7 @@ fn test_fft() {
 }
 
 pub fn compute_b<F: Field>(x: F, challenges: &[F], challenges_inv: &[F]) -> F {
-    assert!(challenges.len() >= 1);
+    assert!(!challenges.is_empty());
     assert_eq!(challenges.len(), challenges_inv.len());
     if challenges.len() == 1 {
         return *challenges_inv.last().unwrap() + *challenges.last().unwrap() * x;
@@ -399,7 +399,7 @@ fn test_compute_b() {
     let mut cur = Fp::one();
     for _ in 0..(1 << k) {
         powers_of_x.push(cur);
-        cur = cur * x;
+        cur *= x;
     }
 
     let mut challenges = vec![];
@@ -420,7 +420,7 @@ fn test_compute_b() {
 
         b.truncate(l);
 
-        cur_k = cur_k - 1;
+        cur_k -= 1;
         curchallenge = (curchallenge + Fp::from_u64(129)).square();
     }
 

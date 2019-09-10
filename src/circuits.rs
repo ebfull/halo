@@ -181,7 +181,7 @@ impl<F: Field> LinearCombination<F> {
                 Variable::C(index) => c[index - 1],
             };
             coeff.multiply(&mut var);
-            acc = acc + var;
+            acc += var;
         }
         acc
     }
@@ -454,7 +454,7 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
     impl<FF: Field> ConstraintSystem<FF> for Record<FF> {
         const ONE: Variable = Variable::A(0);
 
-        fn alloc<F, A, AR>(&mut self, annotation: A, value: F) -> Result<Variable, SynthesisError>
+        fn alloc<F, A, AR>(&mut self, _annotation: A, _value: F) -> Result<Variable, SynthesisError>
         where
             F: FnOnce() -> Result<FF, SynthesisError>,
             A: FnOnce() -> AR,
@@ -469,8 +469,8 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
 
         fn alloc_input<F, A, AR>(
             &mut self,
-            annotation: A,
-            value: F,
+            _annotation: A,
+            _value: F,
         ) -> Result<Variable, SynthesisError>
         where
             F: FnOnce() -> Result<FF, SynthesisError>,
@@ -490,7 +490,7 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
 
         fn multiply<F>(
             &mut self,
-            values: F,
+            _values: F,
         ) -> Result<(Variable, Variable, Variable), SynthesisError>
         where
             F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
@@ -523,7 +523,7 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
     impl<FF: Field, I: Iterator<Item = Event<FF>>> ConstraintSystem<FF> for Enforce<FF, I> {
         const ONE: Variable = Variable::A(0);
 
-        fn alloc<F, A, AR>(&mut self, annotation: A, value: F) -> Result<Variable, SynthesisError>
+        fn alloc<F, A, AR>(&mut self, _annotation: A, value: F) -> Result<Variable, SynthesisError>
         where
             F: FnOnce() -> Result<FF, SynthesisError>,
             A: FnOnce() -> AR,
@@ -542,7 +542,7 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
 
         fn alloc_input<F, A, AR>(
             &mut self,
-            annotation: A,
+            _annotation: A,
             value: F,
         ) -> Result<Variable, SynthesisError>
         where
@@ -610,5 +610,5 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
 
     circuit.synthesize(&mut enforce)?;
 
-    return Ok(());
+    Ok(())
 }

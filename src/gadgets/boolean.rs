@@ -1,4 +1,3 @@
-use crate::gadgets::num::AllocatedNum;
 use crate::*;
 
 #[derive(Clone, Debug)]
@@ -50,7 +49,7 @@ impl AllocatedBit {
 
         Ok(AllocatedBit {
             value: final_value,
-            var: var,
+            var,
         })
     }
 
