@@ -1248,8 +1248,12 @@ impl<C: Curve> CurvePoint<C> {
 
     /// Returns [2] P + Q.
     ///
-    /// Requires P != Q, P != -Q, and neither being the identity.
-    pub fn double_and_add<CS: ConstraintSystem<C::Base>>(
+    /// Requires either:
+    /// - P != Q, P != -Q, and neither being the identity, in which case the
+    ///   output is fully constrained.
+    /// - P and Q are both the identity, in which case the caller MUST NOT rely
+    ///   on the output being constrained to the identity.
+    pub fn double_and_add_incomplete<CS: ConstraintSystem<C::Base>>(
         &self,
         cs: &mut CS,
         other: &Self,
@@ -1279,7 +1283,12 @@ impl<C: Curve> CurvePoint<C> {
                 if inv_xqxp.is_some().into() {
                     Ok(inv_xqxp.unwrap() * &(y_q - &y_p))
                 } else {
-                    Err(SynthesisError::DivisionByZero)
+                    // We handle both points being the identity as a special
+                    // case within the constraints
+                    match (self.is_identity.get_value(), other.is_identity.get_value()) {
+                        (Some(true), Some(true)) => Ok(C::Base::zero()),
+                        _ => Err(SynthesisError::DivisionByZero),
+                    }
                 }
             }
             _ => Err(SynthesisError::AssignmentMissing),
@@ -1301,7 +1310,12 @@ impl<C: Curve> CurvePoint<C> {
                     if inv_xpxr.is_some().into() {
                         Ok((inv_xpxr.unwrap() * &(y_p + &y_p)) - &lambda_1)
                     } else {
-                        Err(SynthesisError::DivisionByZero)
+                        // We handle both points being the identity as a special
+                        // case within the constraints
+                        match (self.is_identity.get_value(), other.is_identity.get_value()) {
+                            (Some(true), Some(true)) => Ok(C::Base::zero()),
+                            _ => Err(SynthesisError::DivisionByZero),
+                        }
                     }
                 })
             }),
@@ -1383,14 +1397,10 @@ impl<C: Curve> CurvePoint<C> {
         cs.enforce_zero(LinearCombination::from(lambda_2) - h_var);
         cs.enforce_zero(y_p_lc + &y_s.lc() - i_var);
 
-        // Enforce that neither P nor Q is the identity
-        cs.enforce_zero(self.is_identity.lc(CS::ONE, Coeff::One));
-        cs.enforce_zero(other.is_identity.lc(CS::ONE, Coeff::One));
-
         Ok(CurvePoint {
             x: x_s.into(),
             y: y_s.into(),
-            is_identity: Boolean::constant(false),
+            is_identity: self.is_identity.clone(),
         })
     }
 
@@ -1564,7 +1574,7 @@ impl<C: Curve> CurvePoint<C> {
                 .skip(1),
         ) {
             let t = self.conditional_neg(cs, &bit.not())?;
-            acc = acc.double_and_add(cs, &t)?;
+            acc = acc.double_and_add_incomplete(cs, &t)?;
         }
 
         // Compute Acc - T = P + (-T)
@@ -2266,13 +2276,43 @@ mod test {
                 let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
                 let p2 = CurvePoint::<Ec1>::constant(two_x, two_y);
 
-                let p5 = p2.double_and_add(cs, &p1)?;
+                let p5 = p2.double_and_add_incomplete(cs, &p1)?;
 
                 let (p5_x, p5_y) = p5.get_xy(cs)?;
                 let p5_x_lc = p5_x.lc(cs);
                 let p5_y_lc = p5_y.lc(cs);
                 cs.enforce_zero(p5_x_lc - (Coeff::Full(five_x), CS::ONE));
                 cs.enforce_zero(p5_y_lc - (Coeff::Full(five_y), CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn double_identity_and_add_identity() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let p = CurvePoint::<Ec1>::identity();
+
+                let p_res = p.double_and_add_incomplete(cs, &p)?;
+
+                let (p_res_x, p_res_y) = p_res.get_xy(cs)?;
+                let p_res_x_lc = p_res_x.lc(cs);
+                let p_res_y_lc = p_res_y.lc(cs);
+                cs.enforce_zero(p_res_x_lc);
+                cs.enforce_zero(p_res_y_lc);
 
                 Ok(())
             }
