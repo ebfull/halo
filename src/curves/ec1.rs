@@ -137,6 +137,8 @@ impl Curve for Ec1 {
 
         if tmp.is_on_curve() {
             CtOption::new(tmp, Choice::from(1u8))
+        } else if (x.is_zero() & y.is_zero()).into() {
+            CtOption::new(Self::zero(), Choice::from(1u8))
         } else {
             CtOption::new(Self::zero(), Choice::from(0u8))
         }
