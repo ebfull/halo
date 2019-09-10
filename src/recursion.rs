@@ -451,8 +451,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         &self,
         cs: &mut CS,
         base_case: AllocatedBit,
-        lhs: &AllocatedNum<E1::Scalar>,
-        rhs: &AllocatedNum<E1::Scalar>,
+        lhs: &Num<E1::Scalar>,
+        rhs: &Num<E1::Scalar>,
     ) -> Result<(), SynthesisError> {
         let not_basecase = base_case
             .get_value()
@@ -462,13 +462,15 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         // if base_case is true, then 1 - base_case will be zero
         // if base_case is false, then lhs - rhs must be zero, and therefore they are equal
         let (a, b, c) = cs.multiply(|| {
-            let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+            let lhs = lhs.value().ok_or(SynthesisError::AssignmentMissing)?;
+            let rhs = rhs.value().ok_or(SynthesisError::AssignmentMissing)?;
             let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
 
             Ok((lhs - &rhs, not_basecase, Field::zero()))
         })?;
-        cs.enforce_zero(LinearCombination::from(a) - lhs.get_variable() + rhs.get_variable());
+        let lhs_lc = lhs.lc(cs);
+        let rhs_lc = rhs.lc(cs);
+        cs.enforce_zero(LinearCombination::from(a) - &lhs_lc + &rhs_lc);
         cs.enforce_zero(LinearCombination::from(b) - CS::ONE + base_case.get_variable());
         cs.enforce_zero(LinearCombination::from(c));
 
@@ -1059,7 +1061,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         transcript: &mut RescueGadget<E1::Scalar>,
     ) -> Result<Vec<AllocatedBit>, SynthesisError> {
         let num = transcript.squeeze(cs)?;
-        let mut bits = unpack_fe(cs, &num)?;
+        let mut bits = unpack_fe(cs, &num.into())?;
         bits.truncate(127);
         bits.push(AllocatedBit::one(cs));
 

@@ -280,9 +280,9 @@ impl AllocatedBit {
 
 pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
     cs: &mut CS,
-    num: &AllocatedNum<F>,
+    num: &Num<F>,
 ) -> Result<Vec<AllocatedBit>, SynthesisError> {
-    let values = match num.get_value() {
+    let values = match num.value() {
         Some(value) => {
             let mut tmp = Vec::with_capacity(256);
             let bytes = value.to_bytes();
@@ -313,7 +313,8 @@ pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
         lc = lc + (Coeff::from(cur), b.var);
         cur = cur + cur;
     }
-    cs.enforce_zero(lc - num.get_variable());
+    let num_lc = num.lc(cs);
+    cs.enforce_zero(lc - &num_lc);
 
     Ok(bools)
 }
