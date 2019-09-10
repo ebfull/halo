@@ -640,13 +640,13 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             CurvePoint::<E2>::constant(x, y)
         };
 
-        let ky_opening_pt = g.mock_multiply(cs, &new_deferred[256 * 4..256 * 5])?;
+        let ky_opening_pt = g.multiply(cs, &new_deferred[256 * 4..256 * 5])?;
         self.commit_point(cs, transcript, &ky_opening_pt)?;
 
-        let rx_opening_pt = g.mock_multiply(cs, &new_deferred[256 * 8..256 * 9])?;
+        let rx_opening_pt = g.multiply(cs, &new_deferred[256 * 8..256 * 9])?;
         self.commit_point(cs, transcript, &rx_opening_pt)?;
 
-        let rxy_opening_pt = g.mock_multiply(cs, &new_deferred[256 * 9..256 * 10])?;
+        let rxy_opening_pt = g.multiply(cs, &new_deferred[256 * 9..256 * 10])?;
         self.commit_point(cs, transcript, &rxy_opening_pt)?;
 
         let sx_old_opening_pt = CurvePoint::witness(cs, || {
@@ -657,13 +657,13 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         })?;
         self.commit_point(cs, transcript, &sx_old_opening_pt)?;
 
-        let sx_cur_opening_pt = g.mock_multiply(cs, &new_deferred[256 * 7..256 * 8])?;
+        let sx_cur_opening_pt = g.multiply(cs, &new_deferred[256 * 7..256 * 8])?;
         self.commit_point(cs, transcript, &sx_cur_opening_pt)?;
 
-        let tx_positive_opening_pt = g.mock_multiply(cs, &new_deferred[256 * 5..256 * 6])?;
+        let tx_positive_opening_pt = g.multiply(cs, &new_deferred[256 * 5..256 * 6])?;
         self.commit_point(cs, transcript, &tx_positive_opening_pt)?;
 
-        let tx_negative_opening_pt = g.mock_multiply(cs, &new_deferred[256 * 6..256 * 7])?;
+        let tx_negative_opening_pt = g.multiply(cs, &new_deferred[256 * 6..256 * 7])?;
         self.commit_point(cs, transcript, &tx_negative_opening_pt)?;
 
         let sx_new_opening_pt = CurvePoint::witness(cs, || {
@@ -674,7 +674,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         })?;
         self.commit_point(cs, transcript, &sx_new_opening_pt)?;
 
-        let gx_old_opening_pt = g.mock_multiply(
+        let gx_old_opening_pt = g.multiply(
             cs,
             &new_deferred[256 * (10 + self.params.k)..256 * (11 + self.params.k)],
         )?;
@@ -731,17 +731,17 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         let p_commitment = p_commitment * &z + leftovers.g_new;
         */
         let p_commitment = r_commitment.clone();
-        let p_commitment = p_commitment.mock_multiply(cs, &z)?;
+        let p_commitment = p_commitment.multiply_fast(cs, &z)?;
         let p_commitment = p_commitment.add(cs, &s_old_commitment)?;
-        let p_commitment = p_commitment.mock_multiply(cs, &z)?;
+        let p_commitment = p_commitment.multiply_fast(cs, &z)?;
         let p_commitment = p_commitment.add(cs, &s_cur_commitment)?;
-        let p_commitment = p_commitment.mock_multiply(cs, &z)?;
+        let p_commitment = p_commitment.multiply_fast(cs, &z)?;
         let p_commitment = p_commitment.add(cs, &t_positive_commitment)?;
-        let p_commitment = p_commitment.mock_multiply(cs, &z)?;
+        let p_commitment = p_commitment.multiply_fast(cs, &z)?;
         let p_commitment = p_commitment.add(cs, &t_negative_commitment)?;
-        let p_commitment = p_commitment.mock_multiply(cs, &z)?;
+        let p_commitment = p_commitment.multiply_fast(cs, &z)?;
         let p_commitment = p_commitment.add(cs, &s_new_commitment)?;
-        let p_commitment = p_commitment.mock_multiply(cs, &z)?;
+        let p_commitment = p_commitment.multiply_fast(cs, &z)?;
         let p_commitment = p_commitment.add(cs, &g_old)?;
 
         /*
@@ -754,17 +754,17 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         let p_opening = p_opening * &z + &gx_old_opening;
         */
         let p_opening = rx_opening_pt;
-        let p_opening = p_opening.mock_multiply(cs, &z)?;
+        let p_opening = p_opening.multiply_fast(cs, &z)?;
         let p_opening = p_opening.add(cs, &sx_old_opening_pt)?;
-        let p_opening = p_opening.mock_multiply(cs, &z)?;
+        let p_opening = p_opening.multiply_fast(cs, &z)?;
         let p_opening = p_opening.add(cs, &sx_cur_opening_pt)?;
-        let p_opening = p_opening.mock_multiply(cs, &z)?;
+        let p_opening = p_opening.multiply_fast(cs, &z)?;
         let p_opening = p_opening.add(cs, &tx_positive_opening_pt)?;
-        let p_opening = p_opening.mock_multiply(cs, &z)?;
+        let p_opening = p_opening.multiply_fast(cs, &z)?;
         let p_opening = p_opening.add(cs, &tx_negative_opening_pt)?;
-        let p_opening = p_opening.mock_multiply(cs, &z)?;
+        let p_opening = p_opening.multiply_fast(cs, &z)?;
         let p_opening = p_opening.add(cs, &sx_new_opening_pt)?;
-        let p_opening = p_opening.mock_multiply(cs, &z)?;
+        let p_opening = p_opening.multiply_fast(cs, &z)?;
         let p_opening = p_opening.add(cs, &gx_old_opening_pt)?;
 
         /*
@@ -772,10 +772,10 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         let qy_opening = self.sx_cur_opening + &(ky_opening * &z);
         */
 
-        let q_commitment = k_commitment.mock_multiply(cs, &z)?;
+        let q_commitment = k_commitment.multiply_fast(cs, &z)?;
         let q_commitment = q_commitment.add(cs, &c_commitment)?;
 
-        let qy_opening = ky_opening_pt.mock_multiply(cs, &z)?;
+        let qy_opening = ky_opening_pt.multiply_fast(cs, &z)?;
         let qy_opening = qy_opening.add(cs, &sx_cur_opening_pt)?;
 
         let b = &[
@@ -975,14 +975,14 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             challenges.push(challenge.clone());
 
             for (j, tmp) in tmp.into_iter().enumerate() {
-                let L = tmp.0.mock_multiply(cs, &challenge)?;
-                let L = L.mock_multiply(cs, &challenge)?;
-                let R = tmp.1.mock_multiply_inv(cs, &challenge)?;
-                let R = R.mock_multiply_inv(cs, &challenge)?;
-                let l = tmp.2.mock_multiply(cs, &challenge)?;
-                let l = l.mock_multiply(cs, &challenge)?;
-                let r = tmp.3.mock_multiply_inv(cs, &challenge)?;
-                let r = r.mock_multiply_inv(cs, &challenge)?;
+                let L = tmp.0.multiply_fast(cs, &challenge)?;
+                let L = L.multiply_fast(cs, &challenge)?;
+                let R = tmp.1.multiply_inv_fast(cs, &challenge)?;
+                let R = R.multiply_inv_fast(cs, &challenge)?;
+                let l = tmp.2.multiply_fast(cs, &challenge)?;
+                let l = l.multiply_fast(cs, &challenge)?;
+                let r = tmp.3.multiply_inv_fast(cs, &challenge)?;
+                let r = r.multiply_inv_fast(cs, &challenge)?;
 
                 p[j] = p[j].add(cs, &L)?;
                 p[j] = p[j].add(cs, &R)?;
@@ -1026,14 +1026,14 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             )?;
 
             let (x1, y1) = p[j].get_xy(cs)?;
-            let (x2, y2) = g_new.mock_multiply(cs, &a)?.get_xy(cs)?;
+            let (x2, y2) = g_new.multiply(cs, &a)?.get_xy(cs)?;
             self.num_equal_unless_base_case(cs, base_case.clone(), &x1, &x2)?;
             self.num_equal_unless_base_case(cs, base_case.clone(), &y1, &y2)?;
 
             let (x1, y1) = v[j].get_xy(cs)?;
             let (x2, y2) = g
-                .mock_multiply(cs, &a)?
-                .mock_multiply(cs, b[j])?
+                .multiply(cs, &a)?
+                .multiply(cs, b[j])?
                 .get_xy(cs)?;
             self.num_equal_unless_base_case(cs, base_case.clone(), &x1, &x2)?;
             self.num_equal_unless_base_case(cs, base_case.clone(), &y1, &y2)?;
