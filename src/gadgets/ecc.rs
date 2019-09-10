@@ -110,13 +110,11 @@ impl<C: Curve> CurvePoint<C> {
         cs.enforce_zero(x.lc() - h_var);
 
         let (j_var, k_var, l_var) = cs.multiply(|| {
-            let is_not_identity = if !is_identity_val? {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            };
-
-            Ok((xcub? + &C::b() - &ysq?, is_not_identity, C::Base::zero()))
+            Ok((
+                xcub? + &C::b() - &ysq?,
+                (!is_identity_val?).into(),
+                C::Base::zero(),
+            ))
         })?;
         cs.enforce_zero(
             LinearCombination::from(i_var) + (Coeff::Full(C::b()), CS::ONE) - c_var - j_var,
@@ -469,13 +467,7 @@ impl<C: Curve> CurvePoint<C> {
         // b = 0
 
         let x2mx1_val = x1_val.and_then(|x1| x2_val.map(|x2| x2 - &x1));
-        let x_is_same_val = x2mx1_val.map(|x2mx1| {
-            if x2mx1.is_zero().into() {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            }
-        });
+        let x_is_same_val = x2mx1_val.map(|x2mx1| bool::from(x2mx1.is_zero()).into());
         let x2mx1psame_val =
             x2mx1_val.and_then(|x2mx1| x_is_same_val.map(|is_same| x2mx1 + &is_same));
 
@@ -654,13 +646,7 @@ impl<C: Curve> CurvePoint<C> {
             let y2 = y2_val.ok_or(SynthesisError::AssignmentMissing)?;
             let p3_is_identity = p3_is_identity_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let p3_is_identity = if p3_is_identity {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            };
-
-            Ok((y2 + &y1, p3_is_identity, C::Base::zero()))
+            Ok((y2 + &y1, p3_is_identity.into(), C::Base::zero()))
         })?;
         cs.enforce_zero(y2_lc.clone() + &y1_lc - u_var);
         cs.enforce_zero(
@@ -677,11 +663,7 @@ impl<C: Curve> CurvePoint<C> {
 
         //     let y1y2inv = (y1 + &y2).invert().unwrap_or(C::Base::zero());
 
-        //     let p3_is_identity = if p3_is_identity {
-        //         C::Base::one()
-        //     } else {
-        //         C::Base::zero()
-        //     };
+        //     let p3_is_identity: C::Base = p3_is_identity.into();
 
         //     Ok((y1 + &y2, y1y2inv, x_is_same - &p3_is_identity))
         // })?;
@@ -694,13 +676,7 @@ impl<C: Curve> CurvePoint<C> {
             let x4 = x4_val.ok_or(SynthesisError::AssignmentMissing)?;
             let p3_is_identity = p3_is_identity_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let p3_is_not_identity = if !p3_is_identity {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            };
-
-            Ok((x3, p3_is_not_identity, x4))
+            Ok((x3, (!p3_is_identity).into(), x4))
         })?;
         // TODO: Fix
         // cs.enforce_zero(x3_lc - y_var);
@@ -712,13 +688,7 @@ impl<C: Curve> CurvePoint<C> {
             let y4 = y4_val.ok_or(SynthesisError::AssignmentMissing)?;
             let p3_is_identity = p3_is_identity_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let p3_is_not_identity = if !p3_is_identity {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            };
-
-            Ok((y3, p3_is_not_identity, y4))
+            Ok((y3, (!p3_is_identity).into(), y4))
         })?;
         // TODO: Fix
         // cs.enforce_zero(y3_lc - aa_var);
@@ -731,13 +701,7 @@ impl<C: Curve> CurvePoint<C> {
             let x5 = x5_val.ok_or(SynthesisError::AssignmentMissing)?;
             let p1_is_identity = p1_is_identity_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let p1_is_identity = if p1_is_identity {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            };
-
-            Ok((p1_is_identity, x2 - &x4, x5 - &x4))
+            Ok((p1_is_identity.into(), x2 - &x4, x5 - &x4))
         })?;
         cs.enforce_zero(self.is_identity.lc(CS::ONE, Coeff::One) - cc_var);
         cs.enforce_zero(x2_lc - x4_var - dd_var);
@@ -750,13 +714,7 @@ impl<C: Curve> CurvePoint<C> {
             let y5 = y5_val.ok_or(SynthesisError::AssignmentMissing)?;
             let p1_is_identity = p1_is_identity_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let p1_is_identity = if p1_is_identity {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            };
-
-            Ok((p1_is_identity, y2 - &y4, y5 - &y4))
+            Ok((p1_is_identity.into(), y2 - &y4, y5 - &y4))
         })?;
         cs.enforce_zero(self.is_identity.lc(CS::ONE, Coeff::One) - ff_var);
         cs.enforce_zero(y2_lc - y4_var - gg_var);
@@ -769,13 +727,7 @@ impl<C: Curve> CurvePoint<C> {
             let x_out = x_out_val.ok_or(SynthesisError::AssignmentMissing)?;
             let p2_is_identity = p2_is_identity_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let p2_is_identity = if p2_is_identity {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            };
-
-            Ok((p2_is_identity, x1 - &x5, x_out - &x5))
+            Ok((p2_is_identity.into(), x1 - &x5, x_out - &x5))
         })?;
         cs.enforce_zero(other.is_identity.lc(CS::ONE, Coeff::One) - ii_var);
         cs.enforce_zero(x1_lc - &x5_lc - jj_var);
@@ -788,13 +740,7 @@ impl<C: Curve> CurvePoint<C> {
             let y_out = y_out_val.ok_or(SynthesisError::AssignmentMissing)?;
             let p2_is_identity = p2_is_identity_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let p2_is_identity = if p2_is_identity {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            };
-
-            Ok((p2_is_identity, y1 - &y5, y_out - &y5))
+            Ok((p2_is_identity.into(), y1 - &y5, y_out - &y5))
         })?;
         cs.enforce_zero(other.is_identity.lc(CS::ONE, Coeff::One) - ll_var);
         cs.enforce_zero(y1_lc - &y5_lc - mm_var);
@@ -865,9 +811,7 @@ impl<C: Curve> CurvePoint<C> {
             let x3 = xsum.value().ok_or(SynthesisError::AssignmentMissing)?;
             let x_out = x_out_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let bit = if bit { C::Base::one() } else { C::Base::zero() };
-
-            Ok((bit, x3 - &x1, x_out - &x1))
+            Ok((bit.into(), x3 - &x1, x_out - &x1))
         })?;
         cs.enforce_zero(condition.lc(CS::ONE, Coeff::One) - a_var);
         cs.enforce_zero(xsum_lc - &x1_lc - b_var);
@@ -884,9 +828,7 @@ impl<C: Curve> CurvePoint<C> {
             let y3 = ysum.value().ok_or(SynthesisError::AssignmentMissing)?;
             let y_out = y_out_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let bit = if bit { C::Base::one() } else { C::Base::zero() };
-
-            Ok((bit, y3 - &y1, y_out - &y1))
+            Ok((bit.into(), y3 - &y1, y_out - &y1))
         })?;
         cs.enforce_zero(condition.lc(CS::ONE, Coeff::One) - d_var);
         cs.enforce_zero(ysum_lc - &y1_lc - e_var);
@@ -903,25 +845,12 @@ impl<C: Curve> CurvePoint<C> {
             let sum_is_identity = sum_is_identity_val.ok_or(SynthesisError::AssignmentMissing)?;
             let out_is_identity = out_is_identity_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let bit = if bit { C::Base::one() } else { C::Base::zero() };
-            let self_is_identity = if self_is_identity {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            };
-            let sum_is_identity = if sum_is_identity {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            };
-            let out_is_identity = if out_is_identity {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            };
+            let self_is_identity: C::Base = self_is_identity.into();
+            let sum_is_identity: C::Base = sum_is_identity.into();
+            let out_is_identity: C::Base = out_is_identity.into();
 
             Ok((
-                bit,
+                bit.into(),
                 sum_is_identity - &self_is_identity,
                 out_is_identity - &self_is_identity,
             ))
@@ -1104,9 +1033,7 @@ impl<C: Curve> CurvePoint<C> {
             let x3_val = p3_val.ok_or(SynthesisError::AssignmentMissing)?.0;
             let x_out_val = p_out.ok_or(SynthesisError::AssignmentMissing)?.0;
 
-            let bit = if bit { C::Base::one() } else { C::Base::zero() };
-
-            Ok((bit, x3_val - &x1_val, x_out_val - &x1_val))
+            Ok((bit.into(), x3_val - &x1_val, x_out_val - &x1_val))
         })?;
         cs.enforce_zero(condition.lc(CS::ONE, Coeff::One) - m_var);
         cs.enforce_zero(LinearCombination::from(x3_var) - &x1_lc - n_var);
@@ -1120,9 +1047,7 @@ impl<C: Curve> CurvePoint<C> {
             let y3_val = p3_val.ok_or(SynthesisError::AssignmentMissing)?.1;
             let y_out_val = p_out.ok_or(SynthesisError::AssignmentMissing)?.1;
 
-            let bit = if bit { C::Base::one() } else { C::Base::zero() };
-
-            Ok((bit, y3_val - &y1_val, y_out_val - &y1_val))
+            Ok((bit.into(), y3_val - &y1_val, y_out_val - &y1_val))
         })?;
         cs.enforce_zero(condition.lc(CS::ONE, Coeff::One) - p_var);
         cs.enforce_zero(y3_lc - &y1_lc - q_var);
@@ -1229,13 +1154,7 @@ impl<C: Curve> CurvePoint<C> {
                 .get_value()
                 .ok_or(SynthesisError::AssignmentMissing)?;
 
-            let is_identity = if is_identity {
-                C::Base::one()
-            } else {
-                C::Base::zero()
-            };
-
-            Ok((lambda_val?, is_identity, C::Base::zero()))
+            Ok((lambda_val?, is_identity.into(), C::Base::zero()))
         })?;
         cs.enforce_zero(LinearCombination::from(lambda) - j_var);
         cs.enforce_zero(self.is_identity.lc(CS::ONE, Coeff::One) - k_var);
@@ -1449,9 +1368,7 @@ impl<C: Curve> CurvePoint<C> {
                 let x_sum = sum.x.value().ok_or(SynthesisError::AssignmentMissing)?;
                 let x_out = x_out.get_value().ok_or(SynthesisError::AssignmentMissing)?;
 
-                let bit = if bit { C::Base::one() } else { C::Base::zero() };
-
-                Ok((bit, x_sum - &x_dbl, x_out - &x_dbl))
+                Ok((bit.into(), x_sum - &x_dbl, x_out - &x_dbl))
             })?;
             let x_dbl_lc = dbl.x.lc(cs);
             let x_sum_lc = sum.x.lc(cs);
@@ -1466,9 +1383,7 @@ impl<C: Curve> CurvePoint<C> {
                 let y_sum = sum.y.value().ok_or(SynthesisError::AssignmentMissing)?;
                 let y_out = y_out.get_value().ok_or(SynthesisError::AssignmentMissing)?;
 
-                let bit = if bit { C::Base::one() } else { C::Base::zero() };
-
-                Ok((bit, y_sum - &y_dbl, y_out - &y_dbl))
+                Ok((bit.into(), y_sum - &y_dbl, y_out - &y_dbl))
             })?;
             let y_dbl_lc = dbl.y.lc(cs);
             let y_sum_lc = sum.y.lc(cs);
@@ -1491,25 +1406,12 @@ impl<C: Curve> CurvePoint<C> {
                     .get_value()
                     .ok_or(SynthesisError::AssignmentMissing)?;
 
-                let bit = if bit { C::Base::one() } else { C::Base::zero() };
-                let is_identity_dbl = if is_identity_dbl {
-                    C::Base::one()
-                } else {
-                    C::Base::zero()
-                };
-                let is_identity_sum = if is_identity_sum {
-                    C::Base::one()
-                } else {
-                    C::Base::zero()
-                };
-                let is_identity_out = if is_identity_out {
-                    C::Base::one()
-                } else {
-                    C::Base::zero()
-                };
+                let is_identity_dbl: C::Base = is_identity_dbl.into();
+                let is_identity_sum: C::Base = is_identity_sum.into();
+                let is_identity_out: C::Base = is_identity_out.into();
 
                 Ok((
-                    bit,
+                    bit.into(),
                     is_identity_sum - &is_identity_dbl,
                     is_identity_out - &is_identity_dbl,
                 ))
@@ -1642,9 +1544,7 @@ impl<C: Curve> CurvePoint<C> {
             let x_s = x_s_val.ok_or(SynthesisError::AssignmentMissing)?;
             let k_0 = k_0_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let k_0 = if k_0 { C::Base::one() } else { C::Base::zero() };
-
-            Ok((x_p - &x_r, k_0, x_s - &x_r))
+            Ok((x_p - &x_r, k_0.into(), x_s - &x_r))
         })?;
         cs.enforce_zero(x_p_lc - &x_r_lc - j_var);
         cs.enforce_zero(LinearCombination::from(k_0_var) - k_var);
@@ -1657,9 +1557,7 @@ impl<C: Curve> CurvePoint<C> {
             let y_s = y_s_val.ok_or(SynthesisError::AssignmentMissing)?;
             let k_0 = k_0_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let k_0 = if k_0 { C::Base::one() } else { C::Base::zero() };
-
-            Ok((y_p - &y_r, k_0, y_s - &y_r))
+            Ok((y_p - &y_r, k_0.into(), y_s - &y_r))
         })?;
         cs.enforce_zero(y_p_lc - &y_r_lc - m_var);
         cs.enforce_zero(LinearCombination::from(k_0_var) - n_var);

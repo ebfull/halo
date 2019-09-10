@@ -54,9 +54,7 @@ fn input_bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
             let alloc_bit =
                 AllocatedBit::alloc(cs, || value.ok_or(SynthesisError::AssignmentMissing))?;
             let input_bit = AllocatedNum::alloc_input(cs, || {
-                value
-                    .map(|value| if value { F::one() } else { F::zero() })
-                    .ok_or(SynthesisError::AssignmentMissing)
+                value.map(F::from).ok_or(SynthesisError::AssignmentMissing)
             })?;
             cs.enforce_zero(input_bit.lc() - alloc_bit.get_variable());
 
@@ -71,7 +69,7 @@ fn add_input_bits_for_bytes<F: Field>(input: &mut Vec<F>, data: &[u8]) {
     for byte in data.iter() {
         for bit_i in (0..8).rev() {
             let value = (byte >> bit_i) & 1u8 == 1u8;
-            input.push(if value { F::one() } else { F::zero() });
+            input.push(value.into());
         }
     }
 }
@@ -229,11 +227,7 @@ impl CompactBits {
                     pow_size.get_value(),
                 ) {
                     (Some(b), Some(sq), Some(sq_m256), Some(next)) => {
-                        let a_val = if b { F::one() } else { F::zero() };
-                        let b_val = sq_m256 - sq;
-                        let c_val = next - sq;
-
-                        Ok((a_val, b_val, c_val))
+                        Ok((b.into(), sq_m256 - sq, next - sq))
                     }
                     _ => Err(SynthesisError::AssignmentMissing),
                 }

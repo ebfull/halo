@@ -454,9 +454,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         lhs: &Num<E1::Scalar>,
         rhs: &Num<E1::Scalar>,
     ) -> Result<(), SynthesisError> {
-        let not_basecase = base_case
-            .get_value()
-            .map(|v| if v { Field::zero() } else { Field::one() });
+        let not_basecase = base_case.get_value().map(|v| (!v).into());
 
         // lhs - rhs * (1 - base_case) = 0
         // if base_case is true, then 1 - base_case will be zero
@@ -486,9 +484,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
     ) -> Result<(), SynthesisError> {
         assert_eq!(lhs.len(), rhs.len());
 
-        let not_basecase = base_case
-            .get_value()
-            .map(|v| if v { Field::zero() } else { Field::one() });
+        let not_basecase = base_case.get_value().map(|v| (!v).into());
 
         for (lhs, rhs) in lhs.iter().zip(rhs.iter()) {
             // lhs - rhs * (1 - base_case) = 0
@@ -499,8 +495,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
                 let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
 
-                let lhs: E1::Scalar = if lhs { Field::one() } else { Field::zero() };
-                let rhs: E1::Scalar = if rhs { Field::one() } else { Field::zero() };
+                let lhs: E1::Scalar = lhs.into();
+                let rhs: E1::Scalar = rhs.into();
 
                 Ok((lhs - &rhs, not_basecase, Field::zero()))
             })?;
@@ -1031,10 +1027,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             self.num_equal_unless_base_case(cs, base_case.clone(), &y1, &y2)?;
 
             let (x1, y1) = v[j].get_xy(cs)?;
-            let (x2, y2) = g
-                .multiply(cs, &a)?
-                .multiply(cs, b[j])?
-                .get_xy(cs)?;
+            let (x2, y2) = g.multiply(cs, &a)?.multiply(cs, b[j])?.get_xy(cs)?;
             self.num_equal_unless_base_case(cs, base_case.clone(), &x1, &x2)?;
             self.num_equal_unless_base_case(cs, base_case.clone(), &y1, &y2)?;
         }
@@ -1176,9 +1169,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             }
         }
 
-        let basecase_val = base_case
-            .get_value()
-            .map(|v| if v { Field::one() } else { Field::zero() });
+        let basecase_val = base_case.get_value().map(|v| v.into());
 
         for (bit, old_payload_bit) in self
             .inner_circuit
@@ -1193,12 +1184,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                     .ok_or(SynthesisError::AssignmentMissing)?;
                 let basecase_val = basecase_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-                let lhs: E1::Scalar = if bit { Field::one() } else { Field::zero() };
-                let rhs: E1::Scalar = if old_payload_bit {
-                    Field::one()
-                } else {
-                    Field::zero()
-                };
+                let lhs: E1::Scalar = bit.into();
+                let rhs: E1::Scalar = old_payload_bit.into();
 
                 Ok((lhs - &rhs, basecase_val, Field::zero()))
             })?;
