@@ -8,6 +8,16 @@ pub struct AllocatedBit {
 }
 
 impl AllocatedBit {
+    pub fn one<F, CS>(cs: &mut CS) -> Self
+    where
+        F: Field, CS: ConstraintSystem<F>,
+    {
+        AllocatedBit {
+            value: Some(true),
+            var: CS::ONE,
+        }
+    }
+
     pub fn get_value(&self) -> Option<bool> {
         self.value
     }

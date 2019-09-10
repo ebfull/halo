@@ -1060,7 +1060,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
     ) -> Result<Vec<AllocatedBit>, SynthesisError> {
         let num = transcript.squeeze(cs)?;
         let mut bits = unpack_fe(cs, &num)?;
-        bits.truncate(128);
+        bits.truncate(127);
+        bits.push(AllocatedBit::one(cs));
 
         Ok(bits)
     }

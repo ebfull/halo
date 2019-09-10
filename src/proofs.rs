@@ -389,9 +389,9 @@ impl<C: Curve> Proof<C> {
             inputs: vec![],
         };
 
-        println!("synthesizing witness");
+        //println!("synthesizing witness");
         S::synthesize(&mut assignment, circuit)?;
-        println!("DONE");
+        //println!("DONE");
 
         assert!(assignment.n < params.n);
         assert!(assignment.q < params.d);
@@ -810,7 +810,7 @@ impl<C: Curve> Proof<C> {
         append_scalar::<C>(&mut transcript, &gx_old_opening);
 
         let z = get_challenge::<_, C::Scalar>(&mut transcript);
-        println!("VERIFIER: z in the verifier: {:?}", z);
+        //println!("VERIFIER: z in the verifier: {:?}", z);
 
         let p_commitment = self.r_commitment;
         let p_commitment = p_commitment * &z + leftovers.s_new_commitment;
@@ -1369,6 +1369,8 @@ fn append_scalar<C: Curve>(transcript: &mut Rescue<C::Base>, scalar: &C::Scalar)
 fn get_challenge<F1: Field, F2: Field>(transcript: &mut Rescue<F1>) -> F2 {
     let challenge = transcript.squeeze();
     let challenge = challenge.get_lower_128();
+
+    let challenge = challenge | (1u128 << 127);
 
     F2::from_u128(challenge)
 }
