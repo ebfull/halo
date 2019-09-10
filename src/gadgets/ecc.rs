@@ -391,34 +391,44 @@ impl<C: Curve> CurvePoint<C> {
         //   x3 = lambda^2 - x1 - x2
         //   y3 = -lambda x3 + lambda x1 - y1
         //
-        // p1 != p2, p1 == -p2:
-        //   lambda = (non-zero) / (0) --> unsatisfiable
-        //    --> We need to ensure the denominator is non-zero when the x
-        //        coordinates are the same:
-        //        (x2 - x1 + x_is_same) * lambda = (y2 - y1)
+        //   p1 != p2, p1 == -p2:
+        //     lambda = (non-zero) / (0) --> unsatisfiable
+        //      --> We need to ensure the denominator is non-zero when the x
+        //          coordinates are the same:
+        //          (x2 - x1 + x_is_same) * lambda = (y2 - y1)
         //
         // p1 != p2, p1 == identity, p2 != identity:
         //   lambda = (y2 - 0) / (x2 - 0) = y2/x2
+        //     --> x2 cannot be zero in this case, because there is no point
+        //         with x-coordinate 0 on the curve.
         //   x3 = lambda^2 - 0 - x2 = (y2/x2)^2 - x2
         //   y3 = -lambda x3 + lambda 0 - 0
         //      = x2(y2/x2) - (y2/x2)^3
         //
         // p1 != p2, p1 != identity, p2 == identity:
         //   lambda = (0 - y1) / (0 - x1) = (y1/x1)
+        //     --> x1 cannot be zero in this case, because there is no point
+        //         with x-coordinate 0 on the curve.
         //   x3 = lambda^2 - x1 - 0 = (y1/x1)^2 - x1
         //   y3 = -lambda x3 + lambda x1 - y1
         //      = -((y1/x1)^2 - x1) x3 + (y1/x1) x1 - y1
         //
         // p1 == p2 != identity:
         //   lambda = (3 (x1)^2) / (2 y1)
+        //     --> y1 cannot be zero in this case; there is no point with
+        //         y-coordinate 0 on the curve, because the curve is
+        //         prime-order.
         //   x3 = lambda^2 - 2 x1 = lambda^2 - x1 - x2
         //   y3 = -lambda x3 + lambda x1 - y1
         //
         // p1 == p2 == identity:
         //   lambda = (3 * (0)^2) / (2 * 0) ==> lambda = 0
+        //     --> Here we set both x1 and y1 to zero, so while this is not on
+        //         the curve, it is satisfiable.
         //   x3 = 0^2 - 2 * 0 = 0
         //   y3 = -0 * 0 + 0 * 0 - 0 = 0
-        //   --> need to constrain lambda = 0 if p1_is_identity && p2_is_identity
+        //   --> We don't need to constrain lambda = 0, because we replace
+        //       (x3, y3) with (0, 0) explicitly in later constraints.
         //
         // So we can handle both cases by including a selection constraint:
         //   (x2 - x1) * x_is_same = 0
@@ -446,10 +456,10 @@ impl<C: Curve> CurvePoint<C> {
         //
         // Constrain p3_is_identity:
         //   (y2 + y1) * p3_is_identity = 0
-        //     --> if different, is_same must be 0
+        //     --> if (y2 + y1) != 0, p3_is_identity must be 0
         //
         //   (y2 + y1) * (y2 + y1)^-1 = (x_is_same - p3_is_identity)
-        //     --> if the same, is_same must be 1
+        //     --> if (y2 + y1) == 0, p3_is_identity must be x_is_same
         //
         // x4 = x3 * (1 - p3_is_identity)
         // y4 = y3 * (1 - p3_is_identity)
@@ -482,7 +492,7 @@ impl<C: Curve> CurvePoint<C> {
 
         // (x2 - x1) * (x2 - x1)^-1 = (1 - x_is_same)
         // c = a = x2 - x1
-        // d := a^-1
+        // d := a^-1 unless a == 0, in which case witness d := 1
         // e = (1 - x_is_same)
 
         let x2mx1_inv_val = x2mx1_val.map(|x2mx1| {
@@ -522,7 +532,7 @@ impl<C: Curve> CurvePoint<C> {
         cs.enforce_zero(x1_lc.clone() - g_var);
 
         // (x2 - x1 + x_is_same) * lambda_diff = (y2 - y1)
-        // i = x2 - x1
+        // i = x2 - x1 + x_is_same
         // j = y2 - y1
 
         let j_val = y1_val.and_then(|y1| y2_val.map(|y2| y2 - &y1));
@@ -550,7 +560,7 @@ impl<C: Curve> CurvePoint<C> {
 
         // (2 y1) * lambda_same = 3 (x1)^2
         // k = 2 y1
-        // l = 3 c = 3 x1^2
+        // l = 3 h = 3 x1^2
 
         let k_val = y1_val.map(|y1| y1 + &y1);
         let l_val = x1_sq.map(|x1sq| x1sq + &x1sq + &x1sq);
@@ -607,7 +617,7 @@ impl<C: Curve> CurvePoint<C> {
         cs.enforce_zero(LinearCombination::from(lambda_var) - m_var);
         let x3_lc = LinearCombination::from(n_var) - &x1_lc - &x2_lc;
 
-        // (lambda - lambda_diff) = x_is_same * (lambda_same - lambda_diff)
+        // x_is_same * (lambda_same - lambda_diff) = (lambda - lambda_diff)
         let (o_var, p_var, q_var) = cs.multiply(|| {
             let x_is_same = x_is_same_val.ok_or(SynthesisError::AssignmentMissing)?;
             let lambda_diff = lambda_diff_val.ok_or(SynthesisError::AssignmentMissing)?;
@@ -1118,6 +1128,9 @@ impl<C: Curve> CurvePoint<C> {
         cs.enforce_zero(x_p_lc.clone() - b_var);
 
         // (2 y_p) * lambda = (3 xx_p)
+        //
+        // y_p can only be zero if p is the identity (because the curve is
+        // prime-order), in which case xx_p is zero, so this is satisfiable.
         let (c_var, lambda, d_var) = cs.multiply(|| {
             let y_p = y_p_val.ok_or(SynthesisError::AssignmentMissing)?;
             let xx_p = xx_p_val.ok_or(SynthesisError::AssignmentMissing)?;
@@ -1127,6 +1140,9 @@ impl<C: Curve> CurvePoint<C> {
         cs.enforce_zero(LinearCombination::zero() + xx_p + xx_p + xx_p - d_var);
 
         // lambda * lambda = (2 x_p + x_dbl)
+        //
+        // In the identity case, if lambda == 0 then this constrains x_dbl to 0,
+        // and then the constraint below constrains y_dbl to 0.
         let (d_var, e_var, f_var) = cs.multiply(|| {
             let x_p = x_p_val.ok_or(SynthesisError::AssignmentMissing)?;
 
@@ -1179,9 +1195,10 @@ impl<C: Curve> CurvePoint<C> {
         cs: &mut CS,
         other: &Self,
     ) -> Result<Self, SynthesisError> {
-        // Compute (P + Q) + P as:
+        // Compute [2] P + Q as (P + Q) + P:
         // R = P + Q
         // S = R + P
+        // See https://github.com/zcash/zcash/issues/3924 for details.
 
         let x_p = self.x;
         let y_p = self.y;
