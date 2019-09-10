@@ -25,6 +25,16 @@ impl fmt::Debug for Fq {
     }
 }
 
+impl From<bool> for Fq {
+    fn from(bit: bool) -> Fq {
+        if bit {
+            Fq::one()
+        } else {
+            Fq::zero()
+        }
+    }
+}
+
 impl From<u64> for Fq {
     fn from(val: u64) -> Fq {
         Fq([val, 0, 0, 0]) * R2

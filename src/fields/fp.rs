@@ -25,6 +25,16 @@ impl fmt::Debug for Fp {
     }
 }
 
+impl From<bool> for Fp {
+    fn from(bit: bool) -> Fp {
+        if bit {
+            Fp::one()
+        } else {
+            Fp::zero()
+        }
+    }
+}
+
 impl From<u64> for Fp {
     fn from(val: u64) -> Fp {
         Fp([val, 0, 0, 0]) * R2

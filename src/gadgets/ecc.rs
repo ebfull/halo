@@ -1674,7 +1674,7 @@ impl<C: Curve> CurvePoint<C> {
                 .get_value()
                 .ok_or(SynthesisError::AssignmentMissing)?;
 
-            Ok((x_s, C::Base::from_bool(!is_identity), x_out))
+            Ok((x_s, (!is_identity).into(), x_out))
         })?;
         cs.enforce_zero(x_s_lc - p_var);
         cs.enforce_zero(self.is_identity.not().lc(CS::ONE, Coeff::One) - q_var);
@@ -1689,7 +1689,7 @@ impl<C: Curve> CurvePoint<C> {
                 .get_value()
                 .ok_or(SynthesisError::AssignmentMissing)?;
 
-            Ok((y_s, C::Base::from_bool(!is_identity), y_out))
+            Ok((y_s, (!is_identity).into(), y_out))
         })?;
         cs.enforce_zero(y_s_lc - s_var);
         cs.enforce_zero(self.is_identity.not().lc(CS::ONE, Coeff::One) - t_var);
