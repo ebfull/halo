@@ -1081,10 +1081,10 @@ impl<C: Curve> CurvePoint<C> {
         // lambda = (3 x_p^2)/(2 y_p)
         let lambda_val = match (x_p_val, y_p_val) {
             (Some(x_p), Some(y_p)) => {
-                let inv_yp = (y_p + &y_p).invert();
-                if inv_yp.is_some().into() {
+                let inv_2yp = (y_p + &y_p).invert();
+                if inv_2yp.is_some().into() {
                     let xx_p = x_p * &x_p;
-                    Ok(inv_yp.unwrap() * &(xx_p + &xx_p + &xx_p))
+                    Ok(inv_2yp.unwrap() * &(xx_p + &xx_p + &xx_p))
                 } else {
                     // Set lambda to zero, and then constrain to zero
                     Ok(C::Base::zero())
