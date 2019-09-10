@@ -49,6 +49,14 @@ pub trait Field:
 
     fn is_zero(&self) -> Choice;
 
+    fn from_bool(v: bool) -> Self {
+        if v {
+            Self::one()
+        } else {
+            Self::zero()
+        }
+    }
+
     fn from_u64(v: u64) -> Self;
     fn from_u128(v: u128) -> Self;
     fn invert(&self) -> CtOption<Self>;
