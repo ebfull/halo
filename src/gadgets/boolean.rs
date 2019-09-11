@@ -717,7 +717,7 @@ impl From<AllocatedBit> for Boolean {
 #[cfg(test)]
 mod test {
     use super::{AllocatedBit, Boolean};
-    use crate::{fields::Fp, is_satisfied, Basic, Circuit, ConstraintSystem, SynthesisError};
+    use crate::{dev::is_satisfied, fields::Fp, Basic, Circuit, ConstraintSystem, SynthesisError};
 
     #[test]
     fn test_allocated_bit() {

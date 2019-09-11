@@ -568,7 +568,8 @@ impl<F: Field> Combination<F> {
 mod test {
     use super::AllocatedNum;
     use crate::{
-        circuits::{is_satisfied, Circuit, ConstraintSystem, SynthesisError},
+        circuits::{Circuit, ConstraintSystem, SynthesisError},
+        dev::is_satisfied,
         fields::Fp,
         Basic,
     };

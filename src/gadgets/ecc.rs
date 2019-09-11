@@ -1726,8 +1726,9 @@ impl<C: Curve> CurvePoint<C> {
 mod test {
     use super::CurvePoint;
     use crate::{
-        circuits::{is_satisfied, Circuit, Coeff, ConstraintSystem, SynthesisError},
+        circuits::{Circuit, Coeff, ConstraintSystem, SynthesisError},
         curves::{Curve, Ec1},
+        dev::is_satisfied,
         fields::{Field, Fp, Fq},
         gadgets::boolean::{AllocatedBit, Boolean},
         Basic,

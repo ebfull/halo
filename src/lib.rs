@@ -7,6 +7,7 @@ mod util;
 
 mod circuits;
 mod curves;
+pub mod dev;
 mod fields;
 mod gadgets;
 mod proofs;

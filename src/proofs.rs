@@ -949,7 +949,7 @@ fn my_test_circuit() {
     let mut prover_circuit: CubingCircuit<Fq> = CubingCircuit {
         x: Some(Fq::from(10)),
     };
-    assert!(is_satisfied::<_, _, Basic>(&prover_circuit, &[Fq::from(1000)]).unwrap());
+    assert!(crate::dev::is_satisfied::<_, _, Basic>(&prover_circuit, &[Fq::from(1000)]).unwrap());
     let verifier_circuit: CubingCircuit<Fq> = CubingCircuit { x: None };
 
     // phony deferred should be valid

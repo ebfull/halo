@@ -311,7 +311,8 @@ impl<F: Field> RescueGadget<F> {
 mod test {
     use super::RescueGadget;
     use crate::{
-        circuits::{is_satisfied, Circuit, ConstraintSystem, SynthesisError},
+        circuits::{Circuit, ConstraintSystem, SynthesisError},
+        dev::is_satisfied,
         fields::Fp,
         gadgets::AllocatedNum,
         rescue::{Rescue, SPONGE_RATE},
