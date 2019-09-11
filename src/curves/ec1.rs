@@ -79,7 +79,7 @@ impl Curve for Ec1 {
         tmp[31] &= 0b0111_1111;
 
         Fp::from_bytes(&tmp).and_then(|x| {
-            use crate::CtOptionExt;
+            use crate::CtOptionExt1;
 
             CtOption::new(Self::zero(), x.is_zero() & (!ysign)).or_else(|| {
                 let x3 = x.square() * x;
