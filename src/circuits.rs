@@ -34,6 +34,8 @@ pub trait Circuit<F: Field> {
     fn synthesize<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<(), SynthesisError>;
 }
 
+/// Represents a constraint system which can have new variables
+/// allocated and constrains between them formed.
 pub trait ConstraintSystem<FF: Field> {
     /// Represents the type of the "root" of this constraint system
     /// so that nested namespaces can minimize indirection.
@@ -41,12 +43,18 @@ pub trait ConstraintSystem<FF: Field> {
 
     const ONE: Variable;
 
+    /// Allocate a private variable in the constraint system. The provided function is used to
+    /// determine the assignment of the variable. The given `annotation` function is invoked
+    /// in testing contexts in order to derive a unique name for this variable in the current
+    /// namespace.
     fn alloc<F, A, AR>(&mut self, annotation: A, value: F) -> Result<Variable, SynthesisError>
     where
         F: FnOnce() -> Result<FF, SynthesisError>,
         A: FnOnce() -> AR,
         AR: Into<String>;
 
+    /// Allocate a public variable in the constraint system. The provided function is used to
+    /// determine the assignment of the variable.
     fn alloc_input<F, A, AR>(
         &mut self,
         annotation: A,
@@ -57,8 +65,11 @@ pub trait ConstraintSystem<FF: Field> {
         A: FnOnce() -> AR,
         AR: Into<String>;
 
+    /// Create a linear constraint from the provided LinearCombination.
     fn enforce_zero(&mut self, lc: LinearCombination<FF>);
 
+    /// Create a multiplication gate. The provided function is used to determine the
+    /// assignments.
     fn multiply<F>(&mut self, values: F) -> Result<(Variable, Variable, Variable), SynthesisError>
     where
         F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>;
