@@ -1728,7 +1728,7 @@ mod test {
     use crate::{
         circuits::{is_satisfied, Circuit, Coeff, ConstraintSystem, SynthesisError},
         curves::{Curve, Ec1},
-        fields::{Fp, Fq},
+        fields::{Field, Fp, Fq},
         gadgets::boolean::{AllocatedBit, Boolean},
         Basic,
     };

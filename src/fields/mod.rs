@@ -52,6 +52,7 @@ pub trait Field:
 
     fn from_u64(v: u64) -> Self;
     fn from_u128(v: u128) -> Self;
+    fn sqrt(&self) -> CtOption<Self>;
     fn invert(&self) -> CtOption<Self>;
 
     fn zero() -> Self;
