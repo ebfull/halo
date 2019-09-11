@@ -71,6 +71,8 @@ impl SynthesisDriver for Basic {
         }
 
         impl<FF: Field, B: Backend<FF>> ConstraintSystem<FF> for Synthesizer<FF, B> {
+            type Root = Self;
+
             const ONE: Variable = Variable::A(1);
 
             fn alloc<F, A, AR>(
@@ -188,6 +190,22 @@ impl SynthesisDriver for Basic {
                     .set_var(c, || c_val.ok_or(SynthesisError::AssignmentMissing))?;
 
                 Ok((a, b, c))
+            }
+
+            fn push_namespace<NR, N>(&mut self, _: N)
+            where
+                NR: Into<String>,
+                N: FnOnce() -> NR,
+            {
+                // Do nothing; we don't care about namespaces in this context.
+            }
+
+            fn pop_namespace(&mut self) {
+                // Do nothing; we don't care about namespaces in this context.
+            }
+
+            fn get_root(&mut self) -> &mut Self::Root {
+                self
             }
         }
 

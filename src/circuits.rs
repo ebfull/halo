@@ -1,4 +1,5 @@
 use crate::{Backend, Field, SynthesisDriver};
+use std::marker::PhantomData;
 use std::ops::{Add, Mul, Neg, Sub};
 
 #[derive(Copy, Clone, Debug)]
@@ -34,6 +35,10 @@ pub trait Circuit<F: Field> {
 }
 
 pub trait ConstraintSystem<FF: Field> {
+    /// Represents the type of the "root" of this constraint system
+    /// so that nested namespaces can minimize indirection.
+    type Root: ConstraintSystem<FF>;
+
     const ONE: Variable;
 
     fn alloc<F, A, AR>(&mut self, annotation: A, value: F) -> Result<Variable, SynthesisError>
@@ -58,12 +63,148 @@ pub trait ConstraintSystem<FF: Field> {
     where
         F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>;
 
-    fn namespace<NR, N>(&mut self, name_fn: N) -> &mut Self
+    /// Create a new (sub)namespace and enter into it. Not intended
+    /// for downstream use; use `namespace` instead.
+    fn push_namespace<NR, N>(&mut self, name_fn: N)
     where
-        N: FnOnce() -> NR,
         NR: Into<String>,
+        N: FnOnce() -> NR;
+
+    /// Exit out of the existing namespace. Not intended for
+    /// downstream use; use `namespace` instead.
+    fn pop_namespace(&mut self);
+
+    /// Gets the "root" constraint system, bypassing the namespacing.
+    /// Not intended for downstream use; use `namespace` instead.
+    fn get_root(&mut self) -> &mut Self::Root;
+
+    /// Begin a namespace for this constraint system.
+    fn namespace<'a, NR, N>(&'a mut self, name_fn: N) -> Namespace<'a, FF, Self::Root>
+    where
+        NR: Into<String>,
+        N: FnOnce() -> NR,
     {
-        self
+        self.get_root().push_namespace(name_fn);
+
+        Namespace(self.get_root(), PhantomData)
+    }
+}
+
+/// This is a "namespaced" constraint system which borrows a constraint system (pushing
+/// a namespace context) and, when dropped, pops out of the namespace context.
+pub struct Namespace<'a, FF: Field, CS: ConstraintSystem<FF> + 'a>(&'a mut CS, PhantomData<FF>);
+
+impl<'cs, FF: Field, CS: ConstraintSystem<FF>> ConstraintSystem<FF> for Namespace<'cs, FF, CS> {
+    type Root = CS::Root;
+
+    const ONE: Variable = CS::ONE;
+
+    fn alloc<F, A, AR>(&mut self, annotation: A, value: F) -> Result<Variable, SynthesisError>
+    where
+        F: FnOnce() -> Result<FF, SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+    {
+        self.0.alloc(annotation, value)
+    }
+
+    fn alloc_input<F, A, AR>(&mut self, annotation: A, value: F) -> Result<Variable, SynthesisError>
+    where
+        F: FnOnce() -> Result<FF, SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+    {
+        self.0.alloc_input(annotation, value)
+    }
+
+    fn enforce_zero(&mut self, lc: LinearCombination<FF>) {
+        self.0.enforce_zero(lc)
+    }
+
+    fn multiply<F>(&mut self, values: F) -> Result<(Variable, Variable, Variable), SynthesisError>
+    where
+        F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
+    {
+        self.0.multiply(values)
+    }
+
+    // Downstream users who use `namespace` will never interact with these
+    // functions and they will never be invoked because the namespace is
+    // never a root constraint system.
+
+    fn push_namespace<NR, N>(&mut self, _: N)
+    where
+        NR: Into<String>,
+        N: FnOnce() -> NR,
+    {
+        panic!("only the root's push_namespace should be called");
+    }
+
+    fn pop_namespace(&mut self) {
+        panic!("only the root's pop_namespace should be called");
+    }
+
+    fn get_root(&mut self) -> &mut Self::Root {
+        self.0.get_root()
+    }
+}
+
+impl<'a, FF: Field, CS: ConstraintSystem<FF>> Drop for Namespace<'a, FF, CS> {
+    fn drop(&mut self) {
+        self.get_root().pop_namespace()
+    }
+}
+
+/// Convenience implementation of ConstraintSystem<E> for mutable references to
+/// constraint systems.
+impl<'cs, FF: Field, CS: ConstraintSystem<FF>> ConstraintSystem<FF> for &'cs mut CS {
+    type Root = CS::Root;
+
+    const ONE: Variable = CS::ONE;
+
+    fn alloc<F, A, AR>(&mut self, annotation: A, value: F) -> Result<Variable, SynthesisError>
+    where
+        F: FnOnce() -> Result<FF, SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+    {
+        (**self).alloc(annotation, value)
+    }
+
+    fn alloc_input<F, A, AR>(&mut self, annotation: A, value: F) -> Result<Variable, SynthesisError>
+    where
+        F: FnOnce() -> Result<FF, SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+    {
+        (**self).alloc_input(annotation, value)
+    }
+
+    fn enforce_zero(&mut self, lc: LinearCombination<FF>) {
+        (**self).enforce_zero(lc)
+    }
+
+    fn multiply<F>(&mut self, values: F) -> Result<(Variable, Variable, Variable), SynthesisError>
+    where
+        F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
+    {
+        (**self).multiply(values)
+    }
+
+    fn push_namespace<NR, N>(&mut self, name_fn: N)
+    where
+        NR: Into<String>,
+        N: FnOnce() -> NR,
+    {
+        (**self).push_namespace(name_fn)
+    }
+
+    fn pop_namespace(&mut self) {
+        (**self).pop_namespace()
+    }
+
+    fn get_root(&mut self) -> &mut Self::Root {
+        (**self).get_root()
     }
 }
 
@@ -452,6 +593,8 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
     }
 
     impl<FF: Field> ConstraintSystem<FF> for Record<FF> {
+        type Root = Self;
+
         const ONE: Variable = Variable::A(0);
 
         fn alloc<F, A, AR>(&mut self, _annotation: A, _value: F) -> Result<Variable, SynthesisError>
@@ -506,6 +649,22 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
 
             Ok((a, b, c))
         }
+
+        fn push_namespace<NR, N>(&mut self, _: N)
+        where
+            NR: Into<String>,
+            N: FnOnce() -> NR,
+        {
+            // Do nothing; we don't care about namespaces in this context.
+        }
+
+        fn pop_namespace(&mut self) {
+            // Do nothing; we don't care about namespaces in this context.
+        }
+
+        fn get_root(&mut self) -> &mut Self::Root {
+            self
+        }
     }
 
     let mut record = Record {
@@ -521,6 +680,8 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
     }
 
     impl<FF: Field, I: Iterator<Item = Event<FF>>> ConstraintSystem<FF> for Enforce<FF, I> {
+        type Root = Self;
+
         const ONE: Variable = Variable::A(0);
 
         fn alloc<F, A, AR>(&mut self, _annotation: A, value: F) -> Result<Variable, SynthesisError>
@@ -600,6 +761,22 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
             self.vars += 1;
 
             Ok((a, b, c))
+        }
+
+        fn push_namespace<NR, N>(&mut self, _: N)
+        where
+            NR: Into<String>,
+            N: FnOnce() -> NR,
+        {
+            // Do nothing; we don't care about namespaces in this context.
+        }
+
+        fn pop_namespace(&mut self) {
+            // Do nothing; we don't care about namespaces in this context.
+        }
+
+        fn get_root(&mut self) -> &mut Self::Root {
+            self
         }
     }
 

@@ -20,7 +20,7 @@ use std::ops::{Add, AddAssign, Neg, Sub};
 /// h = x
 /// i := x^5
 fn constrain_pow_five<F, CS>(
-    cs: &mut CS,
+    mut cs: CS,
     x: Option<F>,
 ) -> Result<(Variable, Variable), SynthesisError>
 where
@@ -68,7 +68,7 @@ pub struct AllocatedNum<F: Field> {
 }
 
 impl<F: Field> AllocatedNum<F> {
-    pub fn alloc<CS, FF>(cs: &mut CS, value: FF) -> Result<Self, SynthesisError>
+    pub fn alloc<CS, FF>(mut cs: CS, value: FF) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
         FF: FnOnce() -> Result<F, SynthesisError>,
@@ -82,7 +82,7 @@ impl<F: Field> AllocatedNum<F> {
         })
     }
 
-    pub fn alloc_input<CS, FF>(cs: &mut CS, value: FF) -> Result<Self, SynthesisError>
+    pub fn alloc_input<CS, FF>(mut cs: CS, value: FF) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
         FF: FnOnce() -> Result<F, SynthesisError>,
@@ -96,7 +96,7 @@ impl<F: Field> AllocatedNum<F> {
         })
     }
 
-    pub fn inputize<CS>(&self, cs: &mut CS) -> Result<Self, SynthesisError>
+    pub fn inputize<CS>(&self, mut cs: CS) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -113,7 +113,7 @@ impl<F: Field> AllocatedNum<F> {
         })
     }
 
-    pub fn mul<CS>(&self, cs: &mut CS, other: &Self) -> Result<Self, SynthesisError>
+    pub fn mul<CS>(&self, mut cs: CS, other: &Self) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -138,7 +138,7 @@ impl<F: Field> AllocatedNum<F> {
         })
     }
 
-    pub fn alloc_and_square<FF, CS>(cs: &mut CS, value: FF) -> Result<(Self, Self), SynthesisError>
+    pub fn alloc_and_square<FF, CS>(mut cs: CS, value: FF) -> Result<(Self, Self), SynthesisError>
     where
         CS: ConstraintSystem<F>,
         FF: FnOnce() -> Result<F, SynthesisError>,
@@ -165,7 +165,7 @@ impl<F: Field> AllocatedNum<F> {
         ))
     }
 
-    pub fn rescue_alpha<CS>(cs: &mut CS, base: &Combination<F>) -> Result<Self, SynthesisError>
+    pub fn rescue_alpha<CS>(mut cs: CS, base: &Combination<F>) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -175,9 +175,10 @@ impl<F: Field> AllocatedNum<F> {
 
         // base^5 --> Constrain base^5 = result
         assert_eq!(F::RESCUE_ALPHA, 5);
-        let (base_var, result_var) = constrain_pow_five(cs, base_value)?;
+        let (base_var, result_var) =
+            constrain_pow_five(cs.namespace(|| "constrain base^5"), base_value)?;
 
-        let base_lc = base.lc(cs);
+        let base_lc = base.lc(&mut cs);
         cs.enforce_zero(base_lc - base_var);
 
         Ok(AllocatedNum {
@@ -186,7 +187,7 @@ impl<F: Field> AllocatedNum<F> {
         })
     }
 
-    pub fn rescue_invalpha<CS>(cs: &mut CS, base: &Combination<F>) -> Result<Self, SynthesisError>
+    pub fn rescue_invalpha<CS>(mut cs: CS, base: &Combination<F>) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -196,9 +197,10 @@ impl<F: Field> AllocatedNum<F> {
 
         // base^(1/5) --> Constrain result^5 = base
         assert_eq!(F::RESCUE_ALPHA, 5);
-        let (result_var, base_var) = constrain_pow_five(cs, result_value)?;
+        let (result_var, base_var) =
+            constrain_pow_five(cs.namespace(|| "constrain result^5"), result_value)?;
 
-        let base_lc = base.lc(cs);
+        let base_lc = base.lc(&mut cs);
         cs.enforce_zero(base_lc - base_var);
 
         Ok(AllocatedNum {
@@ -219,12 +221,12 @@ impl<F: Field> AllocatedNum<F> {
         LinearCombination::from(self.var)
     }
 
-    pub fn invert<CS>(&self, cs: &mut CS) -> Result<AllocatedNum<F>, SynthesisError>
+    pub fn invert<CS>(&self, mut cs: CS) -> Result<AllocatedNum<F>, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
         let mut newval = None;
-        let newnum = AllocatedNum::alloc(cs, || {
+        let newnum = AllocatedNum::alloc(cs.namespace(|| "inverse"), || {
             let inv = self
                 .value
                 .ok_or(SynthesisError::AssignmentMissing)?
@@ -311,7 +313,7 @@ impl<F: Field> Num<F> {
         }
     }
 
-    pub fn lc<CS: ConstraintSystem<F>>(&self, _cs: &mut CS) -> LinearCombination<F> {
+    pub fn lc<CS: ConstraintSystem<F>>(&self, mut _cs: CS) -> LinearCombination<F> {
         LinearCombination::zero()
             + match self {
                 Num::Constant(v) => (*v, CS::ONE),
@@ -458,26 +460,27 @@ impl<F: Field> Combination<F> {
         self.value
     }
 
-    pub fn lc<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> LinearCombination<F> {
+    pub fn lc<CS: ConstraintSystem<F>>(&self, mut cs: CS) -> LinearCombination<F> {
         let mut acc = LinearCombination::zero();
 
         for term in &self.terms {
-            acc = acc + &term.lc(cs);
+            acc = acc + &term.lc(&mut cs);
         }
 
         acc
     }
 
-    pub fn evaluate<CS>(&self, cs: &mut CS) -> Result<Num<F>, SynthesisError>
+    pub fn evaluate<CS>(&self, mut cs: CS) -> Result<Num<F>, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
         let any_allocated = self.terms.iter().any(|n| !n.is_constant());
 
         if any_allocated {
-            let out =
-                AllocatedNum::alloc(cs, || self.value.ok_or(SynthesisError::AssignmentMissing))?;
-            let lc = self.lc(cs);
+            let out = AllocatedNum::alloc(cs.namespace(|| "combination"), || {
+                self.value.ok_or(SynthesisError::AssignmentMissing)
+            })?;
+            let lc = self.lc(&mut cs);
             cs.enforce_zero(out.lc() - &lc);
             Ok(out.into())
         } else {
@@ -489,7 +492,7 @@ impl<F: Field> Combination<F> {
 
     pub fn mul<CS: ConstraintSystem<F>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
         other: &Combination<F>,
     ) -> Result<AllocatedNum<F>, SynthesisError> {
         let mut value = None;
@@ -502,9 +505,9 @@ impl<F: Field> Combination<F> {
             Ok((l, r, o))
         })?;
 
-        let lc = self.lc(cs);
+        let lc = self.lc(&mut cs);
         cs.enforce_zero(lc - l);
-        let lc = other.lc(cs);
+        let lc = other.lc(&mut cs);
         cs.enforce_zero(lc - r);
 
         Ok(AllocatedNum { value, var: o })
@@ -512,7 +515,7 @@ impl<F: Field> Combination<F> {
 
     pub fn square<CS: ConstraintSystem<F>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
     ) -> Result<AllocatedNum<F>, SynthesisError> {
         let mut value = None;
         let (l, r, o) = cs.multiply(|| {
@@ -523,14 +526,14 @@ impl<F: Field> Combination<F> {
             Ok((l, l, c))
         })?;
 
-        let lc = self.lc(cs);
+        let lc = self.lc(&mut cs);
         cs.enforce_zero(lc.clone() - l);
         cs.enforce_zero(lc - r);
 
         Ok(AllocatedNum { value, var: o })
     }
 
-    pub fn rescue_alpha<CS>(&self, cs: &mut CS) -> Result<Num<F>, SynthesisError>
+    pub fn rescue_alpha<CS>(&self, cs: CS) -> Result<Num<F>, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {
@@ -545,7 +548,7 @@ impl<F: Field> Combination<F> {
         }
     }
 
-    pub fn rescue_invalpha<CS>(&self, cs: &mut CS) -> Result<Num<F>, SynthesisError>
+    pub fn rescue_invalpha<CS>(&self, cs: CS) -> Result<Num<F>, SynthesisError>
     where
         CS: ConstraintSystem<F>,
     {

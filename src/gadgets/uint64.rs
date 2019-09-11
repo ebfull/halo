@@ -33,7 +33,7 @@ impl UInt64 {
     }
 
     /// Allocate a `UInt64` in the constraint system
-    pub fn alloc<F, CS>(cs: &mut CS, value: Option<u64>) -> Result<Self, SynthesisError>
+    pub fn alloc<F, CS>(mut cs: CS, value: Option<u64>) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -131,7 +131,7 @@ impl UInt64 {
     /// (2^64 - 1)^2 + 2*(2^64 - 1) = 2^128 - 1
     pub fn mul_acc2<F, CS>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
         other: &Self,
         addend1: &Self,
         addend2: &Self,

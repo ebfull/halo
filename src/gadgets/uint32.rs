@@ -34,7 +34,7 @@ impl UInt32 {
     }
 
     /// Allocate a `UInt32` in the constraint system
-    pub fn alloc<F, CS>(cs: &mut CS, value: Option<u32>) -> Result<Self, SynthesisError>
+    pub fn alloc<F, CS>(mut cs: CS, value: Option<u32>) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -181,7 +181,7 @@ impl UInt32 {
     }
 
     fn triop<F, CS, FF, U>(
-        cs: &mut CS,
+        mut cs: CS,
         a: &Self,
         b: &Self,
         c: &Self,
@@ -205,7 +205,7 @@ impl UInt32 {
             .zip(b.bits.iter())
             .zip(c.bits.iter())
             .enumerate()
-            .map(|(i, ((a, b), c))| circuit_fn(cs, i, a, b, c))
+            .map(|(i, ((a, b), c))| circuit_fn(&mut cs, i, a, b, c))
             .collect::<Result<_, _>>()?;
 
         Ok(UInt32 {
@@ -216,12 +216,7 @@ impl UInt32 {
 
     /// Compute the `maj` value (a and b) xor (a and c) xor (b and c)
     /// during SHA256.
-    pub fn sha256_maj<F, CS>(
-        cs: &mut CS,
-        a: &Self,
-        b: &Self,
-        c: &Self,
-    ) -> Result<Self, SynthesisError>
+    pub fn sha256_maj<F, CS>(cs: CS, a: &Self, b: &Self, c: &Self) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -238,12 +233,7 @@ impl UInt32 {
 
     /// Compute the `ch` value `(a and b) xor ((not a) and c)`
     /// during SHA256.
-    pub fn sha256_ch<F, CS>(
-        cs: &mut CS,
-        a: &Self,
-        b: &Self,
-        c: &Self,
-    ) -> Result<Self, SynthesisError>
+    pub fn sha256_ch<F, CS>(cs: CS, a: &Self, b: &Self, c: &Self) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -259,7 +249,7 @@ impl UInt32 {
     }
 
     /// XOR this `UInt32` with another `UInt32`
-    pub fn xor<F, CS>(&self, cs: &mut CS, other: &Self) -> Result<Self, SynthesisError>
+    pub fn xor<F, CS>(&self, mut cs: CS, other: &Self) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -284,7 +274,7 @@ impl UInt32 {
     }
 
     /// Perform modular addition of several `UInt32` objects.
-    pub fn addmany<F, CS>(cs: &mut CS, operands: &[Self]) -> Result<Self, SynthesisError>
+    pub fn addmany<F, CS>(mut cs: CS, operands: &[Self]) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,

@@ -16,7 +16,7 @@ construct_uint! {
 }
 
 fn bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
-    cs: &mut CS,
+    mut cs: CS,
     data: Option<&[u8]>,
     len: usize,
 ) -> Result<Vec<Boolean>, SynthesisError> {
@@ -40,7 +40,7 @@ fn bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
 }
 
 fn input_bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
-    cs: &mut CS,
+    mut cs: CS,
     data: Option<&[u8]>,
     len: usize,
 ) -> Result<Vec<Boolean>, SynthesisError> {
@@ -48,12 +48,13 @@ fn input_bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
 
     for byte_i in 0..len {
         for bit_i in (0..8).rev() {
-            let cs = cs.namespace(|| format!("input bit {} {}", byte_i, bit_i));
+            let mut cs = cs.namespace(|| format!("input bit {}", 8 * byte_i + bit_i));
 
             let value = data.map(|bytes| (bytes[byte_i] >> bit_i) & 1u8 == 1u8);
-            let alloc_bit =
-                AllocatedBit::alloc(cs, || value.ok_or(SynthesisError::AssignmentMissing))?;
-            let input_bit = AllocatedNum::alloc_input(cs, || {
+            let alloc_bit = AllocatedBit::alloc(cs.namespace(|| "bit"), || {
+                value.ok_or(SynthesisError::AssignmentMissing)
+            })?;
+            let input_bit = AllocatedNum::alloc_input(cs.namespace(|| "input"), || {
                 value.map(F::from).ok_or(SynthesisError::AssignmentMissing)
             })?;
             cs.enforce_zero(input_bit.lc() - alloc_bit.get_variable());
@@ -74,7 +75,7 @@ fn add_input_bits_for_bytes<F: Field>(input: &mut Vec<F>, data: &[u8]) {
     }
 }
 
-fn enforce_equality<F: Field, CS: ConstraintSystem<F>>(cs: &mut CS, a: &[Boolean], b: &[Boolean]) {
+fn enforce_equality<F: Field, CS: ConstraintSystem<F>>(mut cs: CS, a: &[Boolean], b: &[Boolean]) {
     assert_eq!(a.len(), b.len());
 
     let mut a_lc = LinearCombination::zero();
@@ -147,7 +148,7 @@ impl CompactBits {
 
     fn unpack<F: Field, CS: ConstraintSystem<F>>(
         self,
-        cs: &mut CS,
+        mut cs: CS,
     ) -> Result<(Vec<Boolean>, Option<U256>), SynthesisError> {
         // Enforce that the mantissa sign bit is zero. A negative target is invalid under
         // the Bitcoin consensus rules.
@@ -184,7 +185,7 @@ impl CompactBits {
         //   f = 256^size
 
         let base_val = F::from_u64(256);
-        let base = AllocatedNum::alloc(cs, || Ok(base_val))?;
+        let base = AllocatedNum::alloc(cs.namespace(|| "256 TODO make constant"), || Ok(base_val))?;
         cs.enforce_zero(base.lc() - (Coeff::Full(base_val), CS::ONE));
 
         // Enforce that the top three bits of size are zero, so that 256^size does not
@@ -195,8 +196,11 @@ impl CompactBits {
         cs.enforce_zero(self.size_bits[1].lc(CS::ONE, Coeff::One));
         cs.enforce_zero(self.size_bits[2].lc(CS::ONE, Coeff::One));
 
-        let mut pow_size = AllocatedNum::alloc(cs, || Ok(F::one()))?;
-        for bit in self.size_bits.iter().skip(3) {
+        let mut pow_size =
+            AllocatedNum::alloc(cs.namespace(|| "one TODO make constant"), || Ok(F::one()))?;
+        for (i, bit) in self.size_bits.iter().enumerate().skip(3) {
+            let mut cs = cs.namespace(|| format!("256^(size - 3) bit {}", i));
+
             // Square, then conditionally multiply by 256
             //
             // sq = cur^2
@@ -210,9 +214,9 @@ impl CompactBits {
             // b = sq_m256 - sq
             // c = next - sq
 
-            let sq = pow_size.mul(cs, &pow_size)?;
-            let sq_m256 = sq.mul(cs, &base)?;
-            pow_size = AllocatedNum::alloc(cs, || {
+            let sq = pow_size.mul(cs.namespace(|| "square"), &pow_size)?;
+            let sq_m256 = sq.mul(cs.namespace(|| "square * 256"), &base)?;
+            pow_size = AllocatedNum::alloc(cs.namespace(|| "conditional select"), || {
                 match (bit.get_value(), sq.get_value(), sq_m256.get_value()) {
                     (Some(b), Some(sq), Some(sq_m256)) => Ok(if b { sq_m256 } else { sq }),
                     _ => Err(SynthesisError::AssignmentMissing),
@@ -320,12 +324,12 @@ impl<F: Field> BitcoinHeaderCircuit<F> {
 impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
     fn synthesize<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
         // Witness the previous height
-        let prev_height = AllocatedNum::alloc(cs, || {
+        let prev_height = AllocatedNum::alloc(cs.namespace(|| "prev_height"), || {
             self.prev_height.ok_or(SynthesisError::AssignmentMissing)
         })?;
 
         // Expose the current block height as an input
-        let height = AllocatedNum::alloc_input(cs, || {
+        let height = AllocatedNum::alloc_input(cs.namespace(|| "height"), || {
             self.prev_height
                 .map(|h| h + F::one())
                 .ok_or(SynthesisError::AssignmentMissing)
@@ -341,18 +345,22 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
 
         // Witness the previous hash
         let prev_bits = bytes_to_bits(
-            cs.namespace(|| "prev"),
+            cs.namespace(|| "prev_hash"),
             self.prev_hash.as_ref().map(|b| &b[..]),
             32,
         )?;
 
         // Enforce that header contains the previous hash
-        enforce_equality(cs, &header_bits[32..32 + 256], &prev_bits);
+        enforce_equality(
+            cs.namespace(|| "header contains prev_hash"),
+            &header_bits[32..32 + 256],
+            &prev_bits,
+        );
 
         // Compute SHA256d(header)
         let result = {
-            let mid = sha256(cs, &header_bits)?;
-            sha256(cs, &mid)?
+            let mid = sha256(cs.namespace(|| "SHA256(header)"), &header_bits)?;
+            sha256(cs.namespace(|| "SHA256(SHA256(header))"), &mid)?
         };
 
         // Expose the hash as an input
@@ -365,11 +373,15 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
             32,
         )?;
         assert_eq!(result.len(), hash_bits.len());
-        enforce_equality(cs, &result, &hash_bits);
+        enforce_equality(
+            cs.namespace(|| "SHA256(SHA256(header)) == hash"),
+            &result,
+            &hash_bits,
+        );
 
         // Unpack nBits as the block target
-        let (target, target_val) =
-            CompactBits::from_header(self.header.as_ref(), &header_bits).unpack(cs)?;
+        let (target, target_val) = CompactBits::from_header(self.header.as_ref(), &header_bits)
+            .unpack(cs.namespace(|| "unpack target"))?;
 
         // TODO: Range check hash <= target
 
@@ -413,13 +425,14 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
                     Err(SynthesisError::Unsatisfiable)
                 }
             });
-        let block_work = AllocatedNum::alloc(cs, || block_work_val)?;
+        let block_work = AllocatedNum::alloc(cs.namespace(|| "block_work"), || block_work_val)?;
 
         // Load block_work into four 64-bit limbs
-        let work_bits: Vec<_> = unpack_fe(cs, &block_work.into())?
-            .into_iter()
-            .map(Boolean::from)
-            .collect();
+        let work_bits: Vec<_> =
+            unpack_fe(cs.namespace(|| "unpack block_work"), &block_work.into())?
+                .into_iter()
+                .map(Boolean::from)
+                .collect();
         let work_limbs = [
             UInt64::from_bits(&work_bits[0..64]),
             UInt64::from_bits(&work_bits[64..128]),
@@ -443,16 +456,17 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
                     Err(SynthesisError::Unsatisfiable)
                 }
             });
-        let remainder = AllocatedNum::alloc(cs, || remainder_val)?;
+        let remainder = AllocatedNum::alloc(cs.namespace(|| "remainder"), || remainder_val)?;
 
         // TODO: Range check remainder <= target
 
         // Prepare the 64-bit output limbs, loading remainder into the lower four limbs
         // (so that it is added via UInt64::mul_acc2).
-        let remainder_bits: Vec<_> = unpack_fe(cs, &remainder.into())?
-            .into_iter()
-            .map(Boolean::from)
-            .collect();
+        let remainder_bits: Vec<_> =
+            unpack_fe(cs.namespace(|| "unpack remainder"), &remainder.into())?
+                .into_iter()
+                .map(Boolean::from)
+                .collect();
         let mut w = [
             UInt64::from_bits(&remainder_bits[0..64]),
             UInt64::from_bits(&remainder_bits[64..128]),
@@ -465,15 +479,22 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
         ];
 
         // u256 x u256 -> u512
-        for j in 0..4 {
-            let mut k = UInt64::constant(0);
-            for i in 0..4 {
-                let (t_low, t_high) =
-                    target_p1_limbs[i].mul_acc2(cs, &work_limbs[j], &w[i + j], &k)?;
-                w[i + j] = t_low;
-                k = t_high;
+        {
+            let mut cs = cs.namespace(|| "(target + 1) * block_work");
+            for j in 0..4 {
+                let mut k = UInt64::constant(0);
+                for i in 0..4 {
+                    let (t_low, t_high) = target_p1_limbs[i].mul_acc2(
+                        cs.namespace(|| format!("mul[{}, {}]", i, j)),
+                        &work_limbs[j],
+                        &w[i + j],
+                        &k,
+                    )?;
+                    w[i + j] = t_low;
+                    k = t_high;
+                }
+                w[j + 4] = k;
             }
-            w[j + 4] = k;
         }
 
         // Enforce that the result equals 2^256
@@ -487,7 +508,7 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
         cs.enforce_zero(w[7].lc::<_, CS>());
 
         // Witness the previous block's chain work
-        let prev_chain_work = AllocatedNum::alloc(cs, || {
+        let prev_chain_work = AllocatedNum::alloc(cs.namespace(|| "prev_chain_work"), || {
             self.prev_chain_work
                 .ok_or(SynthesisError::AssignmentMissing)
         })?;
@@ -496,7 +517,7 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
         let chain_work_value = prev_chain_work
             .get_value()
             .and_then(|a| block_work.get_value().and_then(|b| Some(a + b)));
-        let chain_work = AllocatedNum::alloc_input(cs, || {
+        let chain_work = AllocatedNum::alloc_input(cs.namespace(|| "chain_work"), || {
             chain_work_value.ok_or(SynthesisError::AssignmentMissing)
         })?;
         cs.enforce_zero(chain_work.lc() - &prev_chain_work.lc() - &block_work.lc());
