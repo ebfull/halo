@@ -7,7 +7,7 @@ pub struct AllocatedBit {
 }
 
 impl AllocatedBit {
-    pub fn one<F, CS>(cs: &mut CS) -> Self
+    pub fn one<F, CS>(_cs: CS) -> Self
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -31,7 +31,7 @@ impl AllocatedBit {
     /// the first linear constraints in our proof verification circuits
     /// are always input constraints.
     pub fn alloc_input_unchecked<F: Field, CS: ConstraintSystem<F>, FF>(
-        cs: &mut CS,
+        mut cs: CS,
         value: FF,
     ) -> Result<Self, SynthesisError>
     where
@@ -39,7 +39,7 @@ impl AllocatedBit {
     {
         let mut final_value = None;
         let var = cs.alloc_input(
-            || "",
+            || "input bit",
             || {
                 let v = value()?;
                 final_value = Some(v);
@@ -55,7 +55,7 @@ impl AllocatedBit {
 
     pub fn check<F: Field, CS: ConstraintSystem<F>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
     ) -> Result<(), SynthesisError> {
         let (a, b, c) = cs.multiply(|| {
             let val = self.value.ok_or(SynthesisError::AssignmentMissing)?;
@@ -72,7 +72,7 @@ impl AllocatedBit {
     }
 
     pub fn alloc<F: Field, CS: ConstraintSystem<F>, FF>(
-        cs: &mut CS,
+        mut cs: CS,
         value: FF,
     ) -> Result<Self, SynthesisError>
     where
@@ -98,7 +98,7 @@ impl AllocatedBit {
 
     /// Performs an XOR operation over the two operands, returning
     /// an `AllocatedBit`.
-    pub fn xor<F, CS>(cs: &mut CS, a: &Self, b: &Self) -> Result<Self, SynthesisError>
+    pub fn xor<F, CS>(mut cs: CS, a: &Self, b: &Self) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -169,7 +169,7 @@ impl AllocatedBit {
 
     /// Performs an AND operation over the two operands, returning
     /// an `AllocatedBit`.
-    pub fn and<F, CS>(cs: &mut CS, a: &Self, b: &Self) -> Result<Self, SynthesisError>
+    pub fn and<F, CS>(mut cs: CS, a: &Self, b: &Self) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -202,7 +202,7 @@ impl AllocatedBit {
     }
 
     /// Calculates `a AND (NOT b)`.
-    pub fn and_not<F, CS>(cs: &mut CS, a: &Self, b: &Self) -> Result<Self, SynthesisError>
+    pub fn and_not<F, CS>(mut cs: CS, a: &Self, b: &Self) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -229,7 +229,7 @@ impl AllocatedBit {
     }
 
     /// Calculates `(NOT a) AND (NOT b)`.
-    pub fn nor<F, CS>(cs: &mut CS, a: &Self, b: &Self) -> Result<Self, SynthesisError>
+    pub fn nor<F, CS>(mut cs: CS, a: &Self, b: &Self) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -261,7 +261,7 @@ impl AllocatedBit {
 }
 
 pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
-    cs: &mut CS,
+    mut cs: CS,
     num: &Num<F>,
 ) -> Result<Vec<AllocatedBit>, SynthesisError> {
     let values = match num.value() {
@@ -282,10 +282,11 @@ pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
     };
 
     let mut bools = vec![];
-    for value in values {
-        bools.push(AllocatedBit::alloc(cs, || {
-            value.ok_or(SynthesisError::AssignmentMissing)
-        })?);
+    for (i, value) in values.iter().enumerate() {
+        bools.push(AllocatedBit::alloc(
+            cs.namespace(|| format!("bit {}", i)),
+            || value.ok_or(SynthesisError::AssignmentMissing),
+        )?);
     }
 
     // Check that it's equal.
@@ -295,7 +296,7 @@ pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
         lc = lc + (Coeff::from(cur), b.var);
         cur = cur + cur;
     }
-    let num_lc = num.lc(cs);
+    let num_lc = num.lc(&mut cs);
     cs.enforce_zero(lc - &num_lc);
 
     Ok(bools)
@@ -321,7 +322,7 @@ impl Boolean {
         }
     }
 
-    pub fn enforce_equal<F, CS>(cs: &mut CS, a: &Self, b: &Self) -> Result<(), SynthesisError>
+    pub fn enforce_equal<F, CS>(mut cs: CS, a: &Self, b: &Self) -> Result<(), SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -391,7 +392,7 @@ impl Boolean {
     }
 
     /// Perform XOR over two boolean operands
-    pub fn xor<'a, F, CS>(cs: &mut CS, a: &'a Self, b: &'a Self) -> Result<Self, SynthesisError>
+    pub fn xor<'a, F, CS>(cs: CS, a: &'a Self, b: &'a Self) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -413,7 +414,7 @@ impl Boolean {
     }
 
     /// Perform AND over two boolean operands
-    pub fn and<'a, F, CS>(cs: &mut CS, a: &'a Self, b: &'a Self) -> Result<Self, SynthesisError>
+    pub fn and<'a, F, CS>(cs: CS, a: &'a Self, b: &'a Self) -> Result<Self, SynthesisError>
     where
         F: Field,
         CS: ConstraintSystem<F>,
@@ -443,7 +444,7 @@ impl Boolean {
 
     /// Computes (a and b) xor ((not a) and c)
     pub fn sha256_ch<'a, F, CS>(
-        cs: &mut CS,
+        mut cs: CS,
         a: &'a Self,
         b: &'a Self,
         c: &'a Self,
@@ -569,7 +570,7 @@ impl Boolean {
 
     /// Computes (a and b) xor (a and c) xor (b and c)
     pub fn sha256_maj<'a, F, CS>(
-        cs: &mut CS,
+        mut cs: CS,
         a: &'a Self,
         b: &'a Self,
         c: &'a Self,
@@ -728,7 +729,7 @@ mod test {
                 &self,
                 cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let _ = AllocatedBit::alloc(cs, || Ok(true))?;
+                let _ = AllocatedBit::alloc(cs.namespace(|| "test"), || Ok(true))?;
 
                 Ok(())
             }
@@ -760,7 +761,7 @@ mod test {
             ) -> Result<(), SynthesisError> {
                 let a = AllocatedBit::alloc(cs.namespace(|| "a"), || Ok(self.a_val))?;
                 let b = AllocatedBit::alloc(cs.namespace(|| "b"), || Ok(self.b_val))?;
-                let c = AllocatedBit::xor(cs, &a, &b)?;
+                let c = AllocatedBit::xor(cs.namespace(|| "xor"), &a, &b)?;
                 assert_eq!(c.value.unwrap(), self.a_val ^ self.b_val);
 
                 Ok(())
@@ -1685,26 +1686,30 @@ mod test {
                     ^ (self.second_operand.val() & self.third_operand.val());
 
                 {
-                    let mut dyn_construct = |operand| match operand {
-                        OperandType::True => Ok(Boolean::constant(true)),
-                        OperandType::False => Ok(Boolean::constant(false)),
-                        OperandType::AllocatedTrue => {
-                            Ok(Boolean::from(AllocatedBit::alloc(cs, || Ok(true))?))
-                        }
-                        OperandType::AllocatedFalse => {
-                            Ok(Boolean::from(AllocatedBit::alloc(cs, || Ok(false))?))
-                        }
-                        OperandType::NegatedAllocatedTrue => {
-                            Ok(Boolean::from(AllocatedBit::alloc(cs, || Ok(true))?).not())
-                        }
-                        OperandType::NegatedAllocatedFalse => {
-                            Ok(Boolean::from(AllocatedBit::alloc(cs, || Ok(false))?).not())
+                    let mut dyn_construct = |operand, name| {
+                        let cs = cs.namespace(|| name);
+
+                        match operand {
+                            OperandType::True => Ok(Boolean::constant(true)),
+                            OperandType::False => Ok(Boolean::constant(false)),
+                            OperandType::AllocatedTrue => {
+                                Ok(Boolean::from(AllocatedBit::alloc(cs, || Ok(true))?))
+                            }
+                            OperandType::AllocatedFalse => {
+                                Ok(Boolean::from(AllocatedBit::alloc(cs, || Ok(false))?))
+                            }
+                            OperandType::NegatedAllocatedTrue => {
+                                Ok(Boolean::from(AllocatedBit::alloc(cs, || Ok(true))?).not())
+                            }
+                            OperandType::NegatedAllocatedFalse => {
+                                Ok(Boolean::from(AllocatedBit::alloc(cs, || Ok(false))?).not())
+                            }
                         }
                     };
 
-                    a = dyn_construct(self.first_operand)?;
-                    b = dyn_construct(self.second_operand)?;
-                    c = dyn_construct(self.third_operand)?;
+                    a = dyn_construct(self.first_operand, "a")?;
+                    b = dyn_construct(self.second_operand, "b")?;
+                    c = dyn_construct(self.third_operand, "c")?;
                 }
 
                 let maj = Boolean::sha256_maj(cs, &a, &b, &c)?;

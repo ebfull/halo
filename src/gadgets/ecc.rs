@@ -42,7 +42,7 @@ impl<C: Curve> CurvePoint<C> {
     }
 
     /// Witness an arbitrary curve point
-    pub fn witness<CS, P>(cs: &mut CS, point: P) -> Result<Self, SynthesisError>
+    pub fn witness<CS, P>(mut cs: CS, point: P) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<C::Base>,
         P: FnOnce() -> Result<C, SynthesisError>,
@@ -89,9 +89,9 @@ impl<C: Curve> CurvePoint<C> {
         let xsq = x_val.map(|x| x * &x);
         let xcub = xsq.and_then(|xsq| x_val.map(|x| xsq * &x));
 
-        let x = AllocatedNum::alloc(cs, || x_val)?;
-        let y = AllocatedNum::alloc(cs, || y_val)?;
-        let is_identity = AllocatedBit::alloc(cs, || is_identity_val)?;
+        let x = AllocatedNum::alloc(cs.namespace(|| "x"), || x_val)?;
+        let y = AllocatedNum::alloc(cs.namespace(|| "y"), || y_val)?;
+        let is_identity = AllocatedBit::alloc(cs.namespace(|| "is_identity"), || is_identity_val)?;
 
         // let (x, y) = C::one().get_xy().unwrap();
         // return Ok(Self::constant(x, y));
@@ -144,26 +144,25 @@ impl<C: Curve> CurvePoint<C> {
 
     /// Returns variables constrained to (0, 0) if this is the identity, and
     /// (x, y) otherwise.
-    pub fn get_xy<CS: ConstraintSystem<C::Base>>(
-        &self,
-        cs: &mut CS,
-    ) -> Result<(Num<C::Base>, Num<C::Base>), SynthesisError> {
+    pub fn get_xy(&self) -> (Num<C::Base>, Num<C::Base>) {
         // We represent the identity internally as (0, 0), so we can just return
         // (x, y).
-        Ok((self.x, self.y))
+        (self.x, self.y)
     }
 
     /// Returns -P if condition is true, else returns P.
     pub fn conditional_neg<CS: ConstraintSystem<C::Base>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
         condition: &Boolean,
     ) -> Result<Self, SynthesisError> {
         let y_ret_val = self
             .y
             .value()
             .and_then(|y| condition.get_value().map(|b| if b { -y } else { y }));
-        let y_ret = AllocatedNum::alloc(cs, || y_ret_val.ok_or(SynthesisError::AssignmentMissing))?;
+        let y_ret = AllocatedNum::alloc(cs.namespace(|| "y_ret"), || {
+            y_ret_val.ok_or(SynthesisError::AssignmentMissing)
+        })?;
 
         // y_self × (1 - 2.bit) = y_ret
         let (y_self_var, negator, y_ret_var) = cs.multiply(|| {
@@ -177,7 +176,7 @@ impl<C: Curve> CurvePoint<C> {
 
             Ok((y_self, negator, y_ret))
         })?;
-        let y_self_lc = self.y.lc(cs);
+        let y_self_lc = self.y.lc(&mut cs);
         cs.enforce_zero(y_self_lc - y_self_var);
         cs.enforce_zero(
             LinearCombination::from(CS::ONE)
@@ -202,7 +201,7 @@ impl<C: Curve> CurvePoint<C> {
     ///   on the output being constrained to the identity.
     pub fn add_incomplete<CS: ConstraintSystem<C::Base>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
         other: &Self,
     ) -> Result<Self, SynthesisError> {
         let x_p = self.x;
@@ -247,17 +246,17 @@ impl<C: Curve> CurvePoint<C> {
             _ => Err(SynthesisError::AssignmentMissing),
         };
 
-        let x_r = AllocatedNum::alloc(cs, || x_r_val)?;
-        let y_r = AllocatedNum::alloc(cs, || y_r_val)?;
+        let x_r = AllocatedNum::alloc(cs.namespace(|| "x_r"), || x_r_val)?;
+        let y_r = AllocatedNum::alloc(cs.namespace(|| "y_r"), || y_r_val)?;
 
         //
         // Constraints:
         //
 
-        let x_p_lc = x_p.lc(cs);
-        let y_p_lc = y_p.lc(cs);
-        let x_q_lc = x_q.lc(cs);
-        let y_q_lc = y_q.lc(cs);
+        let x_p_lc = x_p.lc(&mut cs);
+        let y_p_lc = y_p.lc(&mut cs);
+        let x_q_lc = x_q.lc(&mut cs);
+        let y_q_lc = y_q.lc(&mut cs);
 
         // (x_q - x_p) * lambda = (y_q - y_p)
         let (a_var, lambda, c_var) = cs.multiply(|| {
@@ -305,7 +304,7 @@ impl<C: Curve> CurvePoint<C> {
     /// Handles all edge cases.
     pub fn add<CS: ConstraintSystem<C::Base>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
         other: &Self,
     ) -> Result<Self, SynthesisError> {
         let x1 = self.x;
@@ -368,9 +367,13 @@ impl<C: Curve> CurvePoint<C> {
             y5_val.and_then(|y5| p2_is_identity_val.map(|p2| if p2 { y1 } else { y5 }))
         });
 
-        let x_out = AllocatedNum::alloc(cs, || x_out_val.ok_or(SynthesisError::AssignmentMissing))?;
-        let y_out = AllocatedNum::alloc(cs, || y_out_val.ok_or(SynthesisError::AssignmentMissing))?;
-        let p3_is_identity = AllocatedBit::alloc(cs, || {
+        let x_out = AllocatedNum::alloc(cs.namespace(|| "x_out"), || {
+            x_out_val.ok_or(SynthesisError::AssignmentMissing)
+        })?;
+        let y_out = AllocatedNum::alloc(cs.namespace(|| "y_out"), || {
+            y_out_val.ok_or(SynthesisError::AssignmentMissing)
+        })?;
+        let p3_is_identity = AllocatedBit::alloc(cs.namespace(|| "p3_is_identity"), || {
             p3_is_identity_val.ok_or(SynthesisError::AssignmentMissing)
         })?;
 
@@ -378,10 +381,10 @@ impl<C: Curve> CurvePoint<C> {
         // Constraints
         //
 
-        let x1_lc = x1.lc(cs);
-        let y1_lc = y1.lc(cs);
-        let x2_lc = x2.lc(cs);
-        let y2_lc = y2.lc(cs);
+        let x1_lc = x1.lc(&mut cs);
+        let y1_lc = y1.lc(&mut cs);
+        let x2_lc = x2.lc(&mut cs);
+        let y2_lc = y2.lc(&mut cs);
 
         // Complete complete affine addition for y^3 = x^2 + b:
         //
@@ -768,7 +771,7 @@ impl<C: Curve> CurvePoint<C> {
     /// Handles all edge cases.
     pub fn add_conditionally<CS: ConstraintSystem<C::Base>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
         other: &Self,
         condition: &Boolean,
     ) -> Result<Self, SynthesisError> {
@@ -777,7 +780,7 @@ impl<C: Curve> CurvePoint<C> {
         // - If condition is false, return self
         // - If condition is true, return self + other
 
-        let sum = self.add(cs, other)?;
+        let sum = self.add(cs.namespace(|| "unconditional add"), other)?;
 
         let x1 = self.x;
         let y1 = self.y;
@@ -796,16 +799,20 @@ impl<C: Curve> CurvePoint<C> {
             _ => (None, None, None),
         };
 
-        let x_out = AllocatedNum::alloc(cs, || x_out_val.ok_or(SynthesisError::AssignmentMissing))?;
-        let y_out = AllocatedNum::alloc(cs, || y_out_val.ok_or(SynthesisError::AssignmentMissing))?;
-        let out_is_identity = AllocatedBit::alloc(cs, || {
+        let x_out = AllocatedNum::alloc(cs.namespace(|| "x_out"), || {
+            x_out_val.ok_or(SynthesisError::AssignmentMissing)
+        })?;
+        let y_out = AllocatedNum::alloc(cs.namespace(|| "y_out"), || {
+            y_out_val.ok_or(SynthesisError::AssignmentMissing)
+        })?;
+        let out_is_identity = AllocatedBit::alloc(cs.namespace(|| "out_is_identity"), || {
             out_is_identity_val.ok_or(SynthesisError::AssignmentMissing)
         })?;
 
-        let x1_lc = x1.lc(cs);
-        let y1_lc = y1.lc(cs);
-        let xsum_lc = xsum.lc(cs);
-        let ysum_lc = ysum.lc(cs);
+        let x1_lc = x1.lc(&mut cs);
+        let y1_lc = y1.lc(&mut cs);
+        let xsum_lc = xsum.lc(&mut cs);
+        let ysum_lc = ysum.lc(&mut cs);
 
         // Now constrain the output:
         //
@@ -890,7 +897,7 @@ impl<C: Curve> CurvePoint<C> {
     /// Assumes no edge cases will occur.
     pub fn add_conditionally_incomplete<CS: ConstraintSystem<C::Base>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
         other: &Self,
         condition: &Boolean,
     ) -> Result<Self, SynthesisError> {
@@ -918,15 +925,17 @@ impl<C: Curve> CurvePoint<C> {
             _ => None,
         };
 
-        let x_out =
-            AllocatedNum::alloc(cs, || Ok(p_out.ok_or(SynthesisError::AssignmentMissing)?.0))?;
-        let y_out =
-            AllocatedNum::alloc(cs, || Ok(p_out.ok_or(SynthesisError::AssignmentMissing)?.1))?;
+        let x_out = AllocatedNum::alloc(cs.namespace(|| "x_out"), || {
+            Ok(p_out.ok_or(SynthesisError::AssignmentMissing)?.0)
+        })?;
+        let y_out = AllocatedNum::alloc(cs.namespace(|| "y_out"), || {
+            Ok(p_out.ok_or(SynthesisError::AssignmentMissing)?.1)
+        })?;
 
-        let x1_lc = x1.lc(cs);
-        let y1_lc = y1.lc(cs);
-        let x2_lc = x2.lc(cs);
-        let y2_lc = y2.lc(cs);
+        let x1_lc = x1.lc(&mut cs);
+        let y1_lc = y1.lc(&mut cs);
+        let x2_lc = x2.lc(&mut cs);
+        let y2_lc = y2.lc(&mut cs);
 
         // Affine addition for y^3 = x^2 + b (p1 != p2):
         //
@@ -1072,7 +1081,7 @@ impl<C: Curve> CurvePoint<C> {
     /// Returns [2] P.
     pub fn double<CS: ConstraintSystem<C::Base>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
     ) -> Result<Self, SynthesisError> {
         let x_p_val = self.x.value();
         let y_p_val = self.y.value();
@@ -1106,15 +1115,15 @@ impl<C: Curve> CurvePoint<C> {
             _ => Err(SynthesisError::AssignmentMissing),
         };
 
-        let x_dbl = AllocatedNum::alloc(cs, || x_dbl_val)?;
-        let y_dbl = AllocatedNum::alloc(cs, || y_dbl_val)?;
+        let x_dbl = AllocatedNum::alloc(cs.namespace(|| "x_dbl"), || x_dbl_val)?;
+        let y_dbl = AllocatedNum::alloc(cs.namespace(|| "y_dbl"), || y_dbl_val)?;
 
         //
         // Constraints:
         //
 
-        let x_p_lc = self.x.lc(cs);
-        let y_p_lc = self.y.lc(cs);
+        let x_p_lc = self.x.lc(&mut cs);
+        let y_p_lc = self.y.lc(&mut cs);
 
         // x_p * x_p = xx_p
         let xx_p_val = x_p_val.map(|x_p| x_p * &x_p);
@@ -1191,7 +1200,7 @@ impl<C: Curve> CurvePoint<C> {
     ///   on the output being constrained to the identity.
     pub fn double_and_add_incomplete<CS: ConstraintSystem<C::Base>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
         other: &Self,
     ) -> Result<Self, SynthesisError> {
         // Compute [2] P + Q as (P + Q) + P:
@@ -1203,15 +1212,15 @@ impl<C: Curve> CurvePoint<C> {
         let y_p = self.y;
         let x_p_val = self.x.value();
         let y_p_val = self.y.value();
-        let x_p_lc = x_p.lc(cs);
-        let y_p_lc = y_p.lc(cs);
+        let x_p_lc = x_p.lc(&mut cs);
+        let y_p_lc = y_p.lc(&mut cs);
 
         let x_q = other.x;
         let y_q = other.y;
         let x_q_val = other.x.value();
         let y_q_val = other.y.value();
-        let x_q_lc = x_q.lc(cs);
-        let y_q_lc = y_q.lc(cs);
+        let x_q_lc = x_q.lc(&mut cs);
+        let y_q_lc = y_q.lc(&mut cs);
 
         // lambda_1 = (y_q - y_p)/(x_q - x_p)
         let lambda_1_val = match (x_q_val, y_q_val, x_p_val, y_p_val) {
@@ -1274,8 +1283,8 @@ impl<C: Curve> CurvePoint<C> {
             _ => Err(SynthesisError::AssignmentMissing),
         };
 
-        let x_s = AllocatedNum::alloc(cs, || x_s_val)?;
-        let y_s = AllocatedNum::alloc(cs, || y_s_val)?;
+        let x_s = AllocatedNum::alloc(cs.namespace(|| "x_s"), || x_s_val)?;
+        let y_s = AllocatedNum::alloc(cs.namespace(|| "y_s"), || y_s_val)?;
 
         //
         // Constraints:
@@ -1344,28 +1353,30 @@ impl<C: Curve> CurvePoint<C> {
     /// Multiply by a little-endian scalar.
     pub fn multiply<CS: ConstraintSystem<C::Base>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
         other: &[AllocatedBit],
     ) -> Result<Self, SynthesisError> {
         let mut ret = CurvePoint::identity();
 
-        for bit in other.iter().rev() {
-            let dbl = ret.add(cs, &ret)?;
-            let sum = dbl.add(cs, &self)?;
+        for (i, bit) in other.iter().enumerate().rev() {
+            let mut cs = cs.namespace(|| format!("bit {}", i));
+
+            let dbl = ret.double(cs.namespace(|| "double"))?;
+            let sum = dbl.add(cs.namespace(|| "add"), &self)?;
 
             let bit_val = bit.get_value();
 
-            let x_out = AllocatedNum::alloc(cs, || {
+            let x_out = AllocatedNum::alloc(cs.namespace(|| "x_out"), || {
                 bit_val
                     .and_then(|b| if b { sum.x.value() } else { dbl.x.value() })
                     .ok_or(SynthesisError::AssignmentMissing)
             })?;
-            let y_out = AllocatedNum::alloc(cs, || {
+            let y_out = AllocatedNum::alloc(cs.namespace(|| "y_out"), || {
                 bit_val
                     .and_then(|b| if b { sum.y.value() } else { dbl.y.value() })
                     .ok_or(SynthesisError::AssignmentMissing)
             })?;
-            let is_identity_out = AllocatedBit::alloc(cs, || {
+            let is_identity_out = AllocatedBit::alloc(cs.namespace(|| "out_is_identity"), || {
                 bit_val
                     .and_then(|b| {
                         if b {
@@ -1386,8 +1397,8 @@ impl<C: Curve> CurvePoint<C> {
 
                 Ok((bit.into(), x_sum - &x_dbl, x_out - &x_dbl))
             })?;
-            let x_dbl_lc = dbl.x.lc(cs);
-            let x_sum_lc = sum.x.lc(cs);
+            let x_dbl_lc = dbl.x.lc(&mut cs);
+            let x_sum_lc = sum.x.lc(&mut cs);
             cs.enforce_zero(LinearCombination::from(bit.get_variable()) - a_var);
             cs.enforce_zero(x_sum_lc - &x_dbl_lc - b_var);
             cs.enforce_zero(x_out.lc() - &x_dbl_lc - c_var);
@@ -1401,8 +1412,8 @@ impl<C: Curve> CurvePoint<C> {
 
                 Ok((bit.into(), y_sum - &y_dbl, y_out - &y_dbl))
             })?;
-            let y_dbl_lc = dbl.y.lc(cs);
-            let y_sum_lc = sum.y.lc(cs);
+            let y_dbl_lc = dbl.y.lc(&mut cs);
+            let y_sum_lc = sum.y.lc(&mut cs);
             cs.enforce_zero(LinearCombination::from(bit.get_variable()) - d_var);
             cs.enforce_zero(y_sum_lc - &y_dbl_lc - e_var);
             cs.enforce_zero(y_out.lc() - &y_dbl_lc - f_var);
@@ -1456,7 +1467,7 @@ impl<C: Curve> CurvePoint<C> {
     /// Requires that the top bit of other is set.
     pub fn multiply_fast<CS: ConstraintSystem<C::Base>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
         other: &[AllocatedBit],
     ) -> Result<Self, SynthesisError> {
         // From https://github.com/zcash/zcash/issues/3924
@@ -1479,28 +1490,30 @@ impl<C: Curve> CurvePoint<C> {
         if let Some(b) = other.last().unwrap().get_value() {
             assert_eq!(b, true);
         }
-        let mut acc = self.double(cs)?;
-        acc = acc.add_incomplete(cs, self)?;
+        let mut acc = self.double(cs.namespace(|| "[2] Acc"))?;
+        acc = acc.add_incomplete(cs.namespace(|| "[3] Acc"), self)?;
 
-        for bit in other
+        for (i, bit) in other
             .iter()
-            // Skip the LSB (we handle it after the loop)
-            .skip(1)
             .cloned()
             .map(Boolean::from)
+            .enumerate()
+            // Skip the LSB (we handle it after the loop)
+            .skip(1)
             // Scan over the scalar bits in big-endian order
             .rev()
             // Skip the MSB (already accumulated)
             .skip(1)
         {
-            let t = self.conditional_neg(cs, &bit.not())?;
-            acc = acc.double_and_add_incomplete(cs, &t)?;
+            let mut cs = cs.namespace(|| format!("bit {}", i));
+            let t = self.conditional_neg(cs.namespace(|| "conditional negation"), &bit.not())?;
+            acc = acc.double_and_add_incomplete(cs.namespace(|| "double and add"), &t)?;
         }
 
         // Compute Acc - T = P + (-T)
 
         let acc_minus_t = acc.add_incomplete(
-            cs,
+            cs.namespace(|| "Acc - T"),
             &CurvePoint {
                 x: self.x.clone(),
                 y: -self.y,
@@ -1541,13 +1554,17 @@ impl<C: Curve> CurvePoint<C> {
                 .map(|b| if b { C::Base::zero() } else { y_s })
         });
 
-        let x_out = AllocatedNum::alloc(cs, || x_out_val.ok_or(SynthesisError::AssignmentMissing))?;
-        let y_out = AllocatedNum::alloc(cs, || y_out_val.ok_or(SynthesisError::AssignmentMissing))?;
+        let x_out = AllocatedNum::alloc(cs.namespace(|| "x_out"), || {
+            x_out_val.ok_or(SynthesisError::AssignmentMissing)
+        })?;
+        let y_out = AllocatedNum::alloc(cs.namespace(|| "y_out"), || {
+            y_out_val.ok_or(SynthesisError::AssignmentMissing)
+        })?;
 
-        let x_p_lc = x_p.lc(cs);
-        let y_p_lc = y_p.lc(cs);
-        let x_r_lc = x_r.lc(cs);
-        let y_r_lc = y_r.lc(cs);
+        let x_p_lc = x_p.lc(&mut cs);
+        let y_p_lc = y_p.lc(&mut cs);
+        let x_r_lc = x_r.lc(&mut cs);
+        let y_r_lc = y_r.lc(&mut cs);
 
         //
         // Constraints
@@ -1618,7 +1635,7 @@ impl<C: Curve> CurvePoint<C> {
 
     fn inv_helper<CS: ConstraintSystem<C::Base>, F>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
         other: &[AllocatedBit],
         mul_func: F,
     ) -> Result<Self, SynthesisError>
@@ -1656,9 +1673,10 @@ impl<C: Curve> CurvePoint<C> {
         let y_inv_val = inverted_val.map(|(_, y, _)| y);
         let is_identity_inv_val = inverted_val.map(|(_, _, b)| b);
 
-        let x_inv = AllocatedNum::alloc(cs, || x_inv_val)?;
-        let y_inv = AllocatedNum::alloc(cs, || y_inv_val)?;
-        let is_identity_inv = AllocatedBit::alloc(cs, || is_identity_inv_val)?;
+        let x_inv = AllocatedNum::alloc(cs.namespace(|| "x_inv"), || x_inv_val)?;
+        let y_inv = AllocatedNum::alloc(cs.namespace(|| "y_inv"), || y_inv_val)?;
+        let is_identity_inv =
+            AllocatedBit::alloc(cs.namespace(|| "inv_is_identity"), || is_identity_inv_val)?;
 
         let inverted = CurvePoint {
             x: x_inv.into(),
@@ -1666,12 +1684,12 @@ impl<C: Curve> CurvePoint<C> {
             is_identity: is_identity_inv.into(),
         };
 
-        let calculated = mul_func(cs, &inverted)?;
+        let calculated = mul_func(&mut cs, &inverted)?;
 
-        let orig_x_lc = self.x.lc(cs);
-        let orig_y_lc = self.y.lc(cs);
-        let calculated_x_lc = calculated.x.lc(cs);
-        let calculated_y_lc = calculated.y.lc(cs);
+        let orig_x_lc = self.x.lc(&mut cs);
+        let orig_y_lc = self.y.lc(&mut cs);
+        let calculated_x_lc = calculated.x.lc(&mut cs);
+        let calculated_y_lc = calculated.y.lc(&mut cs);
 
         cs.enforce_zero(orig_x_lc - &calculated_x_lc);
         cs.enforce_zero(orig_y_lc - &calculated_y_lc);
@@ -1686,7 +1704,7 @@ impl<C: Curve> CurvePoint<C> {
     /// Multiply by the inverse of a little-endian scalar.
     pub fn multiply_inv<CS: ConstraintSystem<C::Base>>(
         &self,
-        cs: &mut CS,
+        cs: CS,
         other: &[AllocatedBit],
     ) -> Result<Self, SynthesisError> {
         self.inv_helper(cs, other, |cs, inverted| inverted.multiply(cs, other))
@@ -1697,7 +1715,7 @@ impl<C: Curve> CurvePoint<C> {
     /// Requires that the top bit of other is set.
     pub fn multiply_inv_fast<CS: ConstraintSystem<C::Base>>(
         &self,
-        cs: &mut CS,
+        cs: CS,
         other: &[AllocatedBit],
     ) -> Result<Self, SynthesisError> {
         self.inv_helper(cs, other, |cs, inverted| inverted.multiply_fast(cs, other))
@@ -1725,8 +1743,8 @@ mod test {
                 &self,
                 cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let _ = CurvePoint::witness(cs, || Ok(Ec1::one()))?;
-                let _ = CurvePoint::witness(cs, || Ok(Ec1::zero()))?;
+                let _ = CurvePoint::witness(cs.namespace(|| "one"), || Ok(Ec1::one()))?;
+                let _ = CurvePoint::witness(cs.namespace(|| "zero"), || Ok(Ec1::zero()))?;
 
                 Ok(())
             }
@@ -1746,22 +1764,22 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let one = Ec1::one();
                 let one_coords = one.get_xy().unwrap();
 
-                let p1 = CurvePoint::witness(cs, || Ok(one))?;
-                let (x1, y1) = p1.get_xy(cs)?;
-                let x1_lc = x1.lc(cs);
-                let y1_lc = y1.lc(cs);
+                let p1 = CurvePoint::witness(cs.namespace(|| "one"), || Ok(one))?;
+                let (x1, y1) = p1.get_xy();
+                let x1_lc = x1.lc(&mut cs);
+                let y1_lc = y1.lc(&mut cs);
                 cs.enforce_zero(x1_lc - (Coeff::Full(one_coords.0), CS::ONE));
                 cs.enforce_zero(y1_lc - (Coeff::Full(one_coords.1), CS::ONE));
 
-                let p2 = CurvePoint::witness(cs, || Ok(Ec1::zero()))?;
-                let (x2, y2) = p2.get_xy(cs)?;
-                let x2_lc = x2.lc(cs);
-                let y2_lc = y2.lc(cs);
+                let p2 = CurvePoint::witness(cs.namespace(|| "zero"), || Ok(Ec1::zero()))?;
+                let (x2, y2) = p2.get_xy();
+                let x2_lc = x2.lc(&mut cs);
+                let y2_lc = y2.lc(&mut cs);
                 cs.enforce_zero(x2_lc - (Coeff::Zero, CS::ONE));
                 cs.enforce_zero(y2_lc - (Coeff::Zero, CS::ONE));
 
@@ -1783,7 +1801,7 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let two = Ec1::one().double();
                 let negtwo = -two;
@@ -1793,17 +1811,19 @@ mod test {
 
                 let p = CurvePoint::<Ec1>::constant(two_x, two_y);
 
-                let ppos = p.conditional_neg(cs, &Boolean::constant(false))?;
-                let (ppos_x, ppos_y) = ppos.get_xy(cs)?;
-                let ppos_x_lc = ppos_x.lc(cs);
-                let ppos_y_lc = ppos_y.lc(cs);
+                let ppos =
+                    p.conditional_neg(cs.namespace(|| "no negation"), &Boolean::constant(false))?;
+                let (ppos_x, ppos_y) = ppos.get_xy();
+                let ppos_x_lc = ppos_x.lc(&mut cs);
+                let ppos_y_lc = ppos_y.lc(&mut cs);
                 cs.enforce_zero(ppos_x_lc - (Coeff::Full(two_x), CS::ONE));
                 cs.enforce_zero(ppos_y_lc - (Coeff::Full(two_y), CS::ONE));
 
-                let pneg = p.conditional_neg(cs, &Boolean::constant(true))?;
-                let (pneg_x, pneg_y) = pneg.get_xy(cs)?;
-                let pneg_x_lc = pneg_x.lc(cs);
-                let pneg_y_lc = pneg_y.lc(cs);
+                let pneg =
+                    p.conditional_neg(cs.namespace(|| "negation"), &Boolean::constant(true))?;
+                let (pneg_x, pneg_y) = pneg.get_xy();
+                let pneg_x_lc = pneg_x.lc(&mut cs);
+                let pneg_y_lc = pneg_y.lc(&mut cs);
                 cs.enforce_zero(pneg_x_lc - (Coeff::Full(negtwo_x), CS::ONE));
                 cs.enforce_zero(pneg_y_lc - (Coeff::Full(negtwo_y), CS::ONE));
 
@@ -1825,7 +1845,7 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let one = Ec1::one();
                 let two = one.double();
@@ -1838,10 +1858,10 @@ mod test {
                 let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
                 let p2 = CurvePoint::<Ec1>::constant(two_x, two_y);
 
-                let p3 = p1.add(cs, &p2)?;
-                let (p3_x, p3_y) = p3.get_xy(cs)?;
-                let p3_x_lc = p3_x.lc(cs);
-                let p3_y_lc = p3_y.lc(cs);
+                let p3 = p1.add(cs.namespace(|| "1 + 2"), &p2)?;
+                let (p3_x, p3_y) = p3.get_xy();
+                let p3_x_lc = p3_x.lc(&mut cs);
+                let p3_y_lc = p3_y.lc(&mut cs);
                 cs.enforce_zero(p3_x_lc - (Coeff::Full(three_x), CS::ONE));
                 cs.enforce_zero(p3_y_lc - (Coeff::Full(three_y), CS::ONE));
 
@@ -1863,7 +1883,7 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let two = Ec1::one().double();
                 let negtwo = -two;
@@ -1874,10 +1894,10 @@ mod test {
                 let p1 = CurvePoint::<Ec1>::constant(two_x, two_y);
                 let p2 = CurvePoint::<Ec1>::constant(negtwo_x, negtwo_y);
 
-                let psum = p1.add(cs, &p2)?;
-                let (psum_x, psum_y) = psum.get_xy(cs)?;
-                let psum_x_lc = psum_x.lc(cs);
-                let psum_y_lc = psum_y.lc(cs);
+                let psum = p1.add(cs.namespace(|| "2 + (-2)"), &p2)?;
+                let (psum_x, psum_y) = psum.get_xy();
+                let psum_x_lc = psum_x.lc(&mut cs);
+                let psum_y_lc = psum_y.lc(&mut cs);
                 cs.enforce_zero(psum_x_lc);
                 cs.enforce_zero(psum_y_lc);
 
@@ -1899,20 +1919,20 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let zero = Ec1::zero();
                 let one = Ec1::one();
 
                 let (one_x, one_y) = one.get_xy().unwrap();
 
-                let p0 = CurvePoint::witness(cs, || Ok(zero))?;
-                let p1 = CurvePoint::witness(cs, || Ok(one))?;
+                let p0 = CurvePoint::witness(cs.namespace(|| "0"), || Ok(zero))?;
+                let p1 = CurvePoint::witness(cs.namespace(|| "1"), || Ok(one))?;
 
-                let psum = p1.add(cs, &p0)?;
-                let (psum_x, psum_y) = psum.get_xy(cs)?;
-                let psum_x_lc = psum_x.lc(cs);
-                let psum_y_lc = psum_y.lc(cs);
+                let psum = p1.add(cs.namespace(|| "1 + 0"), &p0)?;
+                let (psum_x, psum_y) = psum.get_xy();
+                let psum_x_lc = psum_x.lc(&mut cs);
+                let psum_y_lc = psum_y.lc(&mut cs);
                 cs.enforce_zero(psum_x_lc - (Coeff::Full(one_x), CS::ONE));
                 cs.enforce_zero(psum_y_lc - (Coeff::Full(one_y), CS::ONE));
 
@@ -1934,7 +1954,7 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let zero = Ec1::zero();
                 let one = Ec1::one();
@@ -1942,13 +1962,13 @@ mod test {
 
                 let (two_x, two_y) = two.get_xy().unwrap();
 
-                let p0 = CurvePoint::witness(cs, || Ok(zero))?;
+                let p0 = CurvePoint::witness(cs.namespace(|| "0"), || Ok(zero))?;
                 let p2 = CurvePoint::<Ec1>::constant(two_x, two_y);
 
-                let psum = p0.add(cs, &p2)?;
-                let (psum_x, psum_y) = psum.get_xy(cs)?;
-                let psum_x_lc = psum_x.lc(cs);
-                let psum_y_lc = psum_y.lc(cs);
+                let psum = p0.add(cs.namespace(|| "0 + 2"), &p2)?;
+                let (psum_x, psum_y) = psum.get_xy();
+                let psum_x_lc = psum_x.lc(&mut cs);
+                let psum_y_lc = psum_y.lc(&mut cs);
                 cs.enforce_zero(psum_x_lc - (Coeff::Full(two_x), CS::ONE));
                 cs.enforce_zero(psum_y_lc - (Coeff::Full(two_y), CS::ONE));
 
@@ -1970,15 +1990,15 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let zero = Ec1::zero();
-                let p0 = CurvePoint::witness(cs, || Ok(zero))?;
+                let p0 = CurvePoint::witness(cs.namespace(|| "0"), || Ok(zero))?;
 
-                let psum = p0.add(cs, &p0)?;
-                let (psum_x, psum_y) = psum.get_xy(cs)?;
-                let psum_x_lc = psum_x.lc(cs);
-                let psum_y_lc = psum_y.lc(cs);
+                let psum = p0.add(cs.namespace(|| "0 + 0"), &p0)?;
+                let (psum_x, psum_y) = psum.get_xy();
+                let psum_x_lc = psum_x.lc(&mut cs);
+                let psum_y_lc = psum_y.lc(&mut cs);
                 cs.enforce_zero(psum_x_lc - (Coeff::Full(Fp::zero()), CS::ONE));
                 cs.enforce_zero(psum_y_lc - (Coeff::Full(Fp::zero()), CS::ONE));
 
@@ -2000,7 +2020,7 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let one = Ec1::one();
                 let two = one.double();
@@ -2013,17 +2033,25 @@ mod test {
                 let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
                 let p2 = CurvePoint::<Ec1>::constant(two_x, two_y);
 
-                let p3a = p1.add_conditionally(cs, &p2, &Boolean::constant(true))?;
-                let (p3a_x, p3a_y) = p3a.get_xy(cs)?;
-                let p3a_x_lc = p3a_x.lc(cs);
-                let p3a_y_lc = p3a_y.lc(cs);
+                let p3a = p1.add_conditionally(
+                    cs.namespace(|| "true ? 1 + 2"),
+                    &p2,
+                    &Boolean::constant(true),
+                )?;
+                let (p3a_x, p3a_y) = p3a.get_xy();
+                let p3a_x_lc = p3a_x.lc(&mut cs);
+                let p3a_y_lc = p3a_y.lc(&mut cs);
                 cs.enforce_zero(p3a_x_lc - (Coeff::Full(three_x), CS::ONE));
                 cs.enforce_zero(p3a_y_lc - (Coeff::Full(three_y), CS::ONE));
 
-                let p3b = p1.add_conditionally(cs, &p2, &Boolean::constant(false))?;
-                let (p3b_x, p3b_y) = p3b.get_xy(cs)?;
-                let p3b_x_lc = p3b_x.lc(cs);
-                let p3b_y_lc = p3b_y.lc(cs);
+                let p3b = p1.add_conditionally(
+                    cs.namespace(|| "false ? 1 + 2"),
+                    &p2,
+                    &Boolean::constant(false),
+                )?;
+                let (p3b_x, p3b_y) = p3b.get_xy();
+                let p3b_x_lc = p3b_x.lc(&mut cs);
+                let p3b_y_lc = p3b_y.lc(&mut cs);
                 cs.enforce_zero(p3b_x_lc - (Coeff::Full(one_x), CS::ONE));
                 cs.enforce_zero(p3b_y_lc - (Coeff::Full(one_y), CS::ONE));
 
@@ -2045,7 +2073,7 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let one = Ec1::one();
                 let two = one.double();
@@ -2058,17 +2086,25 @@ mod test {
                 let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
                 let p2 = CurvePoint::<Ec1>::constant(two_x, two_y);
 
-                let p3a = p1.add_conditionally_incomplete(cs, &p2, &Boolean::constant(true))?;
-                let (p3a_x, p3a_y) = p3a.get_xy(cs)?;
-                let p3a_x_lc = p3a_x.lc(cs);
-                let p3a_y_lc = p3a_y.lc(cs);
+                let p3a = p1.add_conditionally_incomplete(
+                    cs.namespace(|| "true ? 1 + 2"),
+                    &p2,
+                    &Boolean::constant(true),
+                )?;
+                let (p3a_x, p3a_y) = p3a.get_xy();
+                let p3a_x_lc = p3a_x.lc(&mut cs);
+                let p3a_y_lc = p3a_y.lc(&mut cs);
                 cs.enforce_zero(p3a_x_lc - (Coeff::Full(three_x), CS::ONE));
                 cs.enforce_zero(p3a_y_lc - (Coeff::Full(three_y), CS::ONE));
 
-                let p3b = p1.add_conditionally_incomplete(cs, &p2, &Boolean::constant(false))?;
-                let (p3b_x, p3b_y) = p3b.get_xy(cs)?;
-                let p3b_x_lc = p3b_x.lc(cs);
-                let p3b_y_lc = p3b_y.lc(cs);
+                let p3b = p1.add_conditionally_incomplete(
+                    cs.namespace(|| "false ? 1 + 2"),
+                    &p2,
+                    &Boolean::constant(false),
+                )?;
+                let (p3b_x, p3b_y) = p3b.get_xy();
+                let p3b_x_lc = p3b_x.lc(&mut cs);
+                let p3b_y_lc = p3b_y.lc(&mut cs);
                 cs.enforce_zero(p3b_x_lc - (Coeff::Full(one_x), CS::ONE));
                 cs.enforce_zero(p3b_y_lc - (Coeff::Full(one_y), CS::ONE));
 
@@ -2090,7 +2126,7 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let two = Ec1::one().double();
                 let four = two.double();
@@ -2100,10 +2136,10 @@ mod test {
 
                 let p = CurvePoint::<Ec1>::constant(two_x, two_y);
 
-                let p_dbl = p.double(cs)?;
-                let (p_dbl_x, p_dbl_y) = p_dbl.get_xy(cs)?;
-                let p_dbl_x_lc = p_dbl_x.lc(cs);
-                let p_dbl_y_lc = p_dbl_y.lc(cs);
+                let p_dbl = p.double(cs.namespace(|| "[2] 2"))?;
+                let (p_dbl_x, p_dbl_y) = p_dbl.get_xy();
+                let p_dbl_x_lc = p_dbl_x.lc(&mut cs);
+                let p_dbl_y_lc = p_dbl_y.lc(&mut cs);
                 cs.enforce_zero(p_dbl_x_lc - (Coeff::Full(four_x), CS::ONE));
                 cs.enforce_zero(p_dbl_y_lc - (Coeff::Full(four_y), CS::ONE));
 
@@ -2125,14 +2161,14 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let p = CurvePoint::<Ec1>::identity();
 
-                let p_dbl = p.double(cs)?;
-                let (p_dbl_x, p_dbl_y) = p_dbl.get_xy(cs)?;
-                let p_dbl_x_lc = p_dbl_x.lc(cs);
-                let p_dbl_y_lc = p_dbl_y.lc(cs);
+                let p_dbl = p.double(cs.namespace(|| "[2] 0"))?;
+                let (p_dbl_x, p_dbl_y) = p_dbl.get_xy();
+                let p_dbl_x_lc = p_dbl_x.lc(&mut cs);
+                let p_dbl_y_lc = p_dbl_y.lc(&mut cs);
                 cs.enforce_zero(p_dbl_x_lc);
                 cs.enforce_zero(p_dbl_y_lc);
 
@@ -2154,7 +2190,7 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let one = Ec1::one();
                 let two = one.double();
@@ -2167,11 +2203,11 @@ mod test {
                 let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
                 let p2 = CurvePoint::<Ec1>::constant(two_x, two_y);
 
-                let p5 = p2.double_and_add_incomplete(cs, &p1)?;
+                let p5 = p2.double_and_add_incomplete(cs.namespace(|| "[2] 2 + 1"), &p1)?;
 
-                let (p5_x, p5_y) = p5.get_xy(cs)?;
-                let p5_x_lc = p5_x.lc(cs);
-                let p5_y_lc = p5_y.lc(cs);
+                let (p5_x, p5_y) = p5.get_xy();
+                let p5_x_lc = p5_x.lc(&mut cs);
+                let p5_y_lc = p5_y.lc(&mut cs);
                 cs.enforce_zero(p5_x_lc - (Coeff::Full(five_x), CS::ONE));
                 cs.enforce_zero(p5_y_lc - (Coeff::Full(five_y), CS::ONE));
 
@@ -2193,15 +2229,15 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let p = CurvePoint::<Ec1>::identity();
 
-                let p_res = p.double_and_add_incomplete(cs, &p)?;
+                let p_res = p.double_and_add_incomplete(cs.namespace(|| "[2] 0 + 0"), &p)?;
 
-                let (p_res_x, p_res_y) = p_res.get_xy(cs)?;
-                let p_res_x_lc = p_res_x.lc(cs);
-                let p_res_y_lc = p_res_y.lc(cs);
+                let (p_res_x, p_res_y) = p_res.get_xy();
+                let p_res_x_lc = p_res_x.lc(&mut cs);
+                let p_res_y_lc = p_res_y.lc(&mut cs);
                 cs.enforce_zero(p_res_x_lc);
                 cs.enforce_zero(p_res_y_lc);
 
@@ -2223,7 +2259,7 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let one = Ec1::one();
                 let five = one.double().double() + one;
@@ -2234,18 +2270,18 @@ mod test {
                 let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
 
                 let scalar5 = [
-                    AllocatedBit::alloc(cs, || Ok(true))?,
-                    AllocatedBit::alloc(cs, || Ok(false))?,
-                    AllocatedBit::alloc(cs, || Ok(true))?,
-                    AllocatedBit::alloc(cs, || Ok(false))?,
-                    AllocatedBit::alloc(cs, || Ok(false))?,
-                    AllocatedBit::alloc(cs, || Ok(false))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 0"), || Ok(true))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 1"), || Ok(false))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 2"), || Ok(true))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 3"), || Ok(false))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 4"), || Ok(false))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 5"), || Ok(false))?,
                 ];
 
-                let p5 = p1.multiply(cs, &scalar5)?;
-                let (p5_x, p5_y) = p5.get_xy(cs)?;
-                let p5_x_lc = p5_x.lc(cs);
-                let p5_y_lc = p5_y.lc(cs);
+                let p5 = p1.multiply(cs.namespace(|| "[5] 1"), &scalar5)?;
+                let (p5_x, p5_y) = p5.get_xy();
+                let p5_x_lc = p5_x.lc(&mut cs);
+                let p5_y_lc = p5_y.lc(&mut cs);
                 cs.enforce_zero(p5_x_lc - (Coeff::Full(five_x), CS::ONE));
                 cs.enforce_zero(p5_y_lc - (Coeff::Full(five_y), CS::ONE));
 
@@ -2267,7 +2303,7 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let one = Ec1::one();
                 let five = one.double().double() + one;
@@ -2280,19 +2316,19 @@ mod test {
                 let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
 
                 let scalar5 = [
-                    AllocatedBit::alloc(cs, || Ok(true))?,
-                    AllocatedBit::alloc(cs, || Ok(false))?,
-                    AllocatedBit::alloc(cs, || Ok(true))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 0"), || Ok(true))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 1"), || Ok(false))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 2"), || Ok(true))?,
                 ];
 
-                let p5 = p1.multiply_fast(cs, &scalar5)?;
-                let (p5_x, p5_y) = p5.get_xy(cs)?;
+                let p5 = p1.multiply_fast(cs.namespace(|| "[5] 1"), &scalar5)?;
+                let (p5_x, p5_y) = p5.get_xy();
                 if let (Some(x), Some(y)) = (p5_x.value(), p5_y.value()) {
                     println!("p5.x = {:?}", x);
                     println!("p5.y = {:?}", y);
                 }
-                let p5_x_lc = p5_x.lc(cs);
-                let p5_y_lc = p5_y.lc(cs);
+                let p5_x_lc = p5_x.lc(&mut cs);
+                let p5_y_lc = p5_y.lc(&mut cs);
                 cs.enforce_zero(p5_x_lc - (Coeff::Full(five_x), CS::ONE));
                 cs.enforce_zero(p5_y_lc - (Coeff::Full(five_y), CS::ONE));
 
@@ -2314,20 +2350,20 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let p = CurvePoint::<Ec1>::identity();
 
                 let scalar5 = [
-                    AllocatedBit::alloc(cs, || Ok(true))?,
-                    AllocatedBit::alloc(cs, || Ok(false))?,
-                    AllocatedBit::alloc(cs, || Ok(true))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 0"), || Ok(true))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 1"), || Ok(false))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 2"), || Ok(true))?,
                 ];
 
-                let p_res = p.multiply_fast(cs, &scalar5)?;
-                let (p_res_x, p_res_y) = p_res.get_xy(cs)?;
-                let p_res_x_lc = p_res_x.lc(cs);
-                let p_res_y_lc = p_res_y.lc(cs);
+                let p_res = p.multiply_fast(cs.namespace(|| "[5] 0"), &scalar5)?;
+                let (p_res_x, p_res_y) = p_res.get_xy();
+                let p_res_x_lc = p_res_x.lc(&mut cs);
+                let p_res_y_lc = p_res_y.lc(&mut cs);
                 cs.enforce_zero(p_res_x_lc);
                 cs.enforce_zero(p_res_y_lc);
 
@@ -2349,7 +2385,7 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let one = Ec1::one();
                 let invfive = one * Fq::from(5).invert().unwrap();
@@ -2360,18 +2396,18 @@ mod test {
                 let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
 
                 let scalar5 = [
-                    AllocatedBit::alloc(cs, || Ok(true))?,
-                    AllocatedBit::alloc(cs, || Ok(false))?,
-                    AllocatedBit::alloc(cs, || Ok(true))?,
-                    AllocatedBit::alloc(cs, || Ok(false))?,
-                    AllocatedBit::alloc(cs, || Ok(false))?,
-                    AllocatedBit::alloc(cs, || Ok(false))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 0"), || Ok(true))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 1"), || Ok(false))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 2"), || Ok(true))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 3"), || Ok(false))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 4"), || Ok(false))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 5"), || Ok(false))?,
                 ];
 
-                let pinv5 = p1.multiply_inv(cs, &scalar5)?;
-                let (pinv5_x, pinv5_y) = pinv5.get_xy(cs)?;
-                let pinv5_x_lc = pinv5_x.lc(cs);
-                let pinv5_y_lc = pinv5_y.lc(cs);
+                let pinv5 = p1.multiply_inv(cs.namespace(|| "[5^-1] 1"), &scalar5)?;
+                let (pinv5_x, pinv5_y) = pinv5.get_xy();
+                let pinv5_x_lc = pinv5_x.lc(&mut cs);
+                let pinv5_y_lc = pinv5_y.lc(&mut cs);
                 cs.enforce_zero(pinv5_x_lc - (Coeff::Full(invfive_x), CS::ONE));
                 cs.enforce_zero(pinv5_y_lc - (Coeff::Full(invfive_y), CS::ONE));
 
@@ -2393,7 +2429,7 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let one = Ec1::one();
                 let invfive = one * Fq::from(5).invert().unwrap();
@@ -2404,15 +2440,15 @@ mod test {
                 let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
 
                 let scalar5 = [
-                    AllocatedBit::alloc(cs, || Ok(true))?,
-                    AllocatedBit::alloc(cs, || Ok(false))?,
-                    AllocatedBit::alloc(cs, || Ok(true))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 0"), || Ok(true))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 1"), || Ok(false))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 2"), || Ok(true))?,
                 ];
 
-                let pinv5 = p1.multiply_inv_fast(cs, &scalar5)?;
-                let (pinv5_x, pinv5_y) = pinv5.get_xy(cs)?;
-                let pinv5_x_lc = pinv5_x.lc(cs);
-                let pinv5_y_lc = pinv5_y.lc(cs);
+                let pinv5 = p1.multiply_inv_fast(cs.namespace(|| "[5^-1] 1"), &scalar5)?;
+                let (pinv5_x, pinv5_y) = pinv5.get_xy();
+                let pinv5_x_lc = pinv5_x.lc(&mut cs);
+                let pinv5_y_lc = pinv5_y.lc(&mut cs);
                 cs.enforce_zero(pinv5_x_lc - (Coeff::Full(invfive_x), CS::ONE));
                 cs.enforce_zero(pinv5_y_lc - (Coeff::Full(invfive_y), CS::ONE));
 
@@ -2434,20 +2470,20 @@ mod test {
         impl Circuit<Fp> for TestCircuit {
             fn synthesize<CS: ConstraintSystem<Fp>>(
                 &self,
-                cs: &mut CS,
+                mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
                 let p = CurvePoint::<Ec1>::identity();
 
                 let scalar5 = [
-                    AllocatedBit::alloc(cs, || Ok(true))?,
-                    AllocatedBit::alloc(cs, || Ok(false))?,
-                    AllocatedBit::alloc(cs, || Ok(true))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 0"), || Ok(true))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 1"), || Ok(false))?,
+                    AllocatedBit::alloc(cs.namespace(|| "5 bit 2"), || Ok(true))?,
                 ];
 
-                let pinv5 = p.multiply_inv_fast(cs, &scalar5)?;
-                let (pinv5_x, pinv5_y) = pinv5.get_xy(cs)?;
-                let pinv5_x_lc = pinv5_x.lc(cs);
-                let pinv5_y_lc = pinv5_y.lc(cs);
+                let pinv5 = p.multiply_inv_fast(cs.namespace(|| "[5^-1] 0"), &scalar5)?;
+                let (pinv5_x, pinv5_y) = pinv5.get_xy();
+                let pinv5_x_lc = pinv5_x.lc(&mut cs);
+                let pinv5_y_lc = pinv5_y.lc(&mut cs);
                 cs.enforce_zero(pinv5_x_lc);
                 cs.enforce_zero(pinv5_y_lc);
 

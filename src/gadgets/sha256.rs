@@ -20,7 +20,7 @@ const IV: [u32; 8] = [
 ];
 
 pub fn sha256_block_no_padding<F, CS>(
-    cs: &mut CS,
+    cs: CS,
     input: &[Boolean],
 ) -> Result<Vec<Boolean>, SynthesisError>
 where
@@ -35,7 +35,7 @@ where
         .collect())
 }
 
-pub fn sha256<F, CS>(cs: &mut CS, input: &[Boolean]) -> Result<Vec<Boolean>, SynthesisError>
+pub fn sha256<F, CS>(mut cs: CS, input: &[Boolean]) -> Result<Vec<Boolean>, SynthesisError>
 where
     F: Field,
     CS: ConstraintSystem<F>,
@@ -69,7 +69,7 @@ fn get_sha256_iv() -> Vec<UInt32> {
 }
 
 fn sha256_compression_function<F, CS>(
-    cs: &mut CS,
+    mut cs: CS,
     input: &[Boolean],
     current_hash_value: &[UInt32],
 ) -> Result<Vec<UInt32>, SynthesisError>
@@ -119,7 +119,7 @@ where
     }
 
     impl Maybe {
-        fn compute<F, CS>(self, cs: &mut CS, others: &[UInt32]) -> Result<UInt32, SynthesisError>
+        fn compute<F, CS>(self, cs: CS, others: &[UInt32]) -> Result<UInt32, SynthesisError>
         where
             F: Field,
             CS: ConstraintSystem<F>,
