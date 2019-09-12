@@ -29,7 +29,10 @@ impl<F: Field> RecursiveCircuit<F> for MyCircuit {
     ) -> Result<(), SynthesisError> {
         assert_eq!(old_payload.len(), 8);
         assert_eq!(new_payload.len(), 8);
-        cs.multiply(|| Ok((F::from_u64(10), F::from_u64(10), F::from_u64(100))))?;
+        cs.multiply(
+            || "10^2",
+            || Ok((F::from_u64(10), F::from_u64(10), F::from_u64(100))),
+        )?;
 
         Ok(())
     }

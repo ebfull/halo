@@ -913,24 +913,30 @@ fn my_test_circuit() {
     impl<F: Field> Circuit<F> for CubingCircuit<F> {
         fn synthesize<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
             let mut x2value = None;
-            let (x, _, x2) = cs.multiply(|| {
-                let x = self.x.ok_or(SynthesisError::AssignmentMissing)?;
-                let x2 = x.square();
+            let (x, _, x2) = cs.multiply(
+                || "x^2",
+                || {
+                    let x = self.x.ok_or(SynthesisError::AssignmentMissing)?;
+                    let x2 = x.square();
 
-                x2value = Some(x2);
+                    x2value = Some(x2);
 
-                Ok((x, x, x2))
-            })?;
+                    Ok((x, x, x2))
+                },
+            )?;
             let mut x3value = None;
-            let (a, b, c) = cs.multiply(|| {
-                let x = self.x.ok_or(SynthesisError::AssignmentMissing)?;
-                let x2 = x2value.ok_or(SynthesisError::AssignmentMissing)?;
-                let x3 = x * x2;
+            let (a, b, c) = cs.multiply(
+                || "x^3",
+                || {
+                    let x = self.x.ok_or(SynthesisError::AssignmentMissing)?;
+                    let x2 = x2value.ok_or(SynthesisError::AssignmentMissing)?;
+                    let x3 = x * x2;
 
-                x3value = Some(x3);
+                    x3value = Some(x3);
 
-                Ok((x, x2, x3))
-            })?;
+                    Ok((x, x2, x3))
+                },
+            )?;
 
             cs.enforce_zero(LinearCombination::from(x) - a);
             cs.enforce_zero(LinearCombination::from(x2) - b);

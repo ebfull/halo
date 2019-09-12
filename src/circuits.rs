@@ -70,9 +70,15 @@ pub trait ConstraintSystem<FF: Field> {
 
     /// Create a multiplication gate. The provided function is used to determine the
     /// assignments.
-    fn multiply<F>(&mut self, values: F) -> Result<(Variable, Variable, Variable), SynthesisError>
+    fn multiply<F, A, AR>(
+        &mut self,
+        annotation: A,
+        values: F,
+    ) -> Result<(Variable, Variable, Variable), SynthesisError>
     where
-        F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>;
+        F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>;
 
     /// Create a new (sub)namespace and enter into it. Not intended
     /// for downstream use; use `namespace` instead.
@@ -132,11 +138,17 @@ impl<'cs, FF: Field, CS: ConstraintSystem<FF>> ConstraintSystem<FF> for Namespac
         self.0.enforce_zero(lc)
     }
 
-    fn multiply<F>(&mut self, values: F) -> Result<(Variable, Variable, Variable), SynthesisError>
+    fn multiply<F, A, AR>(
+        &mut self,
+        annotation: A,
+        values: F,
+    ) -> Result<(Variable, Variable, Variable), SynthesisError>
     where
         F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>,
     {
-        self.0.multiply(values)
+        self.0.multiply(annotation, values)
     }
 
     // Downstream users who use `namespace` will never interact with these
@@ -195,11 +207,17 @@ impl<'cs, FF: Field, CS: ConstraintSystem<FF>> ConstraintSystem<FF> for &'cs mut
         (**self).enforce_zero(lc)
     }
 
-    fn multiply<F>(&mut self, values: F) -> Result<(Variable, Variable, Variable), SynthesisError>
+    fn multiply<F, A, AR>(
+        &mut self,
+        annotation: A,
+        values: F,
+    ) -> Result<(Variable, Variable, Variable), SynthesisError>
     where
         F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>,
     {
-        (**self).multiply(values)
+        (**self).multiply(annotation, values)
     }
 
     fn push_namespace<NR, N>(&mut self, name_fn: N)

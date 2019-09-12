@@ -184,21 +184,24 @@ impl UInt64 {
         let res_low = UInt64::from_bits(&result_bits[0..64]);
         let res_high = UInt64::from_bits(&result_bits[64..128]);
 
-        let (l, r, o) = cs.multiply(|| {
-            let l = self
-                .value
-                .map(F::from_u64)
-                .ok_or(SynthesisError::AssignmentMissing)?;
-            let r = other
-                .value
-                .map(F::from_u64)
-                .ok_or(SynthesisError::AssignmentMissing)?;
-            let o = product
-                .map(F::from_u128)
-                .ok_or(SynthesisError::AssignmentMissing)?;
+        let (l, r, o) = cs.multiply(
+            || "product",
+            || {
+                let l = self
+                    .value
+                    .map(F::from_u64)
+                    .ok_or(SynthesisError::AssignmentMissing)?;
+                let r = other
+                    .value
+                    .map(F::from_u64)
+                    .ok_or(SynthesisError::AssignmentMissing)?;
+                let o = product
+                    .map(F::from_u128)
+                    .ok_or(SynthesisError::AssignmentMissing)?;
 
-            Ok((l, r, o))
-        })?;
+                Ok((l, r, o))
+            },
+        )?;
 
         // 2^64
         let high_coeff = Coeff::from(

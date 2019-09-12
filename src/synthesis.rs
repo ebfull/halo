@@ -156,12 +156,15 @@ impl SynthesisDriver for Basic {
                 }
             }
 
-            fn multiply<F>(
+            fn multiply<F, A, AR>(
                 &mut self,
+                _annotation: A,
                 values: F,
             ) -> Result<(Variable, Variable, Variable), SynthesisError>
             where
                 F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
+                A: FnOnce() -> AR,
+                AR: Into<String>,
             {
                 self.n += 1;
                 let index = self.n;

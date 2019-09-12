@@ -31,30 +31,39 @@ where
     let x4 = x2.and_then(|x2| Some(x2.square()));
     let x5 = x4.and_then(|x4| x.and_then(|x| Some(x4 * x)));
 
-    let (base_var, b_var, c_var) = cs.multiply(|| {
-        let x = x.ok_or(SynthesisError::AssignmentMissing)?;
-        let x2 = x2.ok_or(SynthesisError::AssignmentMissing)?;
+    let (base_var, b_var, c_var) = cs.multiply(
+        || "x^2",
+        || {
+            let x = x.ok_or(SynthesisError::AssignmentMissing)?;
+            let x2 = x2.ok_or(SynthesisError::AssignmentMissing)?;
 
-        Ok((x, x, x2))
-    })?;
+            Ok((x, x, x2))
+        },
+    )?;
     cs.enforce_zero(LinearCombination::from(base_var) - b_var);
 
-    let (d_var, e_var, f_var) = cs.multiply(|| {
-        let x2 = x2.ok_or(SynthesisError::AssignmentMissing)?;
-        let x4 = x4.ok_or(SynthesisError::AssignmentMissing)?;
+    let (d_var, e_var, f_var) = cs.multiply(
+        || "x^4",
+        || {
+            let x2 = x2.ok_or(SynthesisError::AssignmentMissing)?;
+            let x4 = x4.ok_or(SynthesisError::AssignmentMissing)?;
 
-        Ok((x2, x2, x4))
-    })?;
+            Ok((x2, x2, x4))
+        },
+    )?;
     cs.enforce_zero(LinearCombination::from(c_var) - d_var);
     cs.enforce_zero(LinearCombination::from(c_var) - e_var);
 
-    let (g_var, h_var, result_var) = cs.multiply(|| {
-        let x = x.ok_or(SynthesisError::AssignmentMissing)?;
-        let x4 = x4.ok_or(SynthesisError::AssignmentMissing)?;
-        let x5 = x5.ok_or(SynthesisError::AssignmentMissing)?;
+    let (g_var, h_var, result_var) = cs.multiply(
+        || "x^5",
+        || {
+            let x = x.ok_or(SynthesisError::AssignmentMissing)?;
+            let x4 = x4.ok_or(SynthesisError::AssignmentMissing)?;
+            let x5 = x5.ok_or(SynthesisError::AssignmentMissing)?;
 
-        Ok((x4, x, x5))
-    })?;
+            Ok((x4, x, x5))
+        },
+    )?;
     cs.enforce_zero(LinearCombination::from(f_var) - g_var);
     cs.enforce_zero(LinearCombination::from(base_var) - h_var);
 
@@ -121,13 +130,16 @@ impl<F: Field> AllocatedNum<F> {
             .value
             .and_then(|a| other.value.and_then(|b| Some(a * b)));
 
-        let (l, r, o) = cs.multiply(|| {
-            let l = self.value.ok_or(SynthesisError::AssignmentMissing)?;
-            let r = other.value.ok_or(SynthesisError::AssignmentMissing)?;
-            let o = product.ok_or(SynthesisError::AssignmentMissing)?;
+        let (l, r, o) = cs.multiply(
+            || "mul",
+            || {
+                let l = self.value.ok_or(SynthesisError::AssignmentMissing)?;
+                let r = other.value.ok_or(SynthesisError::AssignmentMissing)?;
+                let o = product.ok_or(SynthesisError::AssignmentMissing)?;
 
-            Ok((l, r, o))
-        })?;
+                Ok((l, r, o))
+            },
+        )?;
 
         cs.enforce_zero(LinearCombination::from(self.var) - l);
         cs.enforce_zero(LinearCombination::from(other.var) - r);
@@ -145,12 +157,15 @@ impl<F: Field> AllocatedNum<F> {
     {
         let value = value();
         let mut value_sq = None;
-        let (a, b, c) = cs.multiply(|| {
-            let value = value?;
-            value_sq = Some(value.square());
+        let (a, b, c) = cs.multiply(
+            || "alloc_and_square",
+            || {
+                let value = value?;
+                value_sq = Some(value.square());
 
-            Ok((value, value, value_sq.unwrap()))
-        })?;
+                Ok((value, value, value_sq.unwrap()))
+            },
+        )?;
         cs.enforce_zero(LinearCombination::from(a) - b);
 
         Ok((
@@ -240,13 +255,16 @@ impl<F: Field> AllocatedNum<F> {
             }
         })?;
 
-        let (a, b, c) = cs.multiply(|| {
-            Ok((
-                newval.ok_or(SynthesisError::AssignmentMissing)?,
-                self.value.ok_or(SynthesisError::AssignmentMissing)?,
-                F::one(),
-            ))
-        })?;
+        let (a, b, c) = cs.multiply(
+            || "invert",
+            || {
+                Ok((
+                    newval.ok_or(SynthesisError::AssignmentMissing)?,
+                    self.value.ok_or(SynthesisError::AssignmentMissing)?,
+                    F::one(),
+                ))
+            },
+        )?;
 
         cs.enforce_zero(LinearCombination::from(a) - newnum.get_variable());
         cs.enforce_zero(LinearCombination::from(b) - self.get_variable());
@@ -496,14 +514,17 @@ impl<F: Field> Combination<F> {
         other: &Combination<F>,
     ) -> Result<AllocatedNum<F>, SynthesisError> {
         let mut value = None;
-        let (l, r, o) = cs.multiply(|| {
-            let l = self.value.ok_or(SynthesisError::AssignmentMissing)?;
-            let r = other.value.ok_or(SynthesisError::AssignmentMissing)?;
-            let o = l * &r;
-            value = Some(o);
+        let (l, r, o) = cs.multiply(
+            || "mul",
+            || {
+                let l = self.value.ok_or(SynthesisError::AssignmentMissing)?;
+                let r = other.value.ok_or(SynthesisError::AssignmentMissing)?;
+                let o = l * &r;
+                value = Some(o);
 
-            Ok((l, r, o))
-        })?;
+                Ok((l, r, o))
+            },
+        )?;
 
         let lc = self.lc(&mut cs);
         cs.enforce_zero(lc - l);
@@ -518,13 +539,16 @@ impl<F: Field> Combination<F> {
         mut cs: CS,
     ) -> Result<AllocatedNum<F>, SynthesisError> {
         let mut value = None;
-        let (l, r, o) = cs.multiply(|| {
-            let l = self.value.ok_or(SynthesisError::AssignmentMissing)?;
-            let c = l.square();
-            value = Some(c);
+        let (l, r, o) = cs.multiply(
+            || "square",
+            || {
+                let l = self.value.ok_or(SynthesisError::AssignmentMissing)?;
+                let c = l.square();
+                value = Some(c);
 
-            Ok((l, l, c))
-        })?;
+                Ok((l, l, c))
+            },
+        )?;
 
         let lc = self.lc(&mut cs);
         cs.enforce_zero(lc.clone() - l);

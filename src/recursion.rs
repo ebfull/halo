@@ -541,13 +541,16 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         // lhs - rhs * (1 - base_case) = 0
         // if base_case is true, then 1 - base_case will be zero
         // if base_case is false, then lhs - rhs must be zero, and therefore they are equal
-        let (a, b, c) = cs.multiply(|| {
-            let lhs = lhs.value().ok_or(SynthesisError::AssignmentMissing)?;
-            let rhs = rhs.value().ok_or(SynthesisError::AssignmentMissing)?;
-            let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
+        let (a, b, c) = cs.multiply(
+            || "num_equal_unless_base_case",
+            || {
+                let lhs = lhs.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let rhs = rhs.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
 
-            Ok((lhs - &rhs, not_basecase, Field::zero()))
-        })?;
+                Ok((lhs - &rhs, not_basecase, Field::zero()))
+            },
+        )?;
         let lhs_lc = lhs.lc(&mut cs);
         let rhs_lc = rhs.lc(&mut cs);
         cs.enforce_zero(LinearCombination::from(a) - &lhs_lc + &rhs_lc);
@@ -572,16 +575,19 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             // lhs - rhs * (1 - base_case) = 0
             // if base_case is true, then 1 - base_case will be zero
             // if base_case is false, then lhs - rhs must be zero, and therefore they are equal
-            let (a, b, c) = cs.multiply(|| {
-                let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-                let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-                let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
+            let (a, b, c) = cs.multiply(
+                || "equal_unless_base_case",
+                || {
+                    let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                    let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                    let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
 
-                let lhs: E1::Scalar = lhs.into();
-                let rhs: E1::Scalar = rhs.into();
+                    let lhs: E1::Scalar = lhs.into();
+                    let rhs: E1::Scalar = rhs.into();
 
-                Ok((lhs - &rhs, not_basecase, Field::zero()))
-            })?;
+                    Ok((lhs - &rhs, not_basecase, Field::zero()))
+                },
+            )?;
             cs.enforce_zero(LinearCombination::from(a) - lhs.get_variable() + rhs.get_variable());
             cs.enforce_zero(LinearCombination::from(b) - CS::ONE + base_case.get_variable());
             cs.enforce_zero(LinearCombination::from(c))
@@ -1447,18 +1453,20 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             .into_iter()
             .zip(old_payload.iter())
         {
-            // bit - old_payload_bit * (base_case) = 0
-            let (a, b, c) = cs.multiply(|| {
-                let old_payload_bit = old_payload_bit
-                    .get_value()
-                    .ok_or(SynthesisError::AssignmentMissing)?;
-                let basecase_val = basecase_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let (a, b, c) = cs.multiply(
+                || "(bit - old_payload_bit) * base_case = 0",
+                || {
+                    let old_payload_bit = old_payload_bit
+                        .get_value()
+                        .ok_or(SynthesisError::AssignmentMissing)?;
+                    let basecase_val = basecase_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-                let lhs: E1::Scalar = bit.into();
-                let rhs: E1::Scalar = old_payload_bit.into();
+                    let lhs: E1::Scalar = bit.into();
+                    let rhs: E1::Scalar = old_payload_bit.into();
 
-                Ok((lhs - &rhs, basecase_val, Field::zero()))
-            })?;
+                    Ok((lhs - &rhs, basecase_val, Field::zero()))
+                },
+            )?;
             if bit {
                 cs.enforce_zero(
                     LinearCombination::from(a) - CS::ONE + old_payload_bit.get_variable(),

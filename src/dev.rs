@@ -219,12 +219,15 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
             self.events.push(Event::EnforceZero(lc));
         }
 
-        fn multiply<F>(
+        fn multiply<F, A, AR>(
             &mut self,
+            _annotation: A,
             _values: F,
         ) -> Result<(Variable, Variable, Variable), SynthesisError>
         where
             F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
+            A: FnOnce() -> AR,
+            AR: Into<String>,
         {
             self.events.push(Event::Multiplication);
 
@@ -327,12 +330,15 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
             }
         }
 
-        fn multiply<F>(
+        fn multiply<F, A, AR>(
             &mut self,
+            _annotation: A,
             values: F,
         ) -> Result<(Variable, Variable, Variable), SynthesisError>
         where
             F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
+            A: FnOnce() -> AR,
+            AR: Into<String>,
         {
             values()?;
 
