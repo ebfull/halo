@@ -71,7 +71,7 @@ where
         })
     }
 
-    fn verify_inner<CS: RecursiveCircuit<E1::Scalar> + RecursiveCircuit<E2::Scalar>>(
+    pub(crate) fn verify_inner<CS: RecursiveCircuit<E1::Scalar> + RecursiveCircuit<E2::Scalar>>(
         &self,
         e1params: &Params<E1>,
         e2params: &Params<E2>,
@@ -184,16 +184,16 @@ where
     }
 }
 
-struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: RecursiveCircuit<C1::Scalar>> {
-    _marker: PhantomData<(C1, C2)>,
-    params: &'a Params<C2>,
-    base_case: Option<bool>,
-    inner_circuit: &'a CS,
-    proof: Option<&'a RecursiveProof<C2, C1>>,
-    new_payload: &'a [u8],
-    old_leftovers: Option<Leftovers<C1>>,
-    new_leftovers: Option<Leftovers<C2>>,
-    deferred: Option<Deferred<C2::Scalar>>,
+pub(crate) struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: RecursiveCircuit<C1::Scalar>> {
+    pub(crate) _marker: PhantomData<(C1, C2)>,
+    pub(crate) params: &'a Params<C2>,
+    pub(crate) base_case: Option<bool>,
+    pub(crate) inner_circuit: &'a CS,
+    pub(crate) proof: Option<&'a RecursiveProof<C2, C1>>,
+    pub(crate) new_payload: &'a [u8],
+    pub(crate) old_leftovers: Option<Leftovers<C1>>,
+    pub(crate) new_leftovers: Option<Leftovers<C2>>,
+    pub(crate) deferred: Option<Deferred<C2::Scalar>>,
 }
 
 impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Scalar>>

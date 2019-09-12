@@ -1,10 +1,17 @@
 //! Tools for developing circuits.
 
 use crate::{
-    circuits::{Circuit, Coeff, ConstraintSystem, LinearCombination, SynthesisError, Variable},
+    circuits::{
+        Circuit, Coeff, ConstraintSystem, LinearCombination, RecursiveCircuit, SynthesisError,
+        Variable,
+    },
+    curves::Curve,
     fields::Field,
+    proofs::{Deferred, Leftovers, Params},
+    recursion::{RecursiveProof, VerificationCircuit},
     synthesis::{Backend, SynthesisDriver},
 };
+use std::marker::PhantomData;
 
 impl Variable {
     fn get_index(&self) -> usize {
@@ -276,6 +283,77 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
     }
 
     Ok(true)
+}
+
+/// Checks if the recursive circuit produces a satisfying assignment for the
+/// constraint system, given the previous proof and new payload.
+pub fn recursive_is_satisfied<
+    E1,
+    E2,
+    C: RecursiveCircuit<E1::Scalar> + RecursiveCircuit<E2::Scalar>,
+    S: SynthesisDriver,
+>(
+    e1params: &Params<E1>,
+    e2params: &Params<E2>,
+    old_proof: Option<&RecursiveProof<E2, E1>>,
+    circuit: &C,
+    new_payload: &[u8],
+) -> Result<bool, SatisfactionError<E1::Scalar>>
+where
+    E1: Curve<Base = <E2 as Curve>::Scalar>,
+    E2: Curve<Base = <E1 as Curve>::Scalar>,
+{
+    let (newdeferred, new_leftovers, old_leftovers) = match old_proof {
+        Some(old_proof) => {
+            let (_, newdeferred, l1, l2) = old_proof.verify_inner(e2params, e1params, circuit)?;
+
+            (newdeferred, l1, l2)
+        }
+        None => (
+            Deferred::dummy(e2params.k),
+            Leftovers::dummy(e2params),
+            Leftovers::dummy(e1params),
+        ),
+    };
+
+    let mut circuit = VerificationCircuit::<E1, E2, _> {
+        _marker: PhantomData,
+        params: e2params,
+        base_case: None,
+        proof: None,
+        inner_circuit: circuit,
+        new_payload,
+        old_leftovers: Some(old_leftovers.clone()),
+        new_leftovers: Some(new_leftovers.clone()),
+        deferred: Some(newdeferred.clone()),
+    };
+
+    if old_proof.is_some() {
+        circuit.base_case = Some(false);
+        circuit.proof = old_proof;
+    } else {
+        circuit.base_case = Some(true);
+    }
+
+    let mut inputs = vec![];
+    inputs.extend(new_payload.iter().cloned());
+    inputs.extend(old_leftovers.to_bytes());
+    inputs.extend(new_leftovers.to_bytes());
+    inputs.extend(newdeferred.to_bytes());
+
+    let mut bitinputs = vec![];
+    for byte in inputs {
+        for i in 0..8 {
+            let b = ((byte >> i) & 1) == 1;
+            if b {
+                bitinputs.push(E1::Scalar::one());
+            } else {
+                bitinputs.push(E1::Scalar::zero());
+            }
+        }
+    }
+
+    is_satisfied::<_, _, S>(&circuit, &bitinputs)
 }
 
 /// Checks if the circuit produces a satisfying assignment for the
