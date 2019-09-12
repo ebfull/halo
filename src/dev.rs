@@ -39,7 +39,7 @@ fn compute_path(ns: &[String], this: String) -> String {
 #[derive(Clone, Debug, PartialEq)]
 pub enum SatisfactionError {
     Synthesis(SynthesisError),
-    InputLength,
+    InputLength(usize, usize),
     Multiplication(String),
     Linear(String),
 }
@@ -235,7 +235,10 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
     assert_eq!(assignment.q, assignment.lc.len());
 
     if (inputs.len() + 1) != assignment.inputs.len() {
-        return Err(SatisfactionError::InputLength);
+        return Err(SatisfactionError::InputLength(
+            inputs.len(),
+            assignment.inputs.len() - 1,
+        ));
     }
 
     {
