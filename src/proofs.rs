@@ -317,9 +317,16 @@ impl<C: Curve> Proof<C> {
                 })
             }
 
-            fn set_var<FF>(&mut self, var: Variable, value: FF) -> Result<(), SynthesisError>
+            fn set_var<FF, A, AR>(
+                &mut self,
+                _annotation: Option<A>,
+                var: Variable,
+                value: FF,
+            ) -> Result<(), SynthesisError>
             where
                 FF: FnOnce() -> Result<F, SynthesisError>,
+                A: FnOnce() -> AR,
+                AR: Into<String>,
             {
                 let value = value()?;
 
@@ -338,14 +345,25 @@ impl<C: Curve> Proof<C> {
                 Ok(())
             }
 
-            fn new_multiplication_gate(&mut self) {
+            fn new_multiplication_gate<A, AR>(&mut self, _annotation: Option<A>)
+            where
+                A: FnOnce() -> AR,
+                AR: Into<String>,
+            {
                 self.n += 1;
                 self.a.push(F::zero());
                 self.b.push(F::zero());
                 self.c.push(F::zero());
             }
 
-            fn new_linear_constraint(&mut self) -> Self::LinearConstraintIndex {
+            fn new_linear_constraint<A, AR>(
+                &mut self,
+                _annotation: A,
+            ) -> Self::LinearConstraintIndex
+            where
+                A: FnOnce() -> AR,
+                AR: Into<String>,
+            {
                 self.q += 1;
                 self.q
             }
@@ -743,7 +761,14 @@ impl<C: Curve> Proof<C> {
                 Ok(())
             }
 
-            fn new_linear_constraint(&mut self) {
+            fn new_linear_constraint<A, AR>(
+                &mut self,
+                _annotation: A,
+            ) -> Self::LinearConstraintIndex
+            where
+                A: FnOnce() -> AR,
+                AR: Into<String>,
+            {
                 ()
             }
         }
@@ -1434,13 +1459,21 @@ impl<'a, F: Field> Backend<F> for &'a mut SxEval<F> {
     //     Ok(())
     // }
 
-    fn new_multiplication_gate(&mut self) {
+    fn new_multiplication_gate<A, AR>(&mut self, _annotation: Option<A>)
+    where
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+    {
         self.u.push(F::zero());
         self.v.push(F::zero());
         self.w.push(F::zero());
     }
 
-    fn new_linear_constraint(&mut self) -> F {
+    fn new_linear_constraint<A, AR>(&mut self, _annotation: A) -> F
+    where
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+    {
         self.cur_y.mul_assign(&self.y);
         self.cur_y
     }
@@ -1539,7 +1572,11 @@ impl<'a, F: Field> Backend<F> for &'a mut SyEval<F> {
     //     Ok(())
     // }
 
-    fn new_linear_constraint(&mut self) -> usize {
+    fn new_linear_constraint<A, AR>(&mut self, _annotation: A) -> Self::LinearConstraintIndex
+    where
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+    {
         let index = self.poly.len();
         self.poly.push(F::zero());
         index

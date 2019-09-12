@@ -45,9 +45,16 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
         }
 
         /// Set the value of a variable. Might error if this backend expects to know it.
-        fn set_var<FF>(&mut self, var: Variable, value: FF) -> Result<(), SynthesisError>
+        fn set_var<FF, A, AR>(
+            &mut self,
+            _annotation: Option<A>,
+            var: Variable,
+            value: FF,
+        ) -> Result<(), SynthesisError>
         where
             FF: FnOnce() -> Result<F, SynthesisError>,
+            A: FnOnce() -> AR,
+            AR: Into<String>,
         {
             let value = value()?;
 
@@ -67,7 +74,11 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
         }
 
         /// Create a new multiplication gate.
-        fn new_multiplication_gate(&mut self) {
+        fn new_multiplication_gate<A, AR>(&mut self, _annotation: Option<A>)
+        where
+            A: FnOnce() -> AR,
+            AR: Into<String>,
+        {
             self.n += 1;
             self.a.push(F::zero());
             self.b.push(F::zero());
@@ -75,7 +86,11 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
         }
 
         /// Create a new linear constraint, returning a cached index.
-        fn new_linear_constraint(&mut self) -> Self::LinearConstraintIndex {
+        fn new_linear_constraint<A, AR>(&mut self, _annotation: A) -> Self::LinearConstraintIndex
+        where
+            A: FnOnce() -> AR,
+            AR: Into<String>,
+        {
             self.q += 1;
             self.lc.push((LinearCombination::zero(), F::zero()));
             self.lc.len()
