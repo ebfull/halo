@@ -37,14 +37,14 @@ fn compute_path(ns: &[String], this: String) -> String {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum SatisfactionError {
+pub enum SatisfactionError<F: Field> {
     Synthesis(SynthesisError),
     InputLength(usize, usize),
-    Multiplication(String),
-    Linear(String),
+    Multiplication(String, F, F, F),
+    Linear(String, F, F),
 }
 
-impl From<SynthesisError> for SatisfactionError {
+impl<F: Field> From<SynthesisError> for SatisfactionError<F> {
     fn from(e: SynthesisError) -> Self {
         SatisfactionError::Synthesis(e)
     }
@@ -55,7 +55,7 @@ impl From<SynthesisError> for SatisfactionError {
 pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
     circuit: &C,
     inputs: &[F],
-) -> Result<bool, SatisfactionError> {
+) -> Result<bool, SatisfactionError<F>> {
     enum MultType {
         Allocation(String, String),
         Constraint(String),
@@ -263,7 +263,7 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
                 MultType::Allocation(a, b) => format!("allocation({}, {})", a, b),
                 MultType::Constraint(path) => path.clone(),
             };
-            return Err(SatisfactionError::Multiplication(path));
+            return Err(SatisfactionError::Multiplication(path, *a, *b, *c));
         }
     }
 
@@ -271,7 +271,7 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
     for lc in assignment.lc.iter() {
         let lhs = lc.0.evaluate(&assignment.a, &assignment.b, &assignment.c);
         if lhs != lc.1 {
-            return Err(SatisfactionError::Linear(lc.2.clone()));
+            return Err(SatisfactionError::Linear(lc.2.clone(), lhs, lc.1));
         }
     }
 
