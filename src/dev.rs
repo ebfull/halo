@@ -16,19 +16,60 @@ impl Variable {
     }
 }
 
+fn compute_path(ns: &[String], this: String) -> String {
+    if this.chars().any(|a| a == '/') {
+        panic!("'/' is not allowed in names");
+    }
+
+    let mut name = String::new();
+
+    let mut needs_separation = false;
+    for ns in ns.iter().chain(Some(&this).into_iter()) {
+        if needs_separation {
+            name += "/";
+        }
+
+        name += ns;
+        needs_separation = true;
+    }
+
+    name
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SatisfactionError {
+    Synthesis(SynthesisError),
+    InputLength,
+    Multiplication(String),
+    Linear(String),
+}
+
+impl From<SynthesisError> for SatisfactionError {
+    fn from(e: SynthesisError) -> Self {
+        SatisfactionError::Synthesis(e)
+    }
+}
+
 /// Checks if the circuit produces a satisfying assignment for the
 /// constraint system, given the particular public inputs.
 pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
     circuit: &C,
     inputs: &[F],
-) -> Result<bool, SynthesisError> {
+) -> Result<bool, SatisfactionError> {
+    enum MultType {
+        Allocation(String, String),
+        Constraint(String),
+    }
+
     struct Assignment<F: Field> {
+        current_namespace: Vec<String>,
         n: usize,
         q: usize,
         a: Vec<F>,
         b: Vec<F>,
         c: Vec<F>,
-        lc: Vec<(LinearCombination<F>, F)>,
+        mults: Vec<MultType>,
+        lc: Vec<(LinearCombination<F>, F, String)>,
         inputs: Vec<usize>,
     }
 
@@ -47,7 +88,7 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
         /// Set the value of a variable. Might error if this backend expects to know it.
         fn set_var<FF, A, AR>(
             &mut self,
-            _annotation: Option<A>,
+            annotation: Option<A>,
             var: Variable,
             value: FF,
         ) -> Result<(), SynthesisError>
@@ -61,20 +102,43 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
             match var {
                 Variable::A(index) => {
                     self.a[index - 1] = value;
+
+                    if let Some(annotation) = annotation {
+                        match self.mults[index - 1] {
+                            MultType::Allocation(ref mut a, _) => {
+                                *a = compute_path(&self.current_namespace, annotation().into());
+                            }
+                            _ => return Err(SynthesisError::Violation),
+                        }
+                    }
                 }
                 Variable::B(index) => {
                     self.b[index - 1] = value;
+
+                    if let Some(annotation) = annotation {
+                        match self.mults[index - 1] {
+                            MultType::Allocation(_, ref mut b) => {
+                                *b = compute_path(&self.current_namespace, annotation().into());
+                            }
+                            _ => return Err(SynthesisError::Violation),
+                        }
+                    }
                 }
                 Variable::C(index) => {
                     self.c[index - 1] = value;
+
+                    if annotation.is_some() {
+                        // C variable should never be used for an allocation
+                        return Err(SynthesisError::Violation);
+                    }
                 }
-            }
+            };
 
             Ok(())
         }
 
         /// Create a new multiplication gate.
-        fn new_multiplication_gate<A, AR>(&mut self, _annotation: Option<A>)
+        fn new_multiplication_gate<A, AR>(&mut self, annotation: Option<A>)
         where
             A: FnOnce() -> AR,
             AR: Into<String>,
@@ -83,16 +147,26 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
             self.a.push(F::zero());
             self.b.push(F::zero());
             self.c.push(F::zero());
+            if let Some(annotation) = annotation {
+                let path = compute_path(&self.current_namespace, annotation().into());
+                self.mults.push(MultType::Constraint(path));
+            } else {
+                self.mults.push(MultType::Allocation(
+                    "unused".to_owned(),
+                    "unused".to_owned(),
+                ));
+            }
         }
 
         /// Create a new linear constraint, returning a cached index.
-        fn new_linear_constraint<A, AR>(&mut self, _annotation: A) -> Self::LinearConstraintIndex
+        fn new_linear_constraint<A, AR>(&mut self, annotation: A) -> Self::LinearConstraintIndex
         where
             A: FnOnce() -> AR,
             AR: Into<String>,
         {
             self.q += 1;
-            self.lc.push((LinearCombination::zero(), F::zero()));
+            let path = compute_path(&self.current_namespace, annotation().into());
+            self.lc.push((LinearCombination::zero(), F::zero(), path));
             self.lc.len()
         }
 
@@ -124,14 +198,29 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
 
             Ok(())
         }
+
+        fn push_namespace<NR, N>(&mut self, name_fn: N)
+        where
+            NR: Into<String>,
+            N: FnOnce() -> NR,
+        {
+            let name = name_fn().into();
+            self.current_namespace.push(name);
+        }
+
+        fn pop_namespace(&mut self) {
+            assert!(self.current_namespace.pop().is_some());
+        }
     }
 
     let mut assignment = Assignment::<F> {
+        current_namespace: vec![],
         n: 0,
         q: 0,
         a: vec![],
         b: vec![],
         c: vec![],
+        mults: vec![],
         lc: vec![],
         inputs: vec![],
     };
@@ -142,10 +231,11 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
     assert_eq!(assignment.n, assignment.a.len());
     assert_eq!(assignment.n, assignment.b.len());
     assert_eq!(assignment.n, assignment.c.len());
+    assert_eq!(assignment.n, assignment.mults.len());
     assert_eq!(assignment.q, assignment.lc.len());
 
     if (inputs.len() + 1) != assignment.inputs.len() {
-        return Ok(false);
+        return Err(SatisfactionError::InputLength);
     }
 
     {
@@ -158,14 +248,19 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
     }
 
     // Check all multiplication gates are satisfied
-    for ((a, b), c) in assignment
+    for (i, ((a, b), c)) in assignment
         .a
         .iter()
         .zip(assignment.b.iter())
         .zip(assignment.c.iter())
+        .enumerate()
     {
         if (*a) * (*b) != (*c) {
-            return Ok(false);
+            let path = match &assignment.mults[i] {
+                MultType::Allocation(a, b) => format!("allocation({}, {})", a, b),
+                MultType::Constraint(path) => path.clone(),
+            };
+            return Err(SatisfactionError::Multiplication(path));
         }
     }
 
@@ -173,7 +268,7 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
     for lc in assignment.lc.iter() {
         let lhs = lc.0.evaluate(&assignment.a, &assignment.b, &assignment.c);
         if lhs != lc.1 {
-            return Ok(false);
+            return Err(SatisfactionError::Linear(lc.2.clone()));
         }
     }
 

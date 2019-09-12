@@ -741,7 +741,11 @@ impl From<AllocatedBit> for Boolean {
 #[cfg(test)]
 mod test {
     use super::{AllocatedBit, Boolean};
-    use crate::{dev::is_satisfied, fields::Fp, Basic, Circuit, ConstraintSystem, SynthesisError};
+    use crate::{
+        dev::{is_satisfied, SatisfactionError},
+        fields::Fp,
+        Basic, Circuit, ConstraintSystem, SynthesisError,
+    };
 
     #[test]
     fn test_allocated_bit() {
@@ -985,24 +989,27 @@ mod test {
                             is_satisfied::<_, _, Basic>(
                                 &TestCircuit::new(false, false, a_bool, b_bool, a_neg, b_neg),
                                 &[]
-                            ),
-                            Ok((a_bool ^ a_neg) == (b_bool ^ b_neg))
+                            )
+                            .is_ok(),
+                            (a_bool ^ a_neg) == (b_bool ^ b_neg)
                         );
 
                         assert_eq!(
                             is_satisfied::<_, _, Basic>(
                                 &TestCircuit::new(true, false, a_bool, b_bool, a_neg, b_neg),
                                 &[]
-                            ),
-                            Ok((a_bool ^ a_neg) == (b_bool ^ b_neg))
+                            )
+                            .is_ok(),
+                            (a_bool ^ a_neg) == (b_bool ^ b_neg)
                         );
 
                         assert_eq!(
                             is_satisfied::<_, _, Basic>(
                                 &TestCircuit::new(false, true, a_bool, b_bool, a_neg, b_neg),
                                 &[]
-                            ),
-                            Ok((a_bool ^ a_neg) == (b_bool ^ b_neg))
+                            )
+                            .is_ok(),
+                            (a_bool ^ a_neg) == (b_bool ^ b_neg)
                         );
 
                         let circuit = TestCircuit::new(true, true, a_bool, b_bool, a_neg, b_neg);
@@ -1011,7 +1018,7 @@ mod test {
                         } else {
                             assert_eq!(
                                 is_satisfied::<_, _, Basic>(&circuit, &[]),
-                                Err(SynthesisError::Unsatisfiable)
+                                Err(SatisfactionError::Synthesis(SynthesisError::Unsatisfiable))
                             );
                         };
                     }
