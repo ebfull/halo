@@ -262,7 +262,7 @@ where
 mod test {
     use super::*;
     use crate::{
-        circuits::Circuit, fields::Fp, gadgets::boolean::AllocatedBit, is_satisfied, Basic,
+        circuits::Circuit, dev::is_satisfied, fields::Fp, gadgets::boolean::AllocatedBit, Basic,
     };
     use rand_core::{RngCore, SeedableRng};
     use rand_xorshift::XorShiftRng;

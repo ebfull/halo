@@ -5,8 +5,8 @@ extern crate hex_literal;
 extern crate uint;
 
 use halo::{
-    is_satisfied, sha256::sha256, unpack_fe, AllocatedBit, AllocatedNum, Basic, Boolean, Circuit,
-    Coeff, ConstraintSystem, Field, Fp, LinearCombination, SynthesisError, UInt64,
+    dev::is_satisfied, sha256::sha256, unpack_fe, AllocatedBit, AllocatedNum, Basic, Boolean,
+    Circuit, Coeff, ConstraintSystem, Field, Fp, LinearCombination, SynthesisError, UInt64,
 };
 use sha2::{Digest, Sha256};
 use std::iter;
@@ -223,8 +223,9 @@ impl CompactBits {
                 }
             })?;
 
-            let (a_var, b_var, c_var) = cs.multiply(|| {
-                match (
+            let (a_var, b_var, c_var) = cs.multiply(
+                || "bit * (sq_m256 - sq) = (next - sq)",
+                || match (
                     bit.get_value(),
                     sq.get_value(),
                     sq_m256.get_value(),
@@ -234,8 +235,8 @@ impl CompactBits {
                         Ok((b.into(), sq_m256 - sq, next - sq))
                     }
                     _ => Err(SynthesisError::AssignmentMissing),
-                }
-            })?;
+                },
+            )?;
 
             cs.enforce_zero(bit.lc(CS::ONE, Coeff::One) - a_var);
             cs.enforce_zero(sq_m256.lc() - &sq.lc() - b_var);
@@ -245,39 +246,45 @@ impl CompactBits {
         let b_val = self
             .size
             .map(|size| base_val.pow(&[size as u64 - 3, 0, 0, 0]));
-        let (a_var, b_var, c_var) = cs.multiply(|| {
-            let mantissa = self.mantissa.ok_or(SynthesisError::AssignmentMissing)?;
-            let b_val = b_val.ok_or(SynthesisError::AssignmentMissing)?;
-            let target = target_val.ok_or(SynthesisError::AssignmentMissing)?;
+        let (a_var, b_var, c_var) = cs.multiply(
+            || "mantissa * 256^(size - 3) = target",
+            || {
+                let mantissa = self.mantissa.ok_or(SynthesisError::AssignmentMissing)?;
+                let b_val = b_val.ok_or(SynthesisError::AssignmentMissing)?;
+                let target = target_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let mantissa_val = {
-                let mut bytes = [0; 8];
-                bytes[0..3].copy_from_slice(&mantissa);
-                F::from_u64(u64::from_le_bytes(bytes))
-            };
+                let mantissa_val = {
+                    let mut bytes = [0; 8];
+                    bytes[0..3].copy_from_slice(&mantissa);
+                    F::from_u64(u64::from_le_bytes(bytes))
+                };
 
-            // Build target value with double-and-add
-            let mut target_val = F::zero();
-            for byte in target.iter().rev() {
-                for i in 0..8 {
-                    target_val = target_val + target_val;
-                    if (byte >> i) & 1u8 == 1u8 {
-                        target_val = target_val + F::one();
+                // Build target value with double-and-add
+                let mut target_val = F::zero();
+                for byte in target.iter().rev() {
+                    for i in 0..8 {
+                        target_val = target_val + target_val;
+                        if (byte >> i) & 1u8 == 1u8 {
+                            target_val = target_val + F::one();
+                        }
                     }
                 }
-            }
 
-            Ok((mantissa_val, b_val, target_val))
-        })?;
+                Ok((mantissa_val, b_val, target_val))
+            },
+        )?;
 
         // 256^3
         let base_pow3 = F::from_u64(0x01000000);
-        let (d_var, e_var, f_var) = cs.multiply(|| {
-            let b_val = b_val.ok_or(SynthesisError::AssignmentMissing)?;
-            let size = self.size.ok_or(SynthesisError::AssignmentMissing)?;
+        let (d_var, e_var, f_var) = cs.multiply(
+            || "256^(size - 3) * 256^3 = 256^size",
+            || {
+                let b_val = b_val.ok_or(SynthesisError::AssignmentMissing)?;
+                let size = self.size.ok_or(SynthesisError::AssignmentMissing)?;
 
-            Ok((b_val, base_pow3, base_val.pow(&[size as u64, 0, 0, 0])))
-        })?;
+                Ok((b_val, base_pow3, base_val.pow(&[size as u64, 0, 0, 0])))
+            },
+        )?;
 
         let mantissa_lc = lc_from_bits::<F, CS>(&self.mantissa_bits);
         let target_lc = lc_from_bits::<F, CS>(&target);

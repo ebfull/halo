@@ -379,7 +379,7 @@ impl UInt32 {
 mod test {
     use super::UInt32;
     use crate::{
-        circuits::Circuit, fields::Fp, gadgets::boolean::Boolean, is_satisfied, Basic,
+        circuits::Circuit, dev::is_satisfied, fields::Fp, gadgets::boolean::Boolean, Basic,
         ConstraintSystem, SynthesisError,
     };
     use rand_core::{RngCore, SeedableRng};

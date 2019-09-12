@@ -317,9 +317,16 @@ impl<C: Curve> Proof<C> {
                 })
             }
 
-            fn set_var<FF>(&mut self, var: Variable, value: FF) -> Result<(), SynthesisError>
+            fn set_var<FF, A, AR>(
+                &mut self,
+                _annotation: Option<A>,
+                var: Variable,
+                value: FF,
+            ) -> Result<(), SynthesisError>
             where
                 FF: FnOnce() -> Result<F, SynthesisError>,
+                A: FnOnce() -> AR,
+                AR: Into<String>,
             {
                 let value = value()?;
 
@@ -338,14 +345,25 @@ impl<C: Curve> Proof<C> {
                 Ok(())
             }
 
-            fn new_multiplication_gate(&mut self) {
+            fn new_multiplication_gate<A, AR>(&mut self, _annotation: Option<A>)
+            where
+                A: FnOnce() -> AR,
+                AR: Into<String>,
+            {
                 self.n += 1;
                 self.a.push(F::zero());
                 self.b.push(F::zero());
                 self.c.push(F::zero());
             }
 
-            fn new_linear_constraint(&mut self) -> Self::LinearConstraintIndex {
+            fn new_linear_constraint<A, AR>(
+                &mut self,
+                _annotation: A,
+            ) -> Self::LinearConstraintIndex
+            where
+                A: FnOnce() -> AR,
+                AR: Into<String>,
+            {
                 self.q += 1;
                 self.q
             }
@@ -743,7 +761,14 @@ impl<C: Curve> Proof<C> {
                 Ok(())
             }
 
-            fn new_linear_constraint(&mut self) {
+            fn new_linear_constraint<A, AR>(
+                &mut self,
+                _annotation: A,
+            ) -> Self::LinearConstraintIndex
+            where
+                A: FnOnce() -> AR,
+                AR: Into<String>,
+            {
                 ()
             }
         }
@@ -913,24 +938,30 @@ fn my_test_circuit() {
     impl<F: Field> Circuit<F> for CubingCircuit<F> {
         fn synthesize<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
             let mut x2value = None;
-            let (x, _, x2) = cs.multiply(|| {
-                let x = self.x.ok_or(SynthesisError::AssignmentMissing)?;
-                let x2 = x.square();
+            let (x, _, x2) = cs.multiply(
+                || "x^2",
+                || {
+                    let x = self.x.ok_or(SynthesisError::AssignmentMissing)?;
+                    let x2 = x.square();
 
-                x2value = Some(x2);
+                    x2value = Some(x2);
 
-                Ok((x, x, x2))
-            })?;
+                    Ok((x, x, x2))
+                },
+            )?;
             let mut x3value = None;
-            let (a, b, c) = cs.multiply(|| {
-                let x = self.x.ok_or(SynthesisError::AssignmentMissing)?;
-                let x2 = x2value.ok_or(SynthesisError::AssignmentMissing)?;
-                let x3 = x * x2;
+            let (a, b, c) = cs.multiply(
+                || "x^3",
+                || {
+                    let x = self.x.ok_or(SynthesisError::AssignmentMissing)?;
+                    let x2 = x2value.ok_or(SynthesisError::AssignmentMissing)?;
+                    let x3 = x * x2;
 
-                x3value = Some(x3);
+                    x3value = Some(x3);
 
-                Ok((x, x2, x3))
-            })?;
+                    Ok((x, x2, x3))
+                },
+            )?;
 
             cs.enforce_zero(LinearCombination::from(x) - a);
             cs.enforce_zero(LinearCombination::from(x2) - b);
@@ -949,7 +980,7 @@ fn my_test_circuit() {
     let mut prover_circuit: CubingCircuit<Fq> = CubingCircuit {
         x: Some(Fq::from(10)),
     };
-    assert!(is_satisfied::<_, _, Basic>(&prover_circuit, &[Fq::from(1000)]).unwrap());
+    assert!(crate::dev::is_satisfied::<_, _, Basic>(&prover_circuit, &[Fq::from(1000)]).unwrap());
     let verifier_circuit: CubingCircuit<Fq> = CubingCircuit { x: None };
 
     // phony deferred should be valid
@@ -1428,13 +1459,21 @@ impl<'a, F: Field> Backend<F> for &'a mut SxEval<F> {
     //     Ok(())
     // }
 
-    fn new_multiplication_gate(&mut self) {
+    fn new_multiplication_gate<A, AR>(&mut self, _annotation: Option<A>)
+    where
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+    {
         self.u.push(F::zero());
         self.v.push(F::zero());
         self.w.push(F::zero());
     }
 
-    fn new_linear_constraint(&mut self) -> F {
+    fn new_linear_constraint<A, AR>(&mut self, _annotation: A) -> F
+    where
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+    {
         self.cur_y.mul_assign(&self.y);
         self.cur_y
     }
@@ -1533,7 +1572,11 @@ impl<'a, F: Field> Backend<F> for &'a mut SyEval<F> {
     //     Ok(())
     // }
 
-    fn new_linear_constraint(&mut self) -> usize {
+    fn new_linear_constraint<A, AR>(&mut self, _annotation: A) -> Self::LinearConstraintIndex
+    where
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+    {
         let index = self.poly.len();
         self.poly.push(F::zero());
         index

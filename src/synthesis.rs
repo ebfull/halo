@@ -13,19 +13,42 @@ pub trait Backend<FF: Field> {
         None
     }
 
-    /// Set the value of a variable. Might error if this backend expects to know it.
-    fn set_var<F>(&mut self, _var: Variable, _value: F) -> Result<(), SynthesisError>
+    /// Set the value of a variable.
+    ///
+    /// `allocation` will be Some if this multiplication gate is being used for
+    /// variable allocation, and None if it is being used as a constraint.
+    ///
+    /// Might error if this backend expects to know it.
+    fn set_var<F, A, AR>(
+        &mut self,
+        _annotation: Option<A>,
+        _var: Variable,
+        _value: F,
+    ) -> Result<(), SynthesisError>
     where
         F: FnOnce() -> Result<FF, SynthesisError>,
+        A: FnOnce() -> AR,
+        AR: Into<String>,
     {
         Ok(())
     }
 
     /// Create a new multiplication gate.
-    fn new_multiplication_gate(&mut self) {}
+    ///
+    /// `allocation` will be Some if this multiplication gate is being used as a
+    /// constraint, and None if it is being used for variable allocation.
+    fn new_multiplication_gate<A, AR>(&mut self, _annotation: Option<A>)
+    where
+        A: FnOnce() -> AR,
+        AR: Into<String>,
+    {
+    }
 
     /// Create a new linear constraint, returning a cached index.
-    fn new_linear_constraint(&mut self) -> Self::LinearConstraintIndex;
+    fn new_linear_constraint<A, AR>(&mut self, annotation: A) -> Self::LinearConstraintIndex
+    where
+        A: FnOnce() -> AR,
+        AR: Into<String>;
 
     /// Insert a term into a linear constraint.
     fn insert_coefficient(
@@ -45,6 +68,17 @@ pub trait Backend<FF: Field> {
     fn new_k_power(&mut self, _index: usize, _value: Option<FF>) -> Result<(), SynthesisError> {
         Ok(())
     }
+
+    /// Create a new (sub)namespace and enter into it.
+    fn push_namespace<NR, N>(&mut self, _name_fn: N)
+    where
+        NR: Into<String>,
+        N: FnOnce() -> NR,
+    {
+    }
+
+    /// Exit out of the existing namespace.
+    fn pop_namespace(&mut self) {}
 }
 
 /// This is an abstraction which synthesizes circuits.
@@ -95,7 +129,7 @@ impl SynthesisDriver for Basic {
 
                         let value_a = self.backend.get_var(var_a);
 
-                        self.backend.set_var(var_b, || {
+                        self.backend.set_var(Some(annotation), var_b, || {
                             let value_b = value()?;
                             product = Some(value_a.ok_or(SynthesisError::AssignmentMissing)?);
                             product.as_mut().map(|product| {
@@ -105,8 +139,9 @@ impl SynthesisDriver for Basic {
                             Ok(value_b)
                         })?;
 
-                        self.backend
-                            .set_var(var_c, || product.ok_or(SynthesisError::AssignmentMissing))?;
+                        self.backend.set_var::<_, A, AR>(None, var_c, || {
+                            product.ok_or(SynthesisError::AssignmentMissing)
+                        })?;
 
                         self.current_variable = None;
 
@@ -115,11 +150,11 @@ impl SynthesisDriver for Basic {
                     None => {
                         self.n += 1;
                         let index = self.n;
-                        self.backend.new_multiplication_gate();
+                        self.backend.new_multiplication_gate::<A, AR>(None);
 
                         let var_a = Variable::A(index);
 
-                        self.backend.set_var(var_a, value)?;
+                        self.backend.set_var(Some(annotation), var_a, value)?;
 
                         self.current_variable = Some(index);
 
@@ -149,23 +184,27 @@ impl SynthesisDriver for Basic {
 
             fn enforce_zero(&mut self, lc: LinearCombination<FF>) {
                 self.q += 1;
-                let y = self.backend.new_linear_constraint();
+                // TODO: Don't create a new linear constraint if lc is empty
+                let y = self.backend.new_linear_constraint(|| "TODO_LINEAR");
 
                 for (var, coeff) in lc.as_ref() {
                     self.backend.insert_coefficient(*var, *coeff, &y);
                 }
             }
 
-            fn multiply<F>(
+            fn multiply<F, A, AR>(
                 &mut self,
+                annotation: A,
                 values: F,
             ) -> Result<(Variable, Variable, Variable), SynthesisError>
             where
                 F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
+                A: FnOnce() -> AR,
+                AR: Into<String>,
             {
                 self.n += 1;
                 let index = self.n;
-                self.backend.new_multiplication_gate();
+                self.backend.new_multiplication_gate(Some(annotation));
 
                 let a = Variable::A(index);
                 let b = Variable::B(index);
@@ -174,7 +213,7 @@ impl SynthesisDriver for Basic {
                 let mut b_val = None;
                 let mut c_val = None;
 
-                self.backend.set_var(a, || {
+                self.backend.set_var::<_, A, AR>(None, a, || {
                     let (a, b, c) = values()?;
 
                     b_val = Some(b);
@@ -183,25 +222,27 @@ impl SynthesisDriver for Basic {
                     Ok(a)
                 })?;
 
-                self.backend
-                    .set_var(b, || b_val.ok_or(SynthesisError::AssignmentMissing))?;
+                self.backend.set_var::<_, A, AR>(None, b, || {
+                    b_val.ok_or(SynthesisError::AssignmentMissing)
+                })?;
 
-                self.backend
-                    .set_var(c, || c_val.ok_or(SynthesisError::AssignmentMissing))?;
+                self.backend.set_var::<_, A, AR>(None, c, || {
+                    c_val.ok_or(SynthesisError::AssignmentMissing)
+                })?;
 
                 Ok((a, b, c))
             }
 
-            fn push_namespace<NR, N>(&mut self, _: N)
+            fn push_namespace<NR, N>(&mut self, name_fn: N)
             where
                 NR: Into<String>,
                 N: FnOnce() -> NR,
             {
-                // Do nothing; we don't care about namespaces in this context.
+                self.backend.push_namespace(name_fn);
             }
 
             fn pop_namespace(&mut self) {
-                // Do nothing; we don't care about namespaces in this context.
+                self.backend.pop_namespace();
             }
 
             fn get_root(&mut self) -> &mut Self::Root {

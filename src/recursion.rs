@@ -71,7 +71,7 @@ where
         })
     }
 
-    fn verify_inner<CS: RecursiveCircuit<E1::Scalar> + RecursiveCircuit<E2::Scalar>>(
+    pub(crate) fn verify_inner<CS: RecursiveCircuit<E1::Scalar> + RecursiveCircuit<E2::Scalar>>(
         &self,
         e1params: &Params<E1>,
         e2params: &Params<E2>,
@@ -184,16 +184,16 @@ where
     }
 }
 
-struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: RecursiveCircuit<C1::Scalar>> {
-    _marker: PhantomData<(C1, C2)>,
-    params: &'a Params<C2>,
-    base_case: Option<bool>,
-    inner_circuit: &'a CS,
-    proof: Option<&'a RecursiveProof<C2, C1>>,
-    new_payload: &'a [u8],
-    old_leftovers: Option<Leftovers<C1>>,
-    new_leftovers: Option<Leftovers<C2>>,
-    deferred: Option<Deferred<C2::Scalar>>,
+pub(crate) struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: RecursiveCircuit<C1::Scalar>> {
+    pub(crate) _marker: PhantomData<(C1, C2)>,
+    pub(crate) params: &'a Params<C2>,
+    pub(crate) base_case: Option<bool>,
+    pub(crate) inner_circuit: &'a CS,
+    pub(crate) proof: Option<&'a RecursiveProof<C2, C1>>,
+    pub(crate) new_payload: &'a [u8],
+    pub(crate) old_leftovers: Option<Leftovers<C1>>,
+    pub(crate) new_leftovers: Option<Leftovers<C2>>,
+    pub(crate) deferred: Option<Deferred<C2::Scalar>>,
 }
 
 impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Scalar>>
@@ -541,13 +541,16 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         // lhs - rhs * (1 - base_case) = 0
         // if base_case is true, then 1 - base_case will be zero
         // if base_case is false, then lhs - rhs must be zero, and therefore they are equal
-        let (a, b, c) = cs.multiply(|| {
-            let lhs = lhs.value().ok_or(SynthesisError::AssignmentMissing)?;
-            let rhs = rhs.value().ok_or(SynthesisError::AssignmentMissing)?;
-            let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
+        let (a, b, c) = cs.multiply(
+            || "num_equal_unless_base_case",
+            || {
+                let lhs = lhs.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let rhs = rhs.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
 
-            Ok((lhs - &rhs, not_basecase, Field::zero()))
-        })?;
+                Ok((lhs - &rhs, not_basecase, Field::zero()))
+            },
+        )?;
         let lhs_lc = lhs.lc(&mut cs);
         let rhs_lc = rhs.lc(&mut cs);
         cs.enforce_zero(LinearCombination::from(a) - &lhs_lc + &rhs_lc);
@@ -572,16 +575,19 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             // lhs - rhs * (1 - base_case) = 0
             // if base_case is true, then 1 - base_case will be zero
             // if base_case is false, then lhs - rhs must be zero, and therefore they are equal
-            let (a, b, c) = cs.multiply(|| {
-                let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-                let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-                let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
+            let (a, b, c) = cs.multiply(
+                || "equal_unless_base_case",
+                || {
+                    let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                    let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                    let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
 
-                let lhs: E1::Scalar = lhs.into();
-                let rhs: E1::Scalar = rhs.into();
+                    let lhs: E1::Scalar = lhs.into();
+                    let rhs: E1::Scalar = rhs.into();
 
-                Ok((lhs - &rhs, not_basecase, Field::zero()))
-            })?;
+                    Ok((lhs - &rhs, not_basecase, Field::zero()))
+                },
+            )?;
             cs.enforce_zero(LinearCombination::from(a) - lhs.get_variable() + rhs.get_variable());
             cs.enforce_zero(LinearCombination::from(b) - CS::ONE + base_case.get_variable());
             cs.enforce_zero(LinearCombination::from(c))
@@ -1447,18 +1453,20 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             .into_iter()
             .zip(old_payload.iter())
         {
-            // bit - old_payload_bit * (base_case) = 0
-            let (a, b, c) = cs.multiply(|| {
-                let old_payload_bit = old_payload_bit
-                    .get_value()
-                    .ok_or(SynthesisError::AssignmentMissing)?;
-                let basecase_val = basecase_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let (a, b, c) = cs.multiply(
+                || "(bit - old_payload_bit) * base_case = 0",
+                || {
+                    let old_payload_bit = old_payload_bit
+                        .get_value()
+                        .ok_or(SynthesisError::AssignmentMissing)?;
+                    let basecase_val = basecase_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-                let lhs: E1::Scalar = bit.into();
-                let rhs: E1::Scalar = old_payload_bit.into();
+                    let lhs: E1::Scalar = bit.into();
+                    let rhs: E1::Scalar = old_payload_bit.into();
 
-                Ok((lhs - &rhs, basecase_val, Field::zero()))
-            })?;
+                    Ok((lhs - &rhs, basecase_val, Field::zero()))
+                },
+            )?;
             if bit {
                 cs.enforce_zero(
                     LinearCombination::from(a) - CS::ONE + old_payload_bit.get_variable(),

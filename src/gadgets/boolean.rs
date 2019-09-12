@@ -57,12 +57,15 @@ impl AllocatedBit {
         &self,
         mut cs: CS,
     ) -> Result<(), SynthesisError> {
-        let (a, b, c) = cs.multiply(|| {
-            let val = self.value.ok_or(SynthesisError::AssignmentMissing)?;
-            let val: F = val.into();
+        let (a, b, c) = cs.multiply(
+            || "constrain input bit",
+            || {
+                let val = self.value.ok_or(SynthesisError::AssignmentMissing)?;
+                let val: F = val.into();
 
-            Ok((val, val, val))
-        })?;
+                Ok((val, val, val))
+            },
+        )?;
 
         cs.enforce_zero(LinearCombination::from(a) - self.var);
         cs.enforce_zero(LinearCombination::from(b) - self.var);
@@ -79,13 +82,16 @@ impl AllocatedBit {
         FF: FnOnce() -> Result<bool, SynthesisError>,
     {
         let mut final_value = None;
-        let (a, b, c) = cs.multiply(|| {
-            let v = value()?;
-            final_value = Some(v);
-            let fe: F = v.into();
+        let (a, b, c) = cs.multiply(
+            || "bit",
+            || {
+                let v = value()?;
+                final_value = Some(v);
+                let fe: F = v.into();
 
-            Ok((fe, fe, fe))
-        })?;
+                Ok((fe, fe, fe))
+            },
+        )?;
 
         cs.enforce_zero(LinearCombination::from(a) - b);
         cs.enforce_zero(LinearCombination::from(b) - c);
@@ -142,21 +148,24 @@ impl AllocatedBit {
         // d = 2a
         // e = b
         // f = a + b - c
-        let (d_var, e_var, f_var) = cs.multiply(|| {
-            let a_val = a.value.ok_or(SynthesisError::AssignmentMissing)?;
-            let b_val = b.value.ok_or(SynthesisError::AssignmentMissing)?;
-            let c_val = result_value.ok_or(SynthesisError::AssignmentMissing)?;
+        let (d_var, e_var, f_var) = cs.multiply(
+            || "xor",
+            || {
+                let a_val = a.value.ok_or(SynthesisError::AssignmentMissing)?;
+                let b_val = b.value.ok_or(SynthesisError::AssignmentMissing)?;
+                let c_val = result_value.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let a_val: F = a_val.into();
-            let b_val: F = b_val.into();
-            let c_val: F = c_val.into();
+                let a_val: F = a_val.into();
+                let b_val: F = b_val.into();
+                let c_val: F = c_val.into();
 
-            let d_val = a_val + a_val;
-            let e_val = b_val;
-            let f_val = a_val + b_val - c_val;
+                let d_val = a_val + a_val;
+                let e_val = b_val;
+                let f_val = a_val + b_val - c_val;
 
-            Ok((d_val, e_val, f_val))
-        })?;
+                Ok((d_val, e_val, f_val))
+            },
+        )?;
         cs.enforce_zero(LinearCombination::from(a.var) + a.var - d_var);
         cs.enforce_zero(LinearCombination::from(b.var) - e_var);
         cs.enforce_zero(LinearCombination::from(a.var) + b.var - result_var - f_var);
@@ -178,20 +187,23 @@ impl AllocatedBit {
 
         // Constrain (a) * (b) = (c), ensuring c is 1 iff
         // a AND b are both 1.
-        let (a_var, b_var, result_var) = cs.multiply(|| {
-            let a_val = a.value.ok_or(SynthesisError::AssignmentMissing)?;
-            let b_val = b.value.ok_or(SynthesisError::AssignmentMissing)?;
+        let (a_var, b_var, result_var) = cs.multiply(
+            || "and",
+            || {
+                let a_val = a.value.ok_or(SynthesisError::AssignmentMissing)?;
+                let b_val = b.value.ok_or(SynthesisError::AssignmentMissing)?;
 
-            if a_val & b_val {
-                result_value = Some(true);
+                if a_val & b_val {
+                    result_value = Some(true);
 
-                Ok((F::one(), F::one(), F::one()))
-            } else {
-                result_value = Some(false);
+                    Ok((F::one(), F::one(), F::one()))
+                } else {
+                    result_value = Some(false);
 
-                Ok((a_val.into(), b_val.into(), F::zero()))
-            }
-        })?;
+                    Ok((a_val.into(), b_val.into(), F::zero()))
+                }
+            },
+        )?;
         cs.enforce_zero(LinearCombination::from(a_var) - a.var);
         cs.enforce_zero(LinearCombination::from(b_var) - b.var);
 
@@ -211,14 +223,17 @@ impl AllocatedBit {
 
         // Constrain (a) * (1 - b) = (c), ensuring c is 1 iff
         // a is true and b is false, and otherwise c is 0.
-        let (a_var, not_b_var, result_var) = cs.multiply(|| {
-            let a_val = a.value.ok_or(SynthesisError::AssignmentMissing)?;
-            let b_val = b.value.ok_or(SynthesisError::AssignmentMissing)?;
+        let (a_var, not_b_var, result_var) = cs.multiply(
+            || "and_not",
+            || {
+                let a_val = a.value.ok_or(SynthesisError::AssignmentMissing)?;
+                let b_val = b.value.ok_or(SynthesisError::AssignmentMissing)?;
 
-            result_value = Some(a_val & !b_val);
+                result_value = Some(a_val & !b_val);
 
-            Ok((a_val.into(), (!b_val).into(), result_value.unwrap().into()))
-        })?;
+                Ok((a_val.into(), (!b_val).into(), result_value.unwrap().into()))
+            },
+        )?;
         cs.enforce_zero(LinearCombination::from(a_var) - a.var);
         cs.enforce_zero(LinearCombination::from(not_b_var) + b.var - CS::ONE);
 
@@ -238,18 +253,21 @@ impl AllocatedBit {
 
         // Constrain (1 - a) * (1 - b) = (c), ensuring c is 1 iff
         // a and b are both false, and otherwise c is 0.
-        let (not_a_var, not_b_var, result_var) = cs.multiply(|| {
-            let a_val = a.value.ok_or(SynthesisError::AssignmentMissing)?;
-            let b_val = b.value.ok_or(SynthesisError::AssignmentMissing)?;
+        let (not_a_var, not_b_var, result_var) = cs.multiply(
+            || "nor",
+            || {
+                let a_val = a.value.ok_or(SynthesisError::AssignmentMissing)?;
+                let b_val = b.value.ok_or(SynthesisError::AssignmentMissing)?;
 
-            result_value = Some(!a_val & !b_val);
+                result_value = Some(!a_val & !b_val);
 
-            Ok((
-                (!a_val).into(),
-                (!b_val).into(),
-                result_value.unwrap().into(),
-            ))
-        })?;
+                Ok((
+                    (!a_val).into(),
+                    (!b_val).into(),
+                    result_value.unwrap().into(),
+                ))
+            },
+        )?;
         cs.enforce_zero(LinearCombination::from(not_a_var) + a.var - CS::ONE);
         cs.enforce_zero(LinearCombination::from(not_b_var) + b.var - CS::ONE);
 
@@ -540,23 +558,26 @@ impl Boolean {
         // d = a
         // e = b - c
         // f = ch - c
-        let (d_var, e_var, f_var) = cs.multiply(|| {
-            let a_val = a.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let b_val = b.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let c_val = c.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let ch_val = ch_value.ok_or(SynthesisError::AssignmentMissing)?;
+        let (d_var, e_var, f_var) = cs.multiply(
+            || "sha256_ch",
+            || {
+                let a_val = a.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                let b_val = b.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                let c_val = c.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                let ch_val = ch_value.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let a_val: F = a_val.into();
-            let b_val: F = b_val.into();
-            let c_val: F = c_val.into();
-            let ch_val: F = ch_val.into();
+                let a_val: F = a_val.into();
+                let b_val: F = b_val.into();
+                let c_val: F = c_val.into();
+                let ch_val: F = ch_val.into();
 
-            let d_val = a_val;
-            let e_val = b_val - c_val;
-            let f_val = ch_val - c_val;
+                let d_val = a_val;
+                let e_val = b_val - c_val;
+                let f_val = ch_val - c_val;
 
-            Ok((d_val, e_val, f_val))
-        })?;
+                Ok((d_val, e_val, f_val))
+            },
+        )?;
         cs.enforce_zero(a.lc(CS::ONE, Coeff::One) - d_var);
         cs.enforce_zero(b.lc(CS::ONE, Coeff::One) - &c.lc(CS::ONE, Coeff::One) - e_var);
         cs.enforce_zero(LinearCombination::from(ch) - &c.lc(CS::ONE, Coeff::One) - f_var);
@@ -672,25 +693,28 @@ impl Boolean {
 
         let bc = Self::and(cs.namespace(|| "b and c"), b, c)?;
 
-        let (d_var, e_var, f_var) = cs.multiply(|| {
-            let a_val = a.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let b_val = b.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let c_val = c.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let bc_val = bc.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let maj_val = maj_value.ok_or(SynthesisError::AssignmentMissing)?;
+        let (d_var, e_var, f_var) = cs.multiply(
+            || "sha256_maj",
+            || {
+                let a_val = a.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                let b_val = b.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                let c_val = c.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                let bc_val = bc.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                let maj_val = maj_value.ok_or(SynthesisError::AssignmentMissing)?;
 
-            let a_val: F = a_val.into();
-            let b_val: F = b_val.into();
-            let c_val: F = c_val.into();
-            let bc_val: F = bc_val.into();
-            let maj_val: F = maj_val.into();
+                let a_val: F = a_val.into();
+                let b_val: F = b_val.into();
+                let c_val: F = c_val.into();
+                let bc_val: F = bc_val.into();
+                let maj_val: F = maj_val.into();
 
-            let d_val = bc_val + bc_val - b_val - c_val;
-            let e_val = a_val;
-            let f_val = bc_val - maj_val;
+                let d_val = bc_val + bc_val - b_val - c_val;
+                let e_val = a_val;
+                let f_val = bc_val - maj_val;
 
-            Ok((d_val, e_val, f_val))
-        })?;
+                Ok((d_val, e_val, f_val))
+            },
+        )?;
         cs.enforce_zero(
             bc.lc(CS::ONE, Coeff::One) + &bc.lc(CS::ONE, Coeff::One)
                 - &b.lc(CS::ONE, Coeff::One)
@@ -717,7 +741,11 @@ impl From<AllocatedBit> for Boolean {
 #[cfg(test)]
 mod test {
     use super::{AllocatedBit, Boolean};
-    use crate::{fields::Fp, is_satisfied, Basic, Circuit, ConstraintSystem, SynthesisError};
+    use crate::{
+        dev::{is_satisfied, SatisfactionError},
+        fields::Fp,
+        Basic, Circuit, ConstraintSystem, SynthesisError,
+    };
 
     #[test]
     fn test_allocated_bit() {
@@ -961,24 +989,27 @@ mod test {
                             is_satisfied::<_, _, Basic>(
                                 &TestCircuit::new(false, false, a_bool, b_bool, a_neg, b_neg),
                                 &[]
-                            ),
-                            Ok((a_bool ^ a_neg) == (b_bool ^ b_neg))
+                            )
+                            .is_ok(),
+                            (a_bool ^ a_neg) == (b_bool ^ b_neg)
                         );
 
                         assert_eq!(
                             is_satisfied::<_, _, Basic>(
                                 &TestCircuit::new(true, false, a_bool, b_bool, a_neg, b_neg),
                                 &[]
-                            ),
-                            Ok((a_bool ^ a_neg) == (b_bool ^ b_neg))
+                            )
+                            .is_ok(),
+                            (a_bool ^ a_neg) == (b_bool ^ b_neg)
                         );
 
                         assert_eq!(
                             is_satisfied::<_, _, Basic>(
                                 &TestCircuit::new(false, true, a_bool, b_bool, a_neg, b_neg),
                                 &[]
-                            ),
-                            Ok((a_bool ^ a_neg) == (b_bool ^ b_neg))
+                            )
+                            .is_ok(),
+                            (a_bool ^ a_neg) == (b_bool ^ b_neg)
                         );
 
                         let circuit = TestCircuit::new(true, true, a_bool, b_bool, a_neg, b_neg);
@@ -987,7 +1018,7 @@ mod test {
                         } else {
                             assert_eq!(
                                 is_satisfied::<_, _, Basic>(&circuit, &[]),
-                                Err(SynthesisError::Unsatisfiable)
+                                Err(SatisfactionError::Synthesis(SynthesisError::Unsatisfiable))
                             );
                         };
                     }
