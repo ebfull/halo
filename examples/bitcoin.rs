@@ -5,11 +5,12 @@ extern crate hex_literal;
 extern crate uint;
 
 use halo::{
-    dev::is_satisfied, sha256::sha256, unpack_fe, AllocatedBit, AllocatedNum, Basic, Boolean,
-    Circuit, Coeff, ConstraintSystem, Field, Fp, LinearCombination, SynthesisError, UInt64,
+    sha256::sha256, unpack_fe, AllocatedBit, AllocatedNum, Boolean, Coeff, ConstraintSystem, Ec0,
+    Ec1, Field, LinearCombination, Params, RecursiveCircuit, RecursiveProof, SynthesisError,
+    UInt64,
 };
-use sha2::{Digest, Sha256};
 use std::iter;
+use std::time::Instant;
 
 construct_uint! {
     pub struct U256(4);
@@ -23,7 +24,7 @@ fn bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
     let mut bits = vec![];
 
     for byte_i in 0..len {
-        for bit_i in (0..8).rev() {
+        for bit_i in 0..8 {
             let cs = cs.namespace(|| format!("input bit {} {}", byte_i, bit_i));
 
             bits.push(
@@ -37,42 +38,6 @@ fn bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
     }
 
     Ok(bits)
-}
-
-fn input_bytes_to_bits<F: Field, CS: ConstraintSystem<F>>(
-    mut cs: CS,
-    data: Option<&[u8]>,
-    len: usize,
-) -> Result<Vec<Boolean>, SynthesisError> {
-    let mut bits = vec![];
-
-    for byte_i in 0..len {
-        for bit_i in (0..8).rev() {
-            let mut cs = cs.namespace(|| format!("input bit {}", 8 * byte_i + bit_i));
-
-            let value = data.map(|bytes| (bytes[byte_i] >> bit_i) & 1u8 == 1u8);
-            let alloc_bit = AllocatedBit::alloc(cs.namespace(|| "bit"), || {
-                value.ok_or(SynthesisError::AssignmentMissing)
-            })?;
-            let input_bit = AllocatedNum::alloc_input(cs.namespace(|| "input"), || {
-                value.map(F::from).ok_or(SynthesisError::AssignmentMissing)
-            })?;
-            cs.enforce_zero(input_bit.lc() - alloc_bit.get_variable());
-
-            bits.push(alloc_bit.into());
-        }
-    }
-
-    Ok(bits)
-}
-
-fn add_input_bits_for_bytes<F: Field>(input: &mut Vec<F>, data: &[u8]) {
-    for byte in data.iter() {
-        for bit_i in (0..8).rev() {
-            let value = (byte >> bit_i) & 1u8 == 1u8;
-            input.push(value.into());
-        }
-    }
 }
 
 fn enforce_equality<F: Field, CS: ConstraintSystem<F>>(mut cs: CS, a: &[Boolean], b: &[Boolean]) {
@@ -99,6 +64,32 @@ fn lc_from_bits<F: Field, CS: ConstraintSystem<F>>(bits: &[Boolean]) -> LinearCo
     lc
 }
 
+fn bits_to_num<F: Field, CS: ConstraintSystem<F>>(
+    mut cs: CS,
+    bits: &[Boolean],
+) -> Result<AllocatedNum<F>, SynthesisError> {
+    // Construct the number from its bits
+    let value =
+        bits.iter()
+            .rev()
+            .map(|b| b.get_value().map(F::from))
+            .fold(Some(F::zero()), |acc, bit| match (acc, bit) {
+                (Some(acc), Some(bit)) => Some(acc + acc + bit),
+                _ => None,
+            });
+
+    // Witness the number
+    let num = AllocatedNum::alloc(cs.namespace(|| "num"), || {
+        value.ok_or(SynthesisError::AssignmentMissing)
+    })?;
+
+    // Constrain the witnessed number
+    let bits_lc = lc_from_bits::<F, CS>(bits);
+    cs.enforce_zero(bits_lc - &num.lc());
+
+    Ok(num)
+}
+
 struct CompactBits {
     mantissa: Option<[u8; 3]>,
     size: Option<usize>,
@@ -108,34 +99,59 @@ struct CompactBits {
 }
 
 impl CompactBits {
-    fn from_header(bytes: Option<&[u8; 80]>, bits: &[Boolean]) -> Self {
+    fn from_header(bits: &[Boolean]) -> Self {
         const NBITS_START: usize = 4 + 32 + 32 + 4;
 
-        let (mantissa, size) = match bytes {
-            Some(bytes) => {
-                let mut mantissa = [0; 3];
-                mantissa.copy_from_slice(&bytes[NBITS_START..NBITS_START + 3]);
-                mantissa[2] &= 0xfe; // TODO or 0x7f?
-                let size = bytes[NBITS_START + 3] as usize;
-
-                // Assert that the size is at least 4, so the mantissa doesn't collide with the
-                // lowest byte, and we can just set the lowest bit to get (target + 1)
-                assert!(size >= 4);
-
-                (Some(mantissa), Some(size))
-            }
-            None => (None, None),
-        };
-
-        let mantissa_bits = bits[8 * NBITS_START..(8 * NBITS_START) + 23]
+        let mantissa_bits: Vec<_> = bits[8 * NBITS_START..(8 * NBITS_START) + 23]
             .iter()
             .cloned()
             .collect();
         let mantissa_sign_bit = bits[(8 * NBITS_START) + 23].clone();
-        let size_bits = bits[(8 * NBITS_START) + 24..(8 * NBITS_START) + 32]
+        let size_bits: Vec<_> = bits[(8 * NBITS_START) + 24..(8 * NBITS_START) + 32]
             .iter()
             .cloned()
             .collect();
+
+        let mantissa = {
+            mantissa_bits
+                .chunks(8)
+                .map(|byte| {
+                    byte.iter()
+                        .map(|b| b.get_value())
+                        .enumerate()
+                        .map(|(i, bit)| bit.map(|b| if b { 1 << i } else { 0 }))
+                        .fold(Some(0), |acc, bit| match (acc, bit) {
+                            (Some(acc), Some(bit)) => Some(acc + bit),
+                            _ => None,
+                        })
+                })
+                .enumerate()
+                .fold(Some([0; 3]), |acc, (i, byte)| match (acc, byte) {
+                    (Some(mut acc), Some(byte)) => {
+                        acc[i] = byte;
+                        Some(acc)
+                    }
+                    _ => None,
+                })
+        };
+
+        let size = {
+            let size = size_bits
+                .iter()
+                .map(|b| b.get_value())
+                .enumerate()
+                .map(|(i, bit)| bit.map(|b| if b { 1 << i } else { 0 }))
+                .fold(Some(0), |acc, bit| match (acc, bit) {
+                    (Some(acc), Some(bit)) => Some(acc + bit),
+                    _ => None,
+                });
+            if let Some(s) = size {
+                // Assert that the size is at least 4, so the mantissa doesn't collide with the
+                // lowest byte, and we can just set the lowest bit to get (target + 1)
+                assert!(s >= 4);
+            }
+            size
+        };
 
         CompactBits {
             mantissa,
@@ -192,13 +208,14 @@ impl CompactBits {
         // overflow a field element. This allows a maximum size of 31, which is larger
         // than the largest possible size that will occur in the nBits field in Bitcoin.
         assert!(F::CAPACITY >= ((8 * 31) + 1));
-        cs.enforce_zero(self.size_bits[0].lc(CS::ONE, Coeff::One));
-        cs.enforce_zero(self.size_bits[1].lc(CS::ONE, Coeff::One));
-        cs.enforce_zero(self.size_bits[2].lc(CS::ONE, Coeff::One));
+        assert_eq!(self.size_bits.len(), 8);
+        cs.enforce_zero(self.size_bits[5].lc(CS::ONE, Coeff::One));
+        cs.enforce_zero(self.size_bits[6].lc(CS::ONE, Coeff::One));
+        cs.enforce_zero(self.size_bits[7].lc(CS::ONE, Coeff::One));
 
         let mut pow_size =
             AllocatedNum::alloc(cs.namespace(|| "one TODO make constant"), || Ok(F::one()))?;
-        for (i, bit) in self.size_bits.iter().enumerate().skip(3) {
+        for (i, bit) in self.size_bits.iter().enumerate().rev().skip(3) {
             let mut cs = cs.namespace(|| format!("256^(size - 3) bit {}", i));
 
             // Square, then conditionally multiply by 256
@@ -301,94 +318,114 @@ impl CompactBits {
     }
 }
 
-struct BitcoinHeaderCircuit<F: Field> {
-    header: Option<[u8; 80]>,
-    prev_height: Option<F>,
-    prev_hash: Option<[u8; 32]>,
-    prev_chain_work: Option<F>,
+const GENESIS_HEADER: [u8; 80] = hex!("0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c");
+const GENESIS_CHAIN_WORK: [u8; 32] =
+    hex!("0000000000000000000000000000000000000000000000000000000100010001");
+
+fn pack_payload_bytes(height: u32, chain_work: [u8; 32], header: [u8; 80]) -> Vec<u8> {
+    height
+        .to_le_bytes()
+        .iter()
+        .chain(chain_work.iter().rev())
+        .chain(header.iter())
+        .cloned()
+        .collect()
 }
 
-impl<F: Field> BitcoinHeaderCircuit<F> {
-    fn from_witnesses(header: [u8; 80], prev: (F, [u8; 32], F)) -> Self {
-        BitcoinHeaderCircuit {
-            header: Some(header),
-            prev_height: Some(prev.0),
-            prev_hash: Some(prev.1),
-            prev_chain_work: Some(prev.2),
-        }
-    }
-
-    fn for_verification() -> Self {
-        BitcoinHeaderCircuit {
-            header: None,
-            prev_height: None,
-            prev_hash: None,
-            prev_chain_work: None,
-        }
-    }
+fn pack_payload_bits(height: u32, chain_work: [u8; 32], header: [u8; 80]) -> Vec<bool> {
+    height
+        .to_le_bytes()
+        .iter()
+        .chain(chain_work.iter().rev())
+        .chain(header.iter())
+        .map(|byte| (0..8).map(move |i| (byte >> i) & 1u8 == 1u8))
+        .flatten()
+        .collect()
 }
 
-impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
-    fn synthesize<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
-        // Witness the previous height
-        let prev_height = AllocatedNum::alloc(cs.namespace(|| "prev_height"), || {
-            self.prev_height.ok_or(SynthesisError::AssignmentMissing)
-        })?;
+fn unpack_payload_bits<F: Field, CS: ConstraintSystem<F>>(
+    mut cs: CS,
+    payload: &[AllocatedBit],
+) -> Result<(AllocatedNum<F>, AllocatedNum<F>, Vec<Boolean>), SynthesisError> {
+    let payload: Vec<_> = payload.iter().cloned().map(Boolean::from).collect();
 
-        // Expose the current block height as an input
-        let height = AllocatedNum::alloc_input(cs.namespace(|| "height"), || {
-            self.prev_height
-                .map(|h| h + F::one())
-                .ok_or(SynthesisError::AssignmentMissing)
-        })?;
+    let height_bits = &payload[0..8 * 4];
+    let chain_work_bits = &payload[8 * 4..8 * (4 + 32)];
+    let header_bits = &payload[8 * (4 + 32)..8 * (4 + 32 + 80)];
+
+    let height = bits_to_num(cs.namespace(|| "height"), height_bits)?;
+    let chain_work = bits_to_num(cs.namespace(|| "chain_work"), chain_work_bits)?;
+
+    Ok((height, chain_work, header_bits.to_vec()))
+}
+
+fn sha256d<F: Field, CS: ConstraintSystem<F>>(
+    mut cs: CS,
+    data: &[Boolean],
+) -> Result<Vec<Boolean>, SynthesisError> {
+    // Flip endianness of each input byte
+    let input: Vec<_> = data
+        .chunks(8)
+        .map(|c| c.iter().rev())
+        .flatten()
+        .cloned()
+        .collect();
+
+    let mid = sha256(cs.namespace(|| "SHA256(input)"), &input)?;
+    let res = sha256(cs.namespace(|| "SHA256(mid)"), &mid)?;
+
+    // Flip endianness of each output byte
+    Ok(res
+        .chunks(8)
+        .map(|c| c.iter().rev())
+        .flatten()
+        .cloned()
+        .collect())
+}
+
+/// A circuit for validating the cumulative chain work in the Bitcoin block chain.
+///
+/// The payload for this circuit is (all in little endian):
+/// | height (4 bytes) | chain work (32 bytes) | header (80 bytes) |
+struct BitcoinHeaderCircuit;
+
+impl<F: Field> RecursiveCircuit<F> for BitcoinHeaderCircuit {
+    fn base_payload(&self) -> Vec<bool> {
+        // Base case is the Bitcoin genesis block
+        pack_payload_bits(0, GENESIS_CHAIN_WORK, GENESIS_HEADER)
+    }
+
+    fn synthesize<CS: ConstraintSystem<F>>(
+        &self,
+        cs: &mut CS,
+        old_payload: &[AllocatedBit],
+        new_payload: &[AllocatedBit],
+    ) -> Result<(), SynthesisError> {
+        // Unpack the payloads for the previous and current blocks
+        let (prev_height, prev_chain_work, prev_header_bits) =
+            unpack_payload_bits(cs.namespace(|| "previous block"), old_payload)?;
+        let (height, chain_work, header_bits) =
+            unpack_payload_bits(cs.namespace(|| "current block"), new_payload)?;
+
+        // Enforce that the heights are sequential
         cs.enforce_zero(height.lc() - &prev_height.lc() - CS::ONE);
 
-        // Witness the header
-        let header_bits = bytes_to_bits(
-            cs.namespace(|| "header"),
-            self.header.as_ref().map(|b| &b[..]),
-            80,
-        )?;
-
-        // Witness the previous hash
-        let prev_bits = bytes_to_bits(
-            cs.namespace(|| "prev_hash"),
-            self.prev_hash.as_ref().map(|b| &b[..]),
-            32,
-        )?;
+        // Compute SHA256d(prev_header)
+        let prev_hash_bits = sha256d(cs.namespace(|| "SHA256d(prev_header)"), &prev_header_bits)?;
 
         // Enforce that header contains the previous hash
         enforce_equality(
             cs.namespace(|| "header contains prev_hash"),
             &header_bits[32..32 + 256],
-            &prev_bits,
+            &prev_hash_bits,
         );
 
         // Compute SHA256d(header)
-        let result = {
-            let mid = sha256(cs.namespace(|| "SHA256(header)"), &header_bits)?;
-            sha256(cs.namespace(|| "SHA256(SHA256(header))"), &mid)?
-        };
-
-        // Expose the hash as an input
-        let hash_value = self
-            .header
-            .map(|header| Sha256::digest(&Sha256::digest(&header)));
-        let hash_bits = input_bytes_to_bits(
-            cs.namespace(|| "hash"),
-            hash_value.as_ref().map(|b| &b[..]),
-            32,
-        )?;
-        assert_eq!(result.len(), hash_bits.len());
-        enforce_equality(
-            cs.namespace(|| "SHA256(SHA256(header)) == hash"),
-            &result,
-            &hash_bits,
-        );
+        let hash_bits = sha256d(cs.namespace(|| "SHA256d(header)"), &header_bits)?;
 
         // Unpack nBits as the block target
-        let (target, target_val) = CompactBits::from_header(self.header.as_ref(), &header_bits)
-            .unpack(cs.namespace(|| "unpack target"))?;
+        let (target, target_val) =
+            CompactBits::from_header(&header_bits).unpack(cs.namespace(|| "unpack target"))?;
 
         // TODO: Range check hash <= target
 
@@ -514,28 +551,20 @@ impl<F: Field> Circuit<F> for BitcoinHeaderCircuit<F> {
         cs.enforce_zero(w[6].lc::<_, CS>());
         cs.enforce_zero(w[7].lc::<_, CS>());
 
-        // Witness the previous block's chain work
-        let prev_chain_work = AllocatedNum::alloc(cs.namespace(|| "prev_chain_work"), || {
-            self.prev_chain_work
-                .ok_or(SynthesisError::AssignmentMissing)
-        })?;
-
-        // Compute this block's chain work and expose it as an input
-        let chain_work_value = prev_chain_work
-            .get_value()
-            .and_then(|a| block_work.get_value().and_then(|b| Some(a + b)));
-        let chain_work = AllocatedNum::alloc_input(cs.namespace(|| "chain_work"), || {
-            chain_work_value.ok_or(SynthesisError::AssignmentMissing)
-        })?;
+        // Enforce that this block's cumulative chain work is correct
         cs.enforce_zero(chain_work.lc() - &prev_chain_work.lc() - &block_work.lc());
 
         Ok(())
     }
 }
 
+enum CycleStep {
+    A(Option<RecursiveProof<Ec0, Ec1>>),
+    B(Option<RecursiveProof<Ec1, Ec0>>),
+}
+
 fn main() {
     let headers = vec![
-        hex!("0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c"),
         hex!("010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299"),
         hex!("010000004860eb18bf1b1620e37e9490fc8a427514416fd75159ab86688e9a8300000000d5fdcc541e25de1c7a5addedf24858b8bb665c9f36ef744ee42c316022c90f9bb0bc6649ffff001d08d2bd61"),
         hex!("01000000bddd99ccfda39da1b108ce1a5d70038d0a967bacb68b6b63065f626a0000000044f672226090d85db9a9f2fbfe5f0f9609b387af7be5b7fbb7a1767c831c9e995dbe6649ffff001d05e0ed6d"),
@@ -548,22 +577,7 @@ fn main() {
         hex!("010000000508085c47cc849eb80ea905cc7800a3be674ffc57263cf210c59d8d00000000112ba175a1e04b14ba9e7ea5f76ab640affeef5ec98173ac9799a852fa39add320cd6649ffff001d1e2de565"),
     ];
 
-    let hashes = vec![
-        hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
-        hex!("00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048"),
-        hex!("000000006a625f06636b8bb6ac7b960a8d03705d1ace08b1a19da3fdcc99ddbd"),
-        hex!("0000000082b5015589a3fdf2d4baff403e6f0be035a5d9742c1cae6295464449"),
-        hex!("000000004ebadb55ee9096c9a2f8880e09da59c0d68b1c228da88e48844a1485"),
-        hex!("000000009b7262315dbf071787ad3656097b892abffd1f95a1a022f896f533fc"),
-        hex!("000000003031a0e73735690c5a1ff2a4be82553b2a12b776fbd3a215dc8f778d"),
-        hex!("0000000071966c2b1d065fd446b1e485b2c9d9594acd2007ccbd5441cfc89444"),
-        hex!("00000000408c48f847aa786c2268fc3e6ec2af68e8468a34a28c61b7f1de0dc6"),
-        hex!("000000008d9dc510f23c2657fc4f67bea30078cc05a90eb89e84cc475c080805"),
-        hex!("000000002c05cc2e78923c34df87fd108b22221ac6076c18f3ade378a4d915e9"),
-    ];
-
     let chain_work = vec![
-        hex!("0000000000000000000000000000000000000000000000000000000100010001"),
         hex!("0000000000000000000000000000000000000000000000000000000200020002"),
         hex!("0000000000000000000000000000000000000000000000000000000300030003"),
         hex!("0000000000000000000000000000000000000000000000000000000400040004"),
@@ -576,37 +590,60 @@ fn main() {
         hex!("0000000000000000000000000000000000000000000000000000000b000b000b"),
     ];
 
-    let mut prev = (
-        -Fp::one(),
-        hex!("0000000000000000000000000000000000000000000000000000000000000000"),
-        Fp::zero(),
-    );
+    println!("Making parameters");
+    let start = Instant::now();
+    let params0: Params<Ec0> = Params::new(23);
+    let params1: Params<Ec1> = Params::new(23);
+    println!("done, took {:?}", start.elapsed());
 
-    for (i, ((header, mut hash), mut chain_work)) in headers
-        .into_iter()
-        .zip(hashes.into_iter())
-        .zip(chain_work.into_iter())
-        .enumerate()
-    {
-        hash.reverse();
-        chain_work.reverse();
+    let circuit = BitcoinHeaderCircuit;
+    let mut step = CycleStep::A(None);
 
-        let height = Fp::from(i as u64);
-        let chain_work = Fp::from_bytes(&chain_work).unwrap();
+    for (i, (header, chain_work)) in headers.into_iter().zip(chain_work.into_iter()).enumerate() {
+        let height = i as u32 + 1;
+        let input = pack_payload_bytes(height, chain_work, header);
 
-        let mut input = vec![height];
-        add_input_bits_for_bytes(&mut input, &hash);
-        input.push(chain_work);
+        match step {
+            CycleStep::A(old_proof) => {
+                println!("creating proof {}", height);
+                let start = Instant::now();
+                let proof = RecursiveProof::<Ec1, Ec0>::create_proof(
+                    &params1,
+                    &params0,
+                    old_proof.as_ref(),
+                    &circuit,
+                    &input,
+                )
+                .unwrap();
+                println!("done, took {:?}", start.elapsed());
 
-        assert_eq!(
-            is_satisfied::<_, _, Basic>(
-                &BitcoinHeaderCircuit::from_witnesses(header, prev),
-                &input,
-            ),
-            Ok(true)
-        );
+                println!("verifying proof {}", height);
+                let start = Instant::now();
+                assert!(proof.verify(&params1, &params0, &circuit).unwrap());
+                println!("done, took {:?}", start.elapsed());
 
-        prev = (height, hash, chain_work);
+                step = CycleStep::B(Some(proof));
+            }
+            CycleStep::B(old_proof) => {
+                println!("creating proof {}", height);
+                let start = Instant::now();
+                let proof = RecursiveProof::<Ec0, Ec1>::create_proof(
+                    &params0,
+                    &params1,
+                    old_proof.as_ref(),
+                    &circuit,
+                    &input,
+                )
+                .unwrap();
+                println!("done, took {:?}", start.elapsed());
+
+                println!("verifying proof {}", height);
+                let start = Instant::now();
+                assert!(proof.verify(&params0, &params1, &circuit).unwrap());
+                println!("done, took {:?}", start.elapsed());
+
+                step = CycleStep::A(Some(proof));
+            }
+        }
     }
-    println!("Valid!");
 }
