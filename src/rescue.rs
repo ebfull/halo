@@ -148,6 +148,7 @@ fn rescue_duplex<F: Field>(
     output
 }
 
+#[derive(Clone)]
 enum SpongeState<F: Field> {
     Absorbing([Option<F>; SPONGE_RATE]),
     Squeezing([Option<F>; SPONGE_RATE]),
@@ -161,6 +162,7 @@ impl<F: Field> SpongeState<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct Rescue<F: Field> {
     sponge: SpongeState<F>,
     state: [F; RESCUE_M],
