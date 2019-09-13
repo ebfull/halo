@@ -11,7 +11,10 @@ use crate::{
     recursion::{RecursiveProof, VerificationCircuit},
     synthesis::{Backend, SynthesisDriver},
 };
+use std::collections::BTreeMap;
+use std::fmt;
 use std::marker::PhantomData;
+use std::ops::AddAssign;
 
 impl Variable {
     fn get_index(&self) -> usize {
@@ -215,7 +218,7 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
             self.current_namespace.push(name);
         }
 
-        fn pop_namespace(&mut self) {
+        fn pop_namespace(&mut self, _gadget_name: Option<String>) {
             assert!(self.current_namespace.pop().is_some());
         }
     }
@@ -440,7 +443,7 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
             // Do nothing; we don't care about namespaces in this context.
         }
 
-        fn pop_namespace(&mut self) {
+        fn pop_namespace(&mut self, _gadget_name: Option<String>) {
             // Do nothing; we don't care about namespaces in this context.
         }
 
@@ -556,7 +559,7 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
             // Do nothing; we don't care about namespaces in this context.
         }
 
-        fn pop_namespace(&mut self) {
+        fn pop_namespace(&mut self, _gadget_name: Option<String>) {
             // Do nothing; we don't care about namespaces in this context.
         }
 
@@ -573,4 +576,177 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
     circuit.synthesize(&mut enforce)?;
 
     Ok(())
+}
+
+#[derive(Clone, Default)]
+pub struct ConstraintCounts {
+    pub allocations: usize,
+    pub mult_constraints: usize,
+    pub total_mults: usize,
+    pub total_lcs: usize,
+}
+
+impl fmt::Display for ConstraintCounts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "({}A {}M {}C {}Q)",
+            self.allocations, self.mult_constraints, self.total_mults, self.total_lcs
+        )
+    }
+}
+
+impl AddAssign<ConstraintCounts> for ConstraintCounts {
+    fn add_assign(&mut self, other: ConstraintCounts) {
+        self.allocations += other.allocations;
+        self.mult_constraints += other.mult_constraints;
+        self.total_mults += other.total_mults;
+        self.total_lcs += other.total_lcs;
+    }
+}
+
+/// Counts the constraints within each namespace of a circuit.
+///
+/// Returns a map of namespace paths, containing the number of multiplication
+/// gates and linear constraints for each path. If the `gadget-traces` feature
+/// is enabled, the output also includes the name of the gadget in which each
+/// namespace was dropped (i.e. the last gadget to own the namespace).
+pub fn constraint_count<F: Field, C: Circuit<F>, S: SynthesisDriver>(
+    circuit: &C,
+) -> Result<BTreeMap<String, (ConstraintCounts, Option<String>)>, SynthesisError> {
+    struct Assignment {
+        counts: BTreeMap<String, (ConstraintCounts, Option<String>)>,
+        current_namespace: Vec<String>,
+        count_stack: Vec<ConstraintCounts>,
+        current_counts: ConstraintCounts,
+    }
+
+    impl<'a, F: Field> Backend<F> for &'a mut Assignment {
+        type LinearConstraintIndex = usize;
+
+        /// Create a new multiplication gate.
+        fn new_multiplication_gate<A, AR>(&mut self, annotation: Option<A>)
+        where
+            A: FnOnce() -> AR,
+            AR: Into<String>,
+        {
+            self.current_counts.total_mults += 1;
+            if annotation.is_some() {
+                self.current_counts.mult_constraints += 1;
+            }
+        }
+
+        fn set_var<FF, A, AR>(
+            &mut self,
+            annotation: Option<A>,
+            _var: Variable,
+            _value: FF,
+        ) -> Result<(), SynthesisError>
+        where
+            FF: FnOnce() -> Result<F, SynthesisError>,
+            A: FnOnce() -> AR,
+            AR: Into<String>,
+        {
+            if annotation.is_some() {
+                self.current_counts.allocations += 1;
+            }
+
+            Ok(())
+        }
+
+        /// Create a new linear constraint, returning a cached index.
+        fn new_linear_constraint<A, AR>(&mut self, _annotation: A) -> Self::LinearConstraintIndex
+        where
+            A: FnOnce() -> AR,
+            AR: Into<String>,
+        {
+            self.current_counts.total_lcs += 1;
+            self.current_counts.total_lcs
+        }
+
+        /// Compute a `LinearConstraintIndex` from `q`.
+        fn get_for_q(&self, q: usize) -> Self::LinearConstraintIndex {
+            q
+        }
+
+        fn push_namespace<NR, N>(&mut self, name_fn: N)
+        where
+            NR: Into<String>,
+            N: FnOnce() -> NR,
+        {
+            let name = name_fn().into();
+            self.current_namespace.push(name);
+
+            // Save the current counts for the parent namespace.
+            self.count_stack.push(self.current_counts.clone());
+
+            // Re-initialize counts for the current node.
+            self.current_counts = ConstraintCounts::default();
+        }
+
+        fn pop_namespace(&mut self, gadget_name: Option<String>) {
+            // Store the counts for the node we are leaving.
+            let node = self
+                .current_namespace
+                .pop()
+                .expect("Should be leaving a namespace we entered");
+            let path = compute_path(&self.current_namespace, node);
+            self.counts
+                .insert(path, (self.current_counts.clone(), gadget_name));
+
+            // Accumulate counts from this node into its parent.
+            self.current_counts += self.count_stack.pop().unwrap_or_default();
+        }
+    }
+
+    let mut assignment = Assignment {
+        counts: BTreeMap::default(),
+        current_namespace: vec![],
+        count_stack: vec![],
+        current_counts: ConstraintCounts::default(),
+    };
+
+    S::synthesize(&mut assignment, circuit)?;
+
+    // Insert counts for the root circuit.
+    assignment
+        .counts
+        .insert(String::default(), (assignment.current_counts, None));
+
+    Ok(assignment.counts)
+}
+
+/// Counts the constraints within each namespace of a recursive circuit.
+///
+/// Returns a map of namespace paths, containing the number of multiplication
+/// gates and linear constraints for each path. If the `gadget-traces` feature
+/// is enabled, the output also includes the name of the gadget in which each
+/// namespace was dropped (i.e. the last gadget to own the namespace).
+pub fn recursive_constraint_count<
+    E1,
+    E2,
+    C: RecursiveCircuit<E1::Scalar> + RecursiveCircuit<E2::Scalar>,
+    S: SynthesisDriver,
+>(
+    e2params: &Params<E2>,
+    circuit: &C,
+    new_payload: &[u8],
+) -> Result<BTreeMap<String, (ConstraintCounts, Option<String>)>, SynthesisError>
+where
+    E1: Curve<Base = <E2 as Curve>::Scalar>,
+    E2: Curve<Base = <E1 as Curve>::Scalar>,
+{
+    let circuit = VerificationCircuit::<E1, E2, _> {
+        _marker: PhantomData,
+        params: e2params,
+        base_case: None,
+        proof: None,
+        inner_circuit: circuit,
+        new_payload,
+        old_leftovers: None,
+        new_leftovers: None,
+        deferred: None,
+    };
+
+    constraint_count::<_, _, S>(&circuit)
 }

@@ -78,7 +78,7 @@ pub trait Backend<FF: Field> {
     }
 
     /// Exit out of the existing namespace.
-    fn pop_namespace(&mut self) {}
+    fn pop_namespace(&mut self, _gadget_name: Option<String>) {}
 }
 
 /// This is an abstraction which synthesizes circuits.
@@ -241,8 +241,8 @@ impl SynthesisDriver for Basic {
                 self.backend.push_namespace(name_fn);
             }
 
-            fn pop_namespace(&mut self) {
-                self.backend.pop_namespace();
+            fn pop_namespace(&mut self, gadget_name: Option<String>) {
+                self.backend.pop_namespace(gadget_name);
             }
 
             fn get_root(&mut self) -> &mut Self::Root {

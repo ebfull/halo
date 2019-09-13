@@ -89,7 +89,7 @@ pub trait ConstraintSystem<FF: Field> {
 
     /// Exit out of the existing namespace. Not intended for
     /// downstream use; use `namespace` instead.
-    fn pop_namespace(&mut self);
+    fn pop_namespace(&mut self, gadget_name: Option<String>);
 
     /// Gets the "root" constraint system, bypassing the namespacing.
     /// Not intended for downstream use; use `namespace` instead.
@@ -163,7 +163,7 @@ impl<'cs, FF: Field, CS: ConstraintSystem<FF>> ConstraintSystem<FF> for Namespac
         panic!("only the root's push_namespace should be called");
     }
 
-    fn pop_namespace(&mut self) {
+    fn pop_namespace(&mut self, _: Option<String>) {
         panic!("only the root's pop_namespace should be called");
     }
 
@@ -174,7 +174,34 @@ impl<'cs, FF: Field, CS: ConstraintSystem<FF>> ConstraintSystem<FF> for Namespac
 
 impl<'a, FF: Field, CS: ConstraintSystem<FF>> Drop for Namespace<'a, FF, CS> {
     fn drop(&mut self) {
-        self.get_root().pop_namespace()
+        let gadget_name = {
+            #[cfg(feature = "gadget-traces")]
+            {
+                let mut gadget_name = None;
+                let mut is_second_frame = false;
+                backtrace::trace(|frame| {
+                    if is_second_frame {
+                        // Resolve this instruction pointer to a symbol name
+                        backtrace::resolve_frame(frame, |symbol| {
+                            gadget_name = symbol.name().map(|name| format!("{:#}", name));
+                        });
+
+                        // We are done
+                        false
+                    } else {
+                        // We want the next frame
+                        is_second_frame = true;
+                        true
+                    }
+                });
+                gadget_name
+            }
+
+            #[cfg(not(feature = "gadget-traces"))]
+            None
+        };
+
+        self.get_root().pop_namespace(gadget_name)
     }
 }
 
@@ -228,8 +255,8 @@ impl<'cs, FF: Field, CS: ConstraintSystem<FF>> ConstraintSystem<FF> for &'cs mut
         (**self).push_namespace(name_fn)
     }
 
-    fn pop_namespace(&mut self) {
-        (**self).pop_namespace()
+    fn pop_namespace(&mut self, gadget_name: Option<String>) {
+        (**self).pop_namespace(gadget_name)
     }
 
     fn get_root(&mut self) -> &mut Self::Root {
