@@ -11,6 +11,7 @@ use crate::{
     recursion::{RecursiveProof, VerificationCircuit},
     synthesis::{Backend, SynthesisDriver},
 };
+use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
 impl Variable {
@@ -573,4 +574,126 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
     circuit.synthesize(&mut enforce)?;
 
     Ok(())
+}
+
+/// Counts the constraints within each namespace of a circuit.
+pub fn constraint_count<F: Field, C: Circuit<F>, S: SynthesisDriver>(
+    circuit: &C,
+) -> Result<BTreeMap<String, (usize, usize)>, SynthesisError> {
+    struct Assignment {
+        counts: BTreeMap<String, (usize, usize)>,
+        current_namespace: Vec<String>,
+        n_stack: Vec<usize>,
+        q_stack: Vec<usize>,
+        current_n: usize,
+        current_q: usize,
+    }
+
+    impl<'a, F: Field> Backend<F> for &'a mut Assignment {
+        type LinearConstraintIndex = usize;
+
+        /// Create a new multiplication gate.
+        fn new_multiplication_gate<A, AR>(&mut self, _annotation: Option<A>)
+        where
+            A: FnOnce() -> AR,
+            AR: Into<String>,
+        {
+            self.current_n += 1;
+        }
+
+        /// Create a new linear constraint, returning a cached index.
+        fn new_linear_constraint<A, AR>(&mut self, _annotation: A) -> Self::LinearConstraintIndex
+        where
+            A: FnOnce() -> AR,
+            AR: Into<String>,
+        {
+            self.current_q += 1;
+            self.current_q
+        }
+
+        /// Compute a `LinearConstraintIndex` from `q`.
+        fn get_for_q(&self, q: usize) -> Self::LinearConstraintIndex {
+            q
+        }
+
+        fn push_namespace<NR, N>(&mut self, name_fn: N)
+        where
+            NR: Into<String>,
+            N: FnOnce() -> NR,
+        {
+            let name = name_fn().into();
+            self.current_namespace.push(name);
+
+            // Save the current counts for the parent namespace.
+            self.n_stack.push(self.current_n);
+            self.q_stack.push(self.current_q);
+
+            // Re-initialize counts for the current node.
+            self.current_n = 0;
+            self.current_q = 0;
+        }
+
+        fn pop_namespace(&mut self) {
+            // Store the counts for the node we are leaving.
+            let node = self
+                .current_namespace
+                .pop()
+                .expect("Should be leaving a namespace we entered");
+            let path = compute_path(&self.current_namespace, node);
+            self.counts.insert(path, (self.current_n, self.current_q));
+
+            // Accumulate counts from this node into its parent.
+            self.current_n += self.n_stack.pop().unwrap_or(0);
+            self.current_q += self.q_stack.pop().unwrap_or(0);
+        }
+    }
+
+    let mut assignment = Assignment {
+        counts: BTreeMap::default(),
+        current_namespace: vec![],
+        n_stack: vec![],
+        q_stack: vec![],
+        current_n: 0,
+        current_q: 0,
+    };
+
+    S::synthesize(&mut assignment, circuit)?;
+
+    // Insert counts for the root circuit.
+    assignment.counts.insert(
+        String::default(),
+        (assignment.current_n, assignment.current_q),
+    );
+
+    Ok(assignment.counts)
+}
+
+/// Counts the constraints within each namespace of a recursive circuit.
+pub fn recursive_constraint_count<
+    E1,
+    E2,
+    C: RecursiveCircuit<E1::Scalar> + RecursiveCircuit<E2::Scalar>,
+    S: SynthesisDriver,
+>(
+    e2params: &Params<E2>,
+    circuit: &C,
+    new_payload: &[u8],
+) -> Result<BTreeMap<String, (usize, usize)>, SynthesisError>
+where
+    E1: Curve<Base = <E2 as Curve>::Scalar>,
+    E2: Curve<Base = <E1 as Curve>::Scalar>,
+{
+    let circuit = VerificationCircuit::<E1, E2, _> {
+        _marker: PhantomData,
+        params: e2params,
+        base_case: None,
+        proof: None,
+        inner_circuit: circuit,
+        new_payload,
+        old_leftovers: None,
+        new_leftovers: None,
+        deferred: None,
+    };
+
+    constraint_count::<_, _, S>(&circuit)
 }
