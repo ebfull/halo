@@ -577,11 +577,16 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
 }
 
 /// Counts the constraints within each namespace of a circuit.
+///
+/// Returns a map of namespace paths, containing the number of multiplication
+/// gates and linear constraints for each path. If the `gadget-traces` feature
+/// is enabled, the output also includes the name of the gadget in which each
+/// namespace was dropped (i.e. the last gadget to own the namespace).
 pub fn constraint_count<F: Field, C: Circuit<F>, S: SynthesisDriver>(
     circuit: &C,
-) -> Result<BTreeMap<String, (usize, usize)>, SynthesisError> {
+) -> Result<BTreeMap<String, (usize, usize, Option<String>)>, SynthesisError> {
     struct Assignment {
-        counts: BTreeMap<String, (usize, usize)>,
+        counts: BTreeMap<String, (usize, usize, Option<String>)>,
         current_namespace: Vec<String>,
         n_stack: Vec<usize>,
         q_stack: Vec<usize>,
@@ -633,14 +638,15 @@ pub fn constraint_count<F: Field, C: Circuit<F>, S: SynthesisDriver>(
             self.current_q = 0;
         }
 
-        fn pop_namespace(&mut self, _gadget_name: Option<String>) {
+        fn pop_namespace(&mut self, gadget_name: Option<String>) {
             // Store the counts for the node we are leaving.
             let node = self
                 .current_namespace
                 .pop()
                 .expect("Should be leaving a namespace we entered");
             let path = compute_path(&self.current_namespace, node);
-            self.counts.insert(path, (self.current_n, self.current_q));
+            self.counts
+                .insert(path, (self.current_n, self.current_q, gadget_name));
 
             // Accumulate counts from this node into its parent.
             self.current_n += self.n_stack.pop().unwrap_or(0);
@@ -662,13 +668,18 @@ pub fn constraint_count<F: Field, C: Circuit<F>, S: SynthesisDriver>(
     // Insert counts for the root circuit.
     assignment.counts.insert(
         String::default(),
-        (assignment.current_n, assignment.current_q),
+        (assignment.current_n, assignment.current_q, None),
     );
 
     Ok(assignment.counts)
 }
 
 /// Counts the constraints within each namespace of a recursive circuit.
+///
+/// Returns a map of namespace paths, containing the number of multiplication
+/// gates and linear constraints for each path. If the `gadget-traces` feature
+/// is enabled, the output also includes the name of the gadget in which each
+/// namespace was dropped (i.e. the last gadget to own the namespace).
 pub fn recursive_constraint_count<
     E1,
     E2,
@@ -678,7 +689,7 @@ pub fn recursive_constraint_count<
     e2params: &Params<E2>,
     circuit: &C,
     new_payload: &[u8],
-) -> Result<BTreeMap<String, (usize, usize)>, SynthesisError>
+) -> Result<BTreeMap<String, (usize, usize, Option<String>)>, SynthesisError>
 where
     E1: Curve<Base = <E2 as Curve>::Scalar>,
     E2: Curve<Base = <E1 as Curve>::Scalar>,
