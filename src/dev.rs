@@ -216,7 +216,7 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
             self.current_namespace.push(name);
         }
 
-        fn pop_namespace(&mut self) {
+        fn pop_namespace(&mut self, _gadget_name: Option<String>) {
             assert!(self.current_namespace.pop().is_some());
         }
     }
@@ -441,7 +441,7 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
             // Do nothing; we don't care about namespaces in this context.
         }
 
-        fn pop_namespace(&mut self) {
+        fn pop_namespace(&mut self, _gadget_name: Option<String>) {
             // Do nothing; we don't care about namespaces in this context.
         }
 
@@ -557,7 +557,7 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
             // Do nothing; we don't care about namespaces in this context.
         }
 
-        fn pop_namespace(&mut self) {
+        fn pop_namespace(&mut self, _gadget_name: Option<String>) {
             // Do nothing; we don't care about namespaces in this context.
         }
 
@@ -633,7 +633,7 @@ pub fn constraint_count<F: Field, C: Circuit<F>, S: SynthesisDriver>(
             self.current_q = 0;
         }
 
-        fn pop_namespace(&mut self) {
+        fn pop_namespace(&mut self, _gadget_name: Option<String>) {
             // Store the counts for the node we are leaving.
             let node = self
                 .current_namespace

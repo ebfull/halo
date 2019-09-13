@@ -10,6 +10,7 @@ edition = "2018"
 license = "MIT/Apache-2.0"
 
 [dependencies]
+backtrace = { version = "0.3", optional = true }
 byteorder = "*"
 subtle = "*"
 num_cpus = "*"
@@ -24,3 +25,6 @@ hex-literal = "0.1"
 rand_xorshift = "0.2"
 sha2 = "0.8"
 uint = "0.8"
+
+[features]
+gadget-traces = ["backtrace"]
