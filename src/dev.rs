@@ -12,7 +12,9 @@ use crate::{
     synthesis::{Backend, SynthesisDriver},
 };
 use std::collections::BTreeMap;
+use std::fmt;
 use std::marker::PhantomData;
+use std::ops::AddAssign;
 
 impl Variable {
     fn get_index(&self) -> usize {
@@ -576,6 +578,33 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
     Ok(())
 }
 
+#[derive(Clone, Default)]
+pub struct ConstraintCounts {
+    pub allocations: usize,
+    pub mult_constraints: usize,
+    pub total_mults: usize,
+    pub total_lcs: usize,
+}
+
+impl fmt::Display for ConstraintCounts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "({}A {}M {}C {}Q)",
+            self.allocations, self.mult_constraints, self.total_mults, self.total_lcs
+        )
+    }
+}
+
+impl AddAssign<ConstraintCounts> for ConstraintCounts {
+    fn add_assign(&mut self, other: ConstraintCounts) {
+        self.allocations += other.allocations;
+        self.mult_constraints += other.mult_constraints;
+        self.total_mults += other.total_mults;
+        self.total_lcs += other.total_lcs;
+    }
+}
+
 /// Counts the constraints within each namespace of a circuit.
 ///
 /// Returns a map of namespace paths, containing the number of multiplication
@@ -584,26 +613,45 @@ pub fn determinism_check<F: Field, C: Circuit<F>>(circuit: &C) -> Result<(), Syn
 /// namespace was dropped (i.e. the last gadget to own the namespace).
 pub fn constraint_count<F: Field, C: Circuit<F>, S: SynthesisDriver>(
     circuit: &C,
-) -> Result<BTreeMap<String, (usize, usize, Option<String>)>, SynthesisError> {
+) -> Result<BTreeMap<String, (ConstraintCounts, Option<String>)>, SynthesisError> {
     struct Assignment {
-        counts: BTreeMap<String, (usize, usize, Option<String>)>,
+        counts: BTreeMap<String, (ConstraintCounts, Option<String>)>,
         current_namespace: Vec<String>,
-        n_stack: Vec<usize>,
-        q_stack: Vec<usize>,
-        current_n: usize,
-        current_q: usize,
+        count_stack: Vec<ConstraintCounts>,
+        current_counts: ConstraintCounts,
     }
 
     impl<'a, F: Field> Backend<F> for &'a mut Assignment {
         type LinearConstraintIndex = usize;
 
         /// Create a new multiplication gate.
-        fn new_multiplication_gate<A, AR>(&mut self, _annotation: Option<A>)
+        fn new_multiplication_gate<A, AR>(&mut self, annotation: Option<A>)
         where
             A: FnOnce() -> AR,
             AR: Into<String>,
         {
-            self.current_n += 1;
+            self.current_counts.total_mults += 1;
+            if annotation.is_some() {
+                self.current_counts.mult_constraints += 1;
+            }
+        }
+
+        fn set_var<FF, A, AR>(
+            &mut self,
+            annotation: Option<A>,
+            _var: Variable,
+            _value: FF,
+        ) -> Result<(), SynthesisError>
+        where
+            FF: FnOnce() -> Result<F, SynthesisError>,
+            A: FnOnce() -> AR,
+            AR: Into<String>,
+        {
+            if annotation.is_some() {
+                self.current_counts.allocations += 1;
+            }
+
+            Ok(())
         }
 
         /// Create a new linear constraint, returning a cached index.
@@ -612,8 +660,8 @@ pub fn constraint_count<F: Field, C: Circuit<F>, S: SynthesisDriver>(
             A: FnOnce() -> AR,
             AR: Into<String>,
         {
-            self.current_q += 1;
-            self.current_q
+            self.current_counts.total_lcs += 1;
+            self.current_counts.total_lcs
         }
 
         /// Compute a `LinearConstraintIndex` from `q`.
@@ -630,12 +678,10 @@ pub fn constraint_count<F: Field, C: Circuit<F>, S: SynthesisDriver>(
             self.current_namespace.push(name);
 
             // Save the current counts for the parent namespace.
-            self.n_stack.push(self.current_n);
-            self.q_stack.push(self.current_q);
+            self.count_stack.push(self.current_counts.clone());
 
             // Re-initialize counts for the current node.
-            self.current_n = 0;
-            self.current_q = 0;
+            self.current_counts = ConstraintCounts::default();
         }
 
         fn pop_namespace(&mut self, gadget_name: Option<String>) {
@@ -646,30 +692,26 @@ pub fn constraint_count<F: Field, C: Circuit<F>, S: SynthesisDriver>(
                 .expect("Should be leaving a namespace we entered");
             let path = compute_path(&self.current_namespace, node);
             self.counts
-                .insert(path, (self.current_n, self.current_q, gadget_name));
+                .insert(path, (self.current_counts.clone(), gadget_name));
 
             // Accumulate counts from this node into its parent.
-            self.current_n += self.n_stack.pop().unwrap_or(0);
-            self.current_q += self.q_stack.pop().unwrap_or(0);
+            self.current_counts += self.count_stack.pop().unwrap_or_default();
         }
     }
 
     let mut assignment = Assignment {
         counts: BTreeMap::default(),
         current_namespace: vec![],
-        n_stack: vec![],
-        q_stack: vec![],
-        current_n: 0,
-        current_q: 0,
+        count_stack: vec![],
+        current_counts: ConstraintCounts::default(),
     };
 
     S::synthesize(&mut assignment, circuit)?;
 
     // Insert counts for the root circuit.
-    assignment.counts.insert(
-        String::default(),
-        (assignment.current_n, assignment.current_q, None),
-    );
+    assignment
+        .counts
+        .insert(String::default(), (assignment.current_counts, None));
 
     Ok(assignment.counts)
 }
@@ -689,7 +731,7 @@ pub fn recursive_constraint_count<
     e2params: &Params<E2>,
     circuit: &C,
     new_payload: &[u8],
-) -> Result<BTreeMap<String, (usize, usize, Option<String>)>, SynthesisError>
+) -> Result<BTreeMap<String, (ConstraintCounts, Option<String>)>, SynthesisError>
 where
     E1: Curve<Base = <E2 as Curve>::Scalar>,
     E2: Curve<Base = <E1 as Curve>::Scalar>,
