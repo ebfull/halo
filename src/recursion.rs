@@ -201,7 +201,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 {
     fn verify_deferred<CS: ConstraintSystem<E1::Scalar>>(
         &self,
-        mut cs: &mut CS,
+        mut cs: CS,
         mut deferred: &[AllocatedBit],
     ) -> Result<(), SynthesisError> {
         // Unpack all of the deferred data
@@ -562,7 +562,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
     fn equal_unless_base_case<CS: ConstraintSystem<E1::Scalar>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
         base_case: AllocatedBit,
         lhs: &[AllocatedBit],
         rhs: &[AllocatedBit],
@@ -654,7 +654,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
     fn verify_proof<CS: ConstraintSystem<E1::Scalar>>(
         &self,
-        cs: &mut CS,
+        mut cs: CS,
         base_case: AllocatedBit,
         k_commitment: &CurvePoint<E2>,
         old_leftovers: &[AllocatedBit],
@@ -868,11 +868,22 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                     .unwrap_or(E2::zero()))
             })?;
         {
+            let mut cs = cs.namespace(|| format!("s_old_commitment"));
             let (x, y) = s_old_commitment.get_xy();
-            let x = unpack_fe(cs.namespace(|| "unpack s_old_commitment.x"), &x)?;
-            let y = unpack_fe(cs.namespace(|| "unpack s_old_commitment.y"), &y)?;
-            self.equal_unless_base_case(cs, base_case.clone(), &x, &old_leftovers[0..256])?;
-            self.equal_unless_base_case(cs, base_case.clone(), &y, &old_leftovers[256..512])?;
+            let x = unpack_fe(cs.namespace(|| "unpack x"), &x)?;
+            let y = unpack_fe(cs.namespace(|| "unpack y"), &y)?;
+            self.equal_unless_base_case(
+                cs.namespace(|| "x"),
+                base_case.clone(),
+                &x,
+                &old_leftovers[0..256],
+            )?;
+            self.equal_unless_base_case(
+                cs.namespace(|| "y"),
+                base_case.clone(),
+                &y,
+                &old_leftovers[256..512],
+            )?;
         }
 
         let g_old = CurvePoint::witness(cs.namespace(|| "witness g_old"), || {
@@ -882,17 +893,18 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 .unwrap_or(E2::zero()))
         })?;
         {
+            let mut cs = cs.namespace(|| format!("g_old"));
             let (x, y) = g_old.get_xy();
-            let x = unpack_fe(cs.namespace(|| "unpack g_old.x"), &x)?;
-            let y = unpack_fe(cs.namespace(|| "unpack g_old.y"), &y)?;
+            let x = unpack_fe(cs.namespace(|| "unpack x"), &x)?;
+            let y = unpack_fe(cs.namespace(|| "unpack y"), &y)?;
             self.equal_unless_base_case(
-                cs,
+                cs.namespace(|| "x"),
                 base_case.clone(),
                 &x,
                 &old_leftovers[256 * 3..256 * 4],
             )?;
             self.equal_unless_base_case(
-                cs,
+                cs.namespace(|| "y"),
                 base_case.clone(),
                 &y,
                 &old_leftovers[256 * 4..256 * 5],
@@ -1017,16 +1029,27 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         // new_leftovers
         {
+            let mut cs = cs.namespace(|| format!("s_new_commitment"));
             let (x, y) = s_new_commitment.get_xy();
-            let x = unpack_fe(cs.namespace(|| "unpack s_new_commitment.x"), &x)?;
-            let y = unpack_fe(cs.namespace(|| "unpack s_new_commitment.y"), &y)?;
-            self.equal_unless_base_case(cs, base_case.clone(), &x, &new_leftovers[0..256])?;
-            self.equal_unless_base_case(cs, base_case.clone(), &y, &new_leftovers[256..512])?;
+            let x = unpack_fe(cs.namespace(|| "unpack x"), &x)?;
+            let y = unpack_fe(cs.namespace(|| "unpack y"), &y)?;
+            self.equal_unless_base_case(
+                cs.namespace(|| "x"),
+                base_case.clone(),
+                &x,
+                &new_leftovers[0..256],
+            )?;
+            self.equal_unless_base_case(
+                cs.namespace(|| "y"),
+                base_case.clone(),
+                &y,
+                &new_leftovers[256..512],
+            )?;
         }
 
         {
             self.equal_unless_base_case(
-                cs,
+                cs.namespace(|| "y_new in new_leftovers"),
                 base_case.clone(),
                 &y_new,
                 &new_leftovers[512..512 + 128],
@@ -1039,17 +1062,18 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         }
 
         {
+            let mut cs = cs.namespace(|| format!("g_new"));
             let (x, y) = g_new.get_xy();
-            let x = unpack_fe(cs.namespace(|| "unpack g_new.x"), &x)?;
-            let y = unpack_fe(cs.namespace(|| "unpack g_new.y"), &y)?;
+            let x = unpack_fe(cs.namespace(|| "unpack x"), &x)?;
+            let y = unpack_fe(cs.namespace(|| "unpack y"), &y)?;
             self.equal_unless_base_case(
-                cs,
+                cs.namespace(|| "x"),
                 base_case.clone(),
                 &x,
                 &new_leftovers[256 * 3..256 * 4],
             )?;
             self.equal_unless_base_case(
-                cs,
+                cs.namespace(|| "y"),
                 base_case.clone(),
                 &y,
                 &new_leftovers[256 * 4..256 * 5],
@@ -1058,7 +1082,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         for (i, challenge) in challenges_new.into_iter().enumerate() {
             self.equal_unless_base_case(
-                cs,
+                cs.namespace(|| format!("challenge {} in new_leftovers", i)),
                 base_case.clone(),
                 &challenge,
                 &new_leftovers[256 * 5 + 256 * i..256 * 5 + 256 * i + 128],
@@ -1071,7 +1095,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
             // k + 11 is the start on deferred for the new challenges
             self.equal_unless_base_case(
-                cs,
+                cs.namespace(|| format!("challenge {} in new_deferred", i)),
                 base_case.clone(),
                 &challenge,
                 &new_deferred[256 * (11 + self.params.k) + i * 256
@@ -1086,7 +1110,12 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         // x (deferred)
         {
-            self.equal_unless_base_case(cs, base_case.clone(), &x, &new_deferred[0..128])?;
+            self.equal_unless_base_case(
+                cs.namespace(|| "challenge x in new_deferred"),
+                base_case.clone(),
+                &x,
+                &new_deferred[0..128],
+            )?;
             for i in 0..128 {
                 cs.enforce_zero(LinearCombination::from(
                     new_deferred[128 + i].get_variable(),
@@ -1097,7 +1126,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         // y_cur (deferred)
         {
             self.equal_unless_base_case(
-                cs,
+                cs.namespace(|| "challenge y_cur in new_deferred"),
                 base_case.clone(),
                 &y_cur,
                 &new_deferred[256 * 2..256 * 2 + 128],
@@ -1112,7 +1141,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         // y_new (deferred)
         {
             self.equal_unless_base_case(
-                cs,
+                cs.namespace(|| "challenge y_new in new_deferred"),
                 base_case.clone(),
                 &y_new,
                 &new_deferred[256 * 3..256 * 3 + 128],
@@ -1319,98 +1348,122 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         cs: &mut CS,
     ) -> Result<(), SynthesisError> {
         let mut payload_bits = vec![];
-        for (j, byte) in self.new_payload.into_iter().enumerate() {
-            for i in 0..8 {
-                let bit = (*byte >> i) & 1 == 1;
-                payload_bits.push(AllocatedBit::alloc_input_unchecked(
-                    cs.namespace(|| format!("new_payload bit {}", 8 * j + i)),
-                    || Ok(bit),
-                )?);
+        {
+            let mut cs = cs.namespace(|| "new_payload");
+            for (j, byte) in self.new_payload.into_iter().enumerate() {
+                for i in 0..8 {
+                    let bit = (*byte >> i) & 1 == 1;
+                    payload_bits.push(AllocatedBit::alloc_input_unchecked(
+                        cs.namespace(|| format!("bit {}", 8 * j + i)),
+                        || Ok(bit),
+                    )?);
+                }
             }
         }
 
         let mut leftovers1 = vec![];
-        if let Some(l) = &self.old_leftovers {
-            let bytes = l.to_bytes();
-            for (j, byte) in bytes.into_iter().enumerate() {
-                for i in 0..8 {
-                    let bit = (byte >> i) & 1 == 1;
+        {
+            let mut cs = cs.namespace(|| "old_leftovers");
+            if let Some(l) = &self.old_leftovers {
+                let bytes = l.to_bytes();
+                for (j, byte) in bytes.into_iter().enumerate() {
+                    for i in 0..8 {
+                        let bit = (byte >> i) & 1 == 1;
+                        leftovers1.push(AllocatedBit::alloc_input_unchecked(
+                            cs.namespace(|| format!("bit {}", 8 * j + i)),
+                            || Ok(bit),
+                        )?);
+                    }
+                }
+            } else {
+                // 256 * (5 + k)
+                let num_bits = 256 * (5 + self.params.k);
+                for i in 0..num_bits {
                     leftovers1.push(AllocatedBit::alloc_input_unchecked(
-                        cs.namespace(|| format!("old_leftovers bit {}", 8 * j + i)),
-                        || Ok(bit),
+                        cs.namespace(|| format!("bit {}", i)),
+                        || Ok(false),
                     )?);
                 }
-            }
-        } else {
-            // 256 * (5 + k)
-            let num_bits = 256 * (5 + self.params.k);
-            for i in 0..num_bits {
-                leftovers1.push(AllocatedBit::alloc_input_unchecked(
-                    cs.namespace(|| format!("old_leftovers bit {}", i)),
-                    || Ok(false),
-                )?);
             }
         }
 
         let mut leftovers2 = vec![];
-        if let Some(l) = &self.new_leftovers {
-            let bytes = l.to_bytes();
-            for (j, byte) in bytes.into_iter().enumerate() {
-                for i in 0..8 {
-                    let bit = (byte >> i) & 1 == 1;
+        {
+            let mut cs = cs.namespace(|| "new_leftovers");
+            if let Some(l) = &self.new_leftovers {
+                let bytes = l.to_bytes();
+                for (j, byte) in bytes.into_iter().enumerate() {
+                    for i in 0..8 {
+                        let bit = (byte >> i) & 1 == 1;
+                        leftovers2.push(AllocatedBit::alloc_input_unchecked(
+                            cs.namespace(|| format!("bit {}", 8 * j + i)),
+                            || Ok(bit),
+                        )?);
+                    }
+                }
+            } else {
+                // 256 * (5 + k)
+                let num_bits = 256 * (5 + self.params.k);
+                for i in 0..num_bits {
                     leftovers2.push(AllocatedBit::alloc_input_unchecked(
-                        cs.namespace(|| format!("new_leftovers bit {}", 8 * j + i)),
-                        || Ok(bit),
+                        cs.namespace(|| format!("bit {}", i)),
+                        || Ok(false),
                     )?);
                 }
-            }
-        } else {
-            // 256 * (5 + k)
-            let num_bits = 256 * (5 + self.params.k);
-            for i in 0..num_bits {
-                leftovers2.push(AllocatedBit::alloc_input_unchecked(
-                    cs.namespace(|| format!("new_leftovers bit {}", i)),
-                    || Ok(false),
-                )?);
             }
         }
 
         let mut deferred = vec![];
-        if let Some(l) = &self.deferred {
-            let bytes = l.to_bytes();
-            for (j, byte) in bytes.into_iter().enumerate() {
-                for i in 0..8 {
-                    let bit = (byte >> i) & 1 == 1;
+        {
+            let mut cs = cs.namespace(|| "deferred");
+            if let Some(l) = &self.deferred {
+                let bytes = l.to_bytes();
+                for (j, byte) in bytes.into_iter().enumerate() {
+                    for i in 0..8 {
+                        let bit = (byte >> i) & 1 == 1;
+                        deferred.push(AllocatedBit::alloc_input_unchecked(
+                            cs.namespace(|| format!("bit {}", 8 * j + i)),
+                            || Ok(bit),
+                        )?);
+                    }
+                }
+            } else {
+                // 256 * (16 + 2k)
+                let num_bits = 256 * (16 + 2 * self.params.k);
+                for i in 0..num_bits {
                     deferred.push(AllocatedBit::alloc_input_unchecked(
-                        cs.namespace(|| format!("deferred bit {}", 8 * j + i)),
-                        || Ok(bit),
+                        cs.namespace(|| format!("bit {}", i)),
+                        || Ok(false),
                     )?);
                 }
-            }
-        } else {
-            // 256 * (16 + 2k)
-            let num_bits = 256 * (16 + 2 * self.params.k);
-            for i in 0..num_bits {
-                deferred.push(AllocatedBit::alloc_input_unchecked(
-                    cs.namespace(|| format!("deferred bit {}", i)),
-                    || Ok(false),
-                )?);
             }
         }
 
         // Check that all the inputs are booleans now that we've allocated
         // all of our public inputs.
-        for (i, b) in payload_bits.iter().enumerate() {
-            b.check(cs.namespace(|| format!("constrain new_payload bit {}", i)))?;
+        {
+            let mut cs = cs.namespace(|| "constrain new_payload");
+            for (i, b) in payload_bits.iter().enumerate() {
+                b.check(cs.namespace(|| format!("bit {}", i)))?;
+            }
         }
-        for (i, b) in leftovers1.iter().enumerate() {
-            b.check(cs.namespace(|| format!("constrain old_leftovers bit {}", i)))?;
+        {
+            let mut cs = cs.namespace(|| "constrain old_leftovers");
+            for (i, b) in leftovers1.iter().enumerate() {
+                b.check(cs.namespace(|| format!("bit {}", i)))?;
+            }
         }
-        for (i, b) in leftovers2.iter().enumerate() {
-            b.check(cs.namespace(|| format!("constrain new_leftovers bit {}", i)))?;
+        {
+            let mut cs = cs.namespace(|| "constrain new_leftovers");
+            for (i, b) in leftovers2.iter().enumerate() {
+                b.check(cs.namespace(|| format!("bit {}", i)))?;
+            }
         }
-        for (i, b) in deferred.iter().enumerate() {
-            b.check(cs.namespace(|| format!("constrain deferred bit {}", i)))?;
+        {
+            let mut cs = cs.namespace(|| "constrain deferred");
+            for (i, b) in deferred.iter().enumerate() {
+                b.check(cs.namespace(|| format!("bit {}", i)))?;
+            }
         }
 
         // Is this the base case?
@@ -1427,19 +1480,21 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         // Attach payload for old proof
         let mut old_payload = vec![];
         if let Some(proof) = &self.proof {
+            let mut cs = cs.namespace(|| "old_payload");
             for (j, byte) in proof.payload.iter().enumerate() {
                 for i in 0..8 {
                     let bit = ((*byte >> i) & 1) == 1;
                     old_payload.push(AllocatedBit::alloc(
-                        cs.namespace(|| format!("old_payload bit {}", 8 * j + i)),
+                        cs.namespace(|| format!("bit {}", 8 * j + i)),
                         || Ok(bit),
                     )?);
                 }
             }
         } else {
+            let mut cs = cs.namespace(|| "base_payload");
             for (i, bit) in self.inner_circuit.base_payload().into_iter().enumerate() {
                 old_payload.push(AllocatedBit::alloc(
-                    cs.namespace(|| format!("base_payload bit {}", i)),
+                    cs.namespace(|| format!("bit {}", i)),
                     || Ok(bit),
                 )?);
             }
@@ -1447,84 +1502,94 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         let basecase_val = base_case.get_value().map(|v| v.into());
 
-        for (bit, old_payload_bit) in self
-            .inner_circuit
-            .base_payload()
-            .into_iter()
-            .zip(old_payload.iter())
         {
-            let (a, b, c) = cs.multiply(
-                || "(bit - old_payload_bit) * base_case = 0",
-                || {
-                    let old_payload_bit = old_payload_bit
-                        .get_value()
-                        .ok_or(SynthesisError::AssignmentMissing)?;
-                    let basecase_val = basecase_val.ok_or(SynthesisError::AssignmentMissing)?;
+            let mut cs = cs.namespace(|| "constrain old_payload if base case");
+            for (i, (bit, old_payload_bit)) in self
+                .inner_circuit
+                .base_payload()
+                .into_iter()
+                .zip(old_payload.iter())
+                .enumerate()
+            {
+                let (a, b, c) = cs.multiply(
+                    || format!("(bit_{} - old_payload_bit_{}) * base_case = 0", i, i),
+                    || {
+                        let old_payload_bit = old_payload_bit
+                            .get_value()
+                            .ok_or(SynthesisError::AssignmentMissing)?;
+                        let basecase_val = basecase_val.ok_or(SynthesisError::AssignmentMissing)?;
 
-                    let lhs: E1::Scalar = bit.into();
-                    let rhs: E1::Scalar = old_payload_bit.into();
+                        let lhs: E1::Scalar = bit.into();
+                        let rhs: E1::Scalar = old_payload_bit.into();
 
-                    Ok((lhs - &rhs, basecase_val, Field::zero()))
-                },
-            )?;
-            if bit {
-                cs.enforce_zero(
-                    LinearCombination::from(a) - CS::ONE + old_payload_bit.get_variable(),
-                );
-            } else {
-                cs.enforce_zero(LinearCombination::from(a) + old_payload_bit.get_variable());
+                        Ok((lhs - &rhs, basecase_val, Field::zero()))
+                    },
+                )?;
+                if bit {
+                    cs.enforce_zero(
+                        LinearCombination::from(a) - CS::ONE + old_payload_bit.get_variable(),
+                    );
+                } else {
+                    cs.enforce_zero(LinearCombination::from(a) + old_payload_bit.get_variable());
+                }
+                cs.enforce_zero(LinearCombination::from(b) - base_case.get_variable());
+                cs.enforce_zero(LinearCombination::from(c));
             }
-            cs.enforce_zero(LinearCombination::from(b) - base_case.get_variable());
-            cs.enforce_zero(LinearCombination::from(c));
         }
 
         let mut old_leftovers1 = vec![];
-        if let Some(l) = &self.proof {
-            let l = &l.oldproof1;
-            let bytes = l.to_bytes();
-            for (j, byte) in bytes.into_iter().enumerate() {
-                for i in 0..8 {
-                    let bit = (byte >> i) & 1 == 1;
+        {
+            let mut cs = cs.namespace(|| "old_proof");
+            if let Some(l) = &self.proof {
+                let l = &l.oldproof1;
+                let bytes = l.to_bytes();
+                for (j, byte) in bytes.into_iter().enumerate() {
+                    for i in 0..8 {
+                        let bit = (byte >> i) & 1 == 1;
+                        old_leftovers1.push(AllocatedBit::alloc(
+                            cs.namespace(|| format!("bit {}", 8 * j + i)),
+                            || Ok(bit),
+                        )?);
+                    }
+                }
+            } else {
+                // 256 * (5 + k)
+                let num_bits = 256 * (5 + self.params.k);
+                for i in 0..num_bits {
                     old_leftovers1.push(AllocatedBit::alloc(
-                        cs.namespace(|| format!("old_proof bit {}", 8 * j + i)),
-                        || Ok(bit),
+                        cs.namespace(|| format!("bit {}", i)),
+                        || Ok(false),
                     )?);
                 }
-            }
-        } else {
-            // 256 * (5 + k)
-            let num_bits = 256 * (5 + self.params.k);
-            for i in 0..num_bits {
-                old_leftovers1.push(AllocatedBit::alloc(
-                    cs.namespace(|| format!("old_proof bit {}", i)),
-                    || Ok(false),
-                )?);
             }
         }
 
         let mut old_deferred = vec![];
-        if let Some(l) = &self.proof {
-            let l = &l.deferred;
-            let bytes = l.to_bytes();
-            for (j, byte) in bytes.into_iter().enumerate() {
-                for i in 0..8 {
-                    let bit = (byte >> i) & 1 == 1;
-                    old_deferred.push(AllocatedBit::alloc(
-                        cs.namespace(|| format!("old_deferred bit {}", 8 * j + i)),
-                        || Ok(bit),
-                    )?);
+        {
+            let mut cs = cs.namespace(|| "old_deferred");
+            if let Some(l) = &self.proof {
+                let l = &l.deferred;
+                let bytes = l.to_bytes();
+                for (j, byte) in bytes.into_iter().enumerate() {
+                    for i in 0..8 {
+                        let bit = (byte >> i) & 1 == 1;
+                        old_deferred.push(AllocatedBit::alloc(
+                            cs.namespace(|| format!("bit {}", 8 * j + i)),
+                            || Ok(bit),
+                        )?);
+                    }
                 }
-            }
-        } else {
-            let dummy_deferred = Deferred::<E2::Scalar>::dummy(self.params.k);
-            let bytes = dummy_deferred.to_bytes();
-            for (_, byte) in bytes.into_iter().enumerate() {
-                for i in 0..8 {
-                    let bit = (byte >> i) & 1 == 1;
-                    old_deferred.push(AllocatedBit::alloc(
-                        cs.namespace(|| format!("old_deferred bit {}", i)),
-                        || Ok(bit),
-                    )?);
+            } else {
+                let dummy_deferred = Deferred::<E2::Scalar>::dummy(self.params.k);
+                let bytes = dummy_deferred.to_bytes();
+                for (_, byte) in bytes.into_iter().enumerate() {
+                    for i in 0..8 {
+                        let bit = (byte >> i) & 1 == 1;
+                        old_deferred.push(AllocatedBit::alloc(
+                            cs.namespace(|| format!("bit {}", i)),
+                            || Ok(bit),
+                        )?);
+                    }
                 }
             }
         }
@@ -1535,24 +1600,27 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         bits_for_k_commitment.extend(leftovers1);
         bits_for_k_commitment.extend(old_deferred.clone());
 
-        for (i, (bit, gen)) in bits_for_k_commitment
-            .into_iter()
-            .zip(self.params.generators_xy[2..].iter())
-            .enumerate()
         {
-            let gen = CurvePoint::constant(gen.0, gen.1);
-            k_commitment = k_commitment.add_conditionally_incomplete(
-                cs.namespace(|| format!("k_commitment bit {}", i)),
-                &gen,
-                &Boolean::from(bit.clone()),
-            )?;
+            let mut cs = cs.namespace(|| "k_commitment");
+            for (i, (bit, gen)) in bits_for_k_commitment
+                .into_iter()
+                .zip(self.params.generators_xy[2..].iter())
+                .enumerate()
+            {
+                let gen = CurvePoint::constant(gen.0, gen.1);
+                k_commitment = k_commitment.add_conditionally_incomplete(
+                    cs.namespace(|| format!("bit {}", i)),
+                    &gen,
+                    &Boolean::from(bit.clone()),
+                )?;
+            }
         }
 
         // println!("k inside circuit: {:?}", k_commitment);
 
-        self.verify_deferred(cs, &old_deferred)?;
+        self.verify_deferred(cs.namespace(|| "verify deferred"), &old_deferred)?;
         self.verify_proof(
-            cs,
+            cs.namespace(|| "verify proof"),
             base_case.clone(),
             &k_commitment,
             &old_leftovers1,
@@ -1562,7 +1630,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         // deferred old challenges should be the same
         self.equal_unless_base_case(
-            cs,
+            cs.namespace(|| "deferred[challeges] == old_leftovers1[challenges]"),
             base_case.clone(),
             &deferred[256 * 10..256 * (10 + self.params.k)],
             &old_leftovers1[256 * 5..],
@@ -1570,13 +1638,16 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         // deferred y_old should be the same
         self.equal_unless_base_case(
-            cs,
+            cs.namespace(|| "deferred[y_old] == old_leftovers1[y_old]"),
             base_case.clone(),
             &deferred[256 * 1..256 * 2],
             &old_leftovers1[256 * 2..256 * 3],
         )?;
 
-        self.inner_circuit
-            .synthesize(cs, &old_payload, &payload_bits)
+        self.inner_circuit.synthesize(
+            &mut cs.namespace(|| "inner circuit"),
+            &old_payload,
+            &payload_bits,
+        )
     }
 }
