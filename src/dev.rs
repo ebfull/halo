@@ -306,16 +306,17 @@ where
     E1: Curve<Base = <E2 as Curve>::Scalar>,
     E2: Curve<Base = <E1 as Curve>::Scalar>,
 {
-    let (newdeferred, new_leftovers, old_leftovers) = match old_proof {
+    let (newdeferred, new_leftovers, old_leftovers, forkvalues) = match old_proof {
         Some(old_proof) => {
-            let (_, newdeferred, l1, l2) = old_proof.verify_inner(e2params, e1params, circuit)?;
+            let (_, newdeferred, l1, l2, forkvalues) = old_proof.verify_inner(e2params, e1params, circuit)?;
 
-            (newdeferred, l1, l2)
+            (newdeferred, l1, l2, forkvalues)
         }
         None => (
             Deferred::dummy(e2params.k),
             Leftovers::dummy(e2params),
             Leftovers::dummy(e1params),
+            vec![0; e2params.k]
         ),
     };
 
@@ -326,6 +327,7 @@ where
         proof: None,
         inner_circuit: circuit,
         new_payload,
+        forkvalues: Some(&forkvalues[..]),
         old_leftovers: Some(old_leftovers.clone()),
         new_leftovers: Some(new_leftovers.clone()),
         deferred: Some(newdeferred.clone()),

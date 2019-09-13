@@ -272,6 +272,43 @@ impl<F: Field> AllocatedNum<F> {
 
         Ok(newnum)
     }
+
+    pub fn sqrt<CS>(&self, mut cs: CS) -> Result<AllocatedNum<F>, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        let mut newval = None;
+        let newnum = AllocatedNum::alloc(cs.namespace(|| "sqrt"), || {
+            let sqrt = self
+                .value
+                .ok_or(SynthesisError::AssignmentMissing)?
+                .sqrt();
+            if bool::from(sqrt.is_some()) {
+                let tmp = sqrt.unwrap();
+                newval = Some(tmp);
+                Ok(tmp)
+            } else {
+                Err(SynthesisError::Unsatisfiable)
+            }
+        })?;
+
+        let (a, b, c) = cs.multiply(
+            || "square root check",
+            || {
+                Ok((
+                    newval.ok_or(SynthesisError::AssignmentMissing)?,
+                    newval.ok_or(SynthesisError::AssignmentMissing)?,
+                    self.value.ok_or(SynthesisError::AssignmentMissing)?,
+                ))
+            },
+        )?;
+
+        cs.enforce_zero(LinearCombination::from(a) - newnum.get_variable());
+        cs.enforce_zero(LinearCombination::from(b) - newnum.get_variable());
+        cs.enforce_zero(LinearCombination::from(c) - self.get_variable());
+
+        Ok(newnum)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

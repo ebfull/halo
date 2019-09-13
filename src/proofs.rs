@@ -744,7 +744,7 @@ impl<C: Curve> Proof<C> {
         circuit: &CS,
         inputs: &[C::Scalar],
         k_commitment: Option<C>,
-    ) -> Result<(bool, Leftovers<C>, Deferred<C::Scalar>), SynthesisError> {
+    ) -> Result<(bool, Leftovers<C>, Deferred<C::Scalar>, Vec<u8>), SynthesisError> {
         struct InputMap {
             inputs: Vec<usize>,
         }
@@ -858,7 +858,7 @@ impl<C: Curve> Proof<C> {
         let qy_opening = self.sx_cur_opening + &(ky_opening * &z);
 
         let mut transcript = transcript;
-        let (inner_product_satisfied, challenges_sq_new, g_new) = self.inner_product.verify_proof(
+        let (inner_product_satisfied, challenges_sq_new, g_new, forkvalues) = self.inner_product.verify_proof(
             &mut transcript,
             &[
                 PolynomialOpening {
@@ -933,7 +933,7 @@ impl<C: Curve> Proof<C> {
             b_y_new: compute_b(y_new, &challenges_new, &challenges_new_inv),
         };
 
-        Ok((inner_product_satisfied, metadata, deferred))
+        Ok((inner_product_satisfied, metadata, deferred, forkvalues))
     }
 }
 
@@ -1011,7 +1011,7 @@ fn my_test_circuit() {
         .unwrap());
 
     // partially verify proof (without doing any linear time procedures)
-    let (valid_proof, verifier_new_leftovers, deferred) = proof
+    let (valid_proof, verifier_new_leftovers, deferred, _) = proof
         .verify::<_, Basic>(
             &dummy_leftovers,
             &params,
@@ -1035,7 +1035,7 @@ fn my_test_circuit() {
         .verify::<_, Basic>(&params, &verifier_circuit)
         .unwrap());
 
-    let (valid_proof, verifier_new_leftovers, deferred) = proof
+    let (valid_proof, verifier_new_leftovers, deferred, _) = proof
         .verify::<_, Basic>(
             &verifier_new_leftovers,
             &params,
@@ -1224,7 +1224,7 @@ impl<C: Curve> MultiPolynomialOpening<C> {
         transcript: &mut Rescue<C::Base>,
         instances: &[PolynomialOpening<C>],
         k: usize,
-    ) -> (bool, Vec<C::Scalar>, C) {
+    ) -> (bool, Vec<C::Scalar>, C, Vec<u8>) {
         // TODO: verify lengths of stuff before we proceed
 
         let mut p = vec![];
@@ -1238,6 +1238,7 @@ impl<C: Curve> MultiPolynomialOpening<C> {
         let mut challenges = vec![];
         let mut challenges_inv = vec![];
         let mut challenges_sq = vec![];
+        let mut forkvalues = vec![];
         assert_eq!(self.rounds.len(), k);
 
         for round in &self.rounds {
@@ -1248,6 +1249,7 @@ impl<C: Curve> MultiPolynomialOpening<C> {
                 append_scalar::<C>(transcript, &round.r[j]);
             }
             let mut forkvalue = C::Base::zero();
+            let mut forkvalue_u8 = 0;
             let (challenge, challenge_sq) = loop {
                 let mut transcript = transcript.clone();
                 transcript.absorb(forkvalue);
@@ -1258,9 +1260,11 @@ impl<C: Curve> MultiPolynomialOpening<C> {
                     },
                     None => {
                         forkvalue = forkvalue + &C::Base::one();
+                        forkvalue_u8 += 1;
                     }
                 }
             };
+            forkvalues.push(forkvalue_u8);
             transcript.absorb(forkvalue);
             assert_eq!(get_challenge::<_, C::Scalar>(transcript), challenge_sq);
             let challenge_inv = challenge.invert().unwrap();
@@ -1282,15 +1286,15 @@ impl<C: Curve> MultiPolynomialOpening<C> {
             let b = compute_b(instances[j].point, &challenges, &challenges_inv);
 
             if p[j] != (self.g * self.a[j]) {
-                return (false, challenges_sq, self.g);
+                return (false, challenges_sq, self.g, forkvalues);
             }
 
             if v[j] != (self.a[j] * &b) {
-                return (false, challenges_sq, self.g);
+                return (false, challenges_sq, self.g, forkvalues);
             }
         }
 
-        return (true, challenges_sq, self.g);
+        return (true, challenges_sq, self.g, forkvalues);
     }
 
     pub fn new_proof<'a>(
