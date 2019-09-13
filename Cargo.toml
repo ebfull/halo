@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = [
     "Sean Bowe <ewillbefull@gmail.com>",
     "Jack Grigg <jack@z.cash>",
+    "Daira Hopwood <daira@jacaranda.org>",
 ]
 edition = "2018"
 license = "MIT/Apache-2.0"
