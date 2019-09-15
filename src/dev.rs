@@ -308,7 +308,8 @@ where
 {
     let (newdeferred, new_leftovers, old_leftovers, forkvalues) = match old_proof {
         Some(old_proof) => {
-            let (_, newdeferred, l1, l2, forkvalues) = old_proof.verify_inner(e2params, e1params, circuit)?;
+            let (_, newdeferred, l1, l2, forkvalues) =
+                old_proof.verify_inner(e2params, e1params, circuit)?;
 
             (newdeferred, l1, l2, forkvalues)
         }
@@ -316,7 +317,7 @@ where
             Deferred::dummy(e2params.k),
             Leftovers::dummy(e2params),
             Leftovers::dummy(e1params),
-            vec![0; e2params.k]
+            vec![0; e2params.k],
         ),
     };
 

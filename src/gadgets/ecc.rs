@@ -1564,6 +1564,60 @@ impl<C: Curve> CurvePoint<C> {
         Ok(ret)
     }
 
+    pub fn multiply_endo<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: CS,
+        other: &[AllocatedBit],
+    ) -> Result<Self, SynthesisError> {
+        // TODO
+        let p = self.get_point();
+        
+        Self::witness(cs, || {
+            let p = p.ok_or(SynthesisError::AssignmentMissing)?;
+            let p = p.unwrap_or(C::zero());
+
+            let mut cur = C::Scalar::zero();
+            for b in other.iter().rev() {
+                cur = cur + &cur;
+                if let Some(b) = b.get_value() {
+                    if b {
+                        cur = cur + &C::Scalar::one();
+                    }
+                }
+            }
+
+            Ok(p * &crate::util::get_challenge_scalar(cur))
+        })
+    }
+
+    pub fn multiply_inv_endo<CS: ConstraintSystem<C::Base>>(
+        &self,
+        cs: CS,
+        other: &[AllocatedBit],
+    ) -> Result<Self, SynthesisError> {
+        // TODO
+        let p = self.get_point();
+        
+        Self::witness(cs, || {
+            let p = p.ok_or(SynthesisError::AssignmentMissing)?;
+            let p = p.unwrap_or(C::zero());
+
+            let mut cur = C::Scalar::zero();
+            for b in other.iter().rev() {
+                cur = cur + &cur;
+                if let Some(b) = b.get_value() {
+                    if b {
+                        cur = cur + &C::Scalar::one();
+                    }
+                }
+            }
+            let cur: C::Scalar = crate::util::get_challenge_scalar(cur);
+            let cur: C::Scalar = cur.invert().unwrap_or(C::Scalar::zero());
+
+            Ok(p * &cur)
+        })
+    }
+
     /// Multiply by a little-endian scalar.
     ///
     /// Requires that the top bit of other is set.

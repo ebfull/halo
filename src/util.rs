@@ -348,6 +348,30 @@ fn test_fft() {
     assert_eq!(valid_product, naive_product);
 }
 
+pub fn get_challenge_scalar<F1: Field, F2: Field>(challenge: F1) -> F2 {
+    let challenge = challenge.get_lower_128();
+
+    let mut acc = F2::one();
+
+    for i in 0..64 {
+        let should_negate = (challenge >> (i * 2)) & 1 == 1;
+        let should_endo = (challenge >> (i * 2 + 1)) & 1 == 1;
+
+        acc = acc + &acc;
+        if should_negate {
+            acc = acc - &F2::one();
+        } else {
+            acc = acc + &F2::one();
+        }
+
+        if should_endo {
+            acc = acc * &F2::BETA;
+        }
+    }
+
+    acc
+}
+
 pub fn compute_b<F: Field>(x: F, challenges: &[F], challenges_inv: &[F]) -> F {
     assert!(!challenges.is_empty());
     assert_eq!(challenges.len(), challenges_inv.len());

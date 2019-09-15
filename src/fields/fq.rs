@@ -411,6 +411,12 @@ impl Field for Fq {
         0x4ab442efc8114a13,
         0x24f282841580762a,
     ];
+    const BETA: Self = Fq::from_raw([
+        0xc0fffc3880000002,
+        0x230cec8b8a02aa85,
+        0x28cbb3fac2af2389,
+        0x5c5e464a35c12769,
+    ]);
 
     fn is_zero(&self) -> Choice {
         self.ct_eq(&Self::zero())

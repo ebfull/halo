@@ -45,8 +45,8 @@ impl Curve for Ec0 {
     type Scalar = Fp;
     type Base = Fq;
 
-    const BETA_SCALAR: Self::Scalar = Fp::from_raw([0x33fffcfa00000002, 0xc37d383464024905, 0x96d4c09e11330dde, 0x5c5e464a35c12768]);
-    const BETA_BASE: Self::Base = Fq::from_raw([0xc0fffc3880000002, 0x230cec8b8a02aa85, 0x28cbb3fac2af2389, 0x5c5e464a35c12769]);
+    const BETA_SCALAR: Self::Scalar = Fp::BETA;
+    const BETA_BASE: Self::Base = Fq::BETA;
 
     fn b() -> Self::Base {
         B

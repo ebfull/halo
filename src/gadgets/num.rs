@@ -279,10 +279,7 @@ impl<F: Field> AllocatedNum<F> {
     {
         let mut newval = None;
         let newnum = AllocatedNum::alloc(cs.namespace(|| "sqrt"), || {
-            let sqrt = self
-                .value
-                .ok_or(SynthesisError::AssignmentMissing)?
-                .sqrt();
+            let sqrt = self.value.ok_or(SynthesisError::AssignmentMissing)?.sqrt();
             if bool::from(sqrt.is_some()) {
                 let tmp = sqrt.unwrap();
                 newval = Some(tmp);

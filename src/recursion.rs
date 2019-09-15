@@ -37,7 +37,7 @@ where
                 Deferred::dummy(e2params.k),
                 Leftovers::dummy(e2params),
                 Leftovers::dummy(e1params),
-                vec![0; e2params.k]
+                vec![0; e2params.k],
             ),
         };
 
@@ -78,7 +78,16 @@ where
         e1params: &Params<E1>,
         e2params: &Params<E2>,
         circuit: &CS,
-    ) -> Result<(bool, Deferred<E1::Scalar>, Leftovers<E1>, Leftovers<E2>, Vec<u8>), SynthesisError> {
+    ) -> Result<
+        (
+            bool,
+            Deferred<E1::Scalar>,
+            Leftovers<E1>,
+            Leftovers<E2>,
+            Vec<u8>,
+        ),
+        SynthesisError,
+    > {
         let circuit1 = VerificationCircuit::<E1, E2, _> {
             _marker: PhantomData,
             params: e2params,
@@ -145,7 +154,13 @@ where
 
         let worked = worked & self.oldproof2.verify::<_, Basic>(e2params, &circuit2)?;
 
-        Ok((worked, deferred, leftovers, self.oldproof2.clone(), forkvalues))
+        Ok((
+            worked,
+            deferred,
+            leftovers,
+            self.oldproof2.clone(),
+            forkvalues,
+        ))
     }
 
     pub fn verify<CS: RecursiveCircuit<E1::Scalar> + RecursiveCircuit<E2::Scalar>>(
@@ -212,27 +227,6 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         mut deferred: &[AllocatedBit],
     ) -> Result<(), SynthesisError> {
         // Unpack all of the deferred data
-        /*
-        x: F,
-        y_old: F,
-        y_cur: F,
-        y_new: F,
-        ky_opening: F,
-        tx_positive_opening: F,
-        tx_negative_opening: F,
-        sx_cur_opening: F,
-        rx_opening: F,
-        rxy_opening: F,
-        challenges_old: Vec<F>,
-        gx_old_opening: F,
-        challenges_new: Vec<F>,
-        b_x: F,
-        b_xy: F,
-        b_y_old: F,
-        b_y_cur: F,
-        b_y_new: F,
-        */
-
         let x = self.obtain_scalar_from_bits(cs.namespace(|| "pack x"), &deferred[0..128])?;
         deferred = &deferred[128..];
         let y_old =
@@ -268,7 +262,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         deferred = &deferred[256..];
         let mut challenges_sq_old = vec![];
         for i in 0..self.params.k {
-            challenges_sq_old.push(self.obtain_scalar_from_bits(
+            challenges_sq_old.push(self.get_challenge_scalar(
                 cs.namespace(|| format!("pack old challenge {}", i)),
                 &deferred[0..128],
             )?);
@@ -279,7 +273,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         deferred = &deferred[256..];
         let mut challenges_sq_new = vec![];
         for i in 0..self.params.k {
-            challenges_sq_new.push(self.obtain_scalar_from_bits(
+            challenges_sq_new.push(self.get_challenge_scalar(
                 cs.namespace(|| format!("pack new challenge {}", i)),
                 &deferred[0..128],
             )?);
@@ -1013,14 +1007,19 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         // 7 * 256 + (4 + 2k) * 128
         let b = &[
-            &new_deferred[256 * 7 + (4 + 2 * self.params.k) * 128..256 * 7 + (4 + 2 * self.params.k) * 128 + 256],
-            &new_deferred[256 * 8 + (4 + 2 * self.params.k) * 128..256 * 8 + (4 + 2 * self.params.k) * 128 + 256],
-            &new_deferred[256 * 9 + (4 + 2 * self.params.k) * 128..256 * 9 + (4 + 2 * self.params.k) * 128 + 256],
-            &new_deferred[256 * 10 + (4 + 2 * self.params.k) * 128..256 * 10 + (4 + 2 * self.params.k) * 128 + 256],
-            &new_deferred[256 * 11 + (4 + 2 * self.params.k) * 128..256 * 11 + (4 + 2 * self.params.k) * 128 + 256],
+            &new_deferred[256 * 7 + (4 + 2 * self.params.k) * 128
+                ..256 * 7 + (4 + 2 * self.params.k) * 128 + 256],
+            &new_deferred[256 * 8 + (4 + 2 * self.params.k) * 128
+                ..256 * 8 + (4 + 2 * self.params.k) * 128 + 256],
+            &new_deferred[256 * 9 + (4 + 2 * self.params.k) * 128
+                ..256 * 9 + (4 + 2 * self.params.k) * 128 + 256],
+            &new_deferred[256 * 10 + (4 + 2 * self.params.k) * 128
+                ..256 * 10 + (4 + 2 * self.params.k) * 128 + 256],
+            &new_deferred[256 * 11 + (4 + 2 * self.params.k) * 128
+                ..256 * 11 + (4 + 2 * self.params.k) * 128 + 256],
         ];
 
-        let (g_new, challenges_sq_new) = self.verify_inner_product(
+        let (g_new, challenges_sq_packed_new) = self.verify_inner_product(
             cs.namespace(|| "inner product"),
             &base_case,
             transcript,
@@ -1089,11 +1088,11 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             )?;
         }
 
-        for (i, challenge_sq) in challenges_sq_new.into_iter().enumerate() {
+        for (i, challenge_sq_packed) in challenges_sq_packed_new.into_iter().enumerate() {
             self.equal_unless_base_case(
                 cs.namespace(|| format!("challenge {} in new_leftovers", i)),
                 base_case.clone(),
-                &challenge_sq,
+                &challenge_sq_packed,
                 &new_leftovers[256 * 4 + 128 + 128 * i..256 * 4 + 128 + 128 * i + 128],
             )?;
 
@@ -1101,7 +1100,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             self.equal_unless_base_case(
                 cs.namespace(|| format!("challenge {} in new_deferred", i)),
                 base_case.clone(),
-                &challenge_sq,
+                &challenge_sq_packed,
                 &new_deferred[(4 * 128 + 6 * 256 + self.params.k * 128 + 256) + i * 128
                     ..(4 * 128 + 6 * 256 + self.params.k * 128 + 256) + i * 128 + 128],
             )?;
@@ -1150,7 +1149,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         b: &[&[AllocatedBit]],
     ) -> Result<(CurvePoint<E2>, Vec<Vec<AllocatedBit>>), SynthesisError> {
         assert_eq!(commitments.len(), openings.len());
-        let mut challenges_sq = vec![];
+        let mut challenges_sq_packed = vec![];
 
         let mut p = commitments.to_vec();
         let mut v = openings.to_vec();
@@ -1193,36 +1192,42 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 tmp.push((L, R, l, r));
             }
 
-            let forkvalue = AllocatedNum::alloc(cs.namespace(|| format!("fork for challenge {}", i)), || {
-                let val = self.forkvalues.ok_or(SynthesisError::AssignmentMissing)?[i];
+            let forkvalue =
+                AllocatedNum::alloc(cs.namespace(|| format!("fork for challenge {}", i)), || {
+                    let val = self.forkvalues.ok_or(SynthesisError::AssignmentMissing)?[i];
 
-                let fe = Field::from_u128(val as u128);
+                    let fe = Field::from_u128(val as u128);
 
-                Ok(fe)
-            })?;
+                    Ok(fe)
+                })?;
 
-            transcript.absorb(cs.namespace(|| format!("transcript absorb fork value {}", i)), Num::from(forkvalue))?;
+            transcript.absorb(
+                cs.namespace(|| format!("transcript absorb fork value {}", i)),
+                Num::from(forkvalue),
+            )?;
 
-            let challenge_sq = self.get_challenge(
+            let challenge_sq_packed = self.get_challenge(
                 cs.namespace(|| format!("round challenge {}", i)),
                 transcript,
             )?;
-            challenges_sq.push(challenge_sq.clone());
+            challenges_sq_packed.push(challenge_sq_packed.clone());
 
             for (j, tmp) in tmp.into_iter().enumerate() {
-                let L = tmp
-                    .0
-                    .multiply_fast(cs.namespace(|| format!("[challenge^2] L_{}", j)), &challenge_sq)?;
-                let R = tmp.1.multiply_inv_fast(
-                    cs.namespace(|| format!("[challenge^-2] R_{}", j)),
-                    &challenge_sq,
+                let L = tmp.0.multiply_endo(
+                    cs.namespace(|| format!("[challenge^2] L_{}", j)),
+                    &challenge_sq_packed,
                 )?;
-                let l = tmp
-                    .2
-                    .multiply_fast(cs.namespace(|| format!("[challenge^2] l_{}", j)), &challenge_sq)?;
-                let r = tmp.3.multiply_inv_fast(
+                let R = tmp.1.multiply_inv_endo(
+                    cs.namespace(|| format!("[challenge^-2] R_{}", j)),
+                    &challenge_sq_packed,
+                )?;
+                let l = tmp.2.multiply_endo(
+                    cs.namespace(|| format!("[challenge^2] l_{}", j)),
+                    &challenge_sq_packed,
+                )?;
+                let r = tmp.3.multiply_inv_endo(
                     cs.namespace(|| format!("[challenge^-2] r_{}", j)),
-                    &challenge_sq,
+                    &challenge_sq_packed,
                 )?;
 
                 p[j] = p[j].add(cs.namespace(|| format!("p_{} + L_{}", j, j)), &L)?;
@@ -1274,7 +1279,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             }
         }
 
-        Ok((g_new, challenges_sq))
+        Ok((g_new, challenges_sq_packed))
     }
 
     fn commit_point<CS: ConstraintSystem<E1::Scalar>>(
@@ -1290,6 +1295,29 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         Ok(())
     }
 
+    fn get_challenge_scalar<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        cs: CS,
+        bits: &[AllocatedBit]
+    ) -> Result<AllocatedNum<E1::Scalar>, SynthesisError>
+    {
+        assert_eq!(bits.len(), 128);
+        // TODO
+        AllocatedNum::alloc(cs, || {
+            let mut cur = E1::Scalar::zero();
+            for b in bits.iter().rev() {
+                cur = cur + &cur;
+                if let Some(b) = b.get_value() {
+                    if b {
+                        cur = cur + &E1::Scalar::one();
+                    }
+                }
+            }
+
+            Ok(crate::util::get_challenge_scalar(cur))
+        })
+    }
+
     fn get_challenge<CS: ConstraintSystem<E1::Scalar>>(
         &self,
         mut cs: CS,
@@ -1298,7 +1326,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         let num = transcript.squeeze(cs.namespace(|| "squeeze"))?;
         let mut bits = unpack_fe(cs.namespace(|| "unpack"), &num.into())?;
         bits.truncate(127);
-        bits.push(AllocatedBit::one(cs.namespace(|| "set top bit to 1")));
+        bits.push(AllocatedBit::one(cs));
 
         Ok(bits)
     }
