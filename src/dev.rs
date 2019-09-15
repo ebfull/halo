@@ -745,6 +745,7 @@ where
         proof: None,
         inner_circuit: circuit,
         new_payload,
+        forkvalues: None,
         old_leftovers: None,
         new_leftovers: None,
         deferred: None,

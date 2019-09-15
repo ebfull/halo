@@ -29,8 +29,7 @@ impl<C: Curve> Leftovers<C> {
                 ret.extend(C::Base::zero().to_bytes()[..].iter().cloned());
             }
         }
-        // TODO: This is 128-bit
-        ret.extend(self.y_new.to_bytes()[..].iter().cloned());
+        ret.extend(self.y_new.to_bytes()[..].iter().cloned().take(16));
         {
             let xy = self.g_new.get_xy();
 
@@ -44,7 +43,7 @@ impl<C: Curve> Leftovers<C> {
             }
         }
         for challenge in &self.challenges_sq_new {
-            ret.extend(challenge.to_bytes()[..].iter().cloned());
+            ret.extend(challenge.to_bytes()[..].iter().cloned().take(16));
         }
 
         ret
@@ -87,9 +86,8 @@ impl<C: Curve> Leftovers<C> {
     }
 }
 
-/*
-(16 + 2k) F
-*/
+// 4 * 128 + 6 * 256 + k * 128 + 256 + k * 128 + 5 * 256
+// = 12 * 256 + (4 + 2k) * 128
 #[derive(Clone)]
 pub struct Deferred<F: Field> {
     // comes from circuit
@@ -126,11 +124,10 @@ impl<F: Field> Deferred<F> {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut ret = vec![];
 
-        // TODO: they're 128-bit
-        ret.extend(self.x.to_bytes()[..].iter().cloned());
-        ret.extend(self.y_old.to_bytes()[..].iter().cloned());
-        ret.extend(self.y_cur.to_bytes()[..].iter().cloned());
-        ret.extend(self.y_new.to_bytes()[..].iter().cloned());
+        ret.extend(self.x.to_bytes()[..].iter().cloned().take(16));
+        ret.extend(self.y_old.to_bytes()[..].iter().cloned().take(16));
+        ret.extend(self.y_cur.to_bytes()[..].iter().cloned().take(16));
+        ret.extend(self.y_new.to_bytes()[..].iter().cloned().take(16));
 
         ret.extend(self.ky_opening.to_bytes()[..].iter().cloned());
         ret.extend(self.tx_positive_opening.to_bytes()[..].iter().cloned());
@@ -139,11 +136,11 @@ impl<F: Field> Deferred<F> {
         ret.extend(self.rx_opening.to_bytes()[..].iter().cloned());
         ret.extend(self.rxy_opening.to_bytes()[..].iter().cloned());
         for a in &self.challenges_sq_old {
-            ret.extend(a.to_bytes()[..].iter().cloned());
+            ret.extend(a.to_bytes()[..].iter().cloned().take(16));
         }
         ret.extend(self.gx_old_opening.to_bytes()[..].iter().cloned());
         for a in &self.challenges_sq_new {
-            ret.extend(a.to_bytes()[..].iter().cloned());
+            ret.extend(a.to_bytes()[..].iter().cloned().take(16));
         }
         ret.extend(self.b_x.to_bytes()[..].iter().cloned());
         ret.extend(self.b_xy.to_bytes()[..].iter().cloned());
