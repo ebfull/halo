@@ -163,9 +163,6 @@ impl<C: Curve> CurvePoint<C> {
             .y
             .value()
             .and_then(|y| condition.get_value().map(|b| if b { -y } else { y }));
-        let y_ret = AllocatedNum::alloc(cs.namespace(|| "y_ret"), || {
-            y_ret_val.ok_or(SynthesisError::AssignmentMissing)
-        })?;
 
         // y_self × (1 - 2.bit) = y_ret
         let (y_self_var, negator, y_ret_var) = cs.multiply(
@@ -189,7 +186,8 @@ impl<C: Curve> CurvePoint<C> {
                 - &condition.lc(CS::ONE, Coeff::Full(C::Base::from_u64(2)))
                 - negator,
         );
-        cs.enforce_zero(y_ret.lc() - y_ret_var);
+
+        let y_ret = AllocatedNum::from_raw_unchecked(y_ret_val, y_ret_var);
 
         Ok(CurvePoint {
             x: self.x,
