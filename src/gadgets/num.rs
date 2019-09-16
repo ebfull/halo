@@ -77,6 +77,16 @@ pub struct AllocatedNum<F: Field> {
 }
 
 impl<F: Field> AllocatedNum<F> {
+    pub fn one<CS>(cs: CS) -> AllocatedNum<F>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        AllocatedNum {
+            value: Some(F::one()),
+            var: CS::ONE,
+        }
+    }
+
     pub fn alloc<CS, FF>(mut cs: CS, value: FF) -> Result<Self, SynthesisError>
     where
         CS: ConstraintSystem<F>,
@@ -148,6 +158,10 @@ impl<F: Field> AllocatedNum<F> {
             value: product,
             var: o,
         })
+    }
+
+    pub fn from_raw_unchecked(value: Option<F>, var: Variable) -> Self {
+        AllocatedNum { value, var }
     }
 
     pub fn alloc_and_square<FF, CS>(mut cs: CS, value: FF) -> Result<(Self, Self), SynthesisError>
@@ -308,6 +322,19 @@ impl<F: Field> AllocatedNum<F> {
     }
 }
 
+use crate::gadgets::AllocatedBit;
+
+impl<F: Field> From<AllocatedBit> for AllocatedNum<F> {
+    fn from(bit: AllocatedBit) -> AllocatedNum<F> {
+        AllocatedNum {
+            var: bit.get_variable(),
+            value: bit
+                .get_value()
+                .map(|v| if v { F::one() } else { F::zero() }),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum Num<F: Field> {
     Constant(Coeff<F>),
@@ -347,6 +374,13 @@ impl<F: Field> From<(Coeff<F>, Num<F>)> for Num<F> {
 }
 
 impl<F: Field> Num<F> {
+    pub fn scale(self, val: F) -> Self {
+        match self {
+            Num::Constant(coeff) => Num::Constant(coeff * val),
+            Num::Allocated(coeff, var) => Num::Allocated(coeff * val, var),
+        }
+    }
+
     pub fn constant(val: F) -> Self {
         Num::Constant(Coeff::from(val))
     }
@@ -508,6 +542,13 @@ impl<F: Field> Add<(Coeff<F>, Num<F>)> for Combination<F> {
 }
 
 impl<F: Field> Combination<F> {
+    pub fn scale(self, by: F) -> Self {
+        let value = self.value.map(|v| v * by);
+        let terms = self.terms.into_iter().map(|t| t.scale(by)).collect();
+
+        Combination { value, terms }
+    }
+
     pub fn get_value(&self) -> Option<F> {
         self.value
     }

@@ -1571,7 +1571,7 @@ impl<C: Curve> CurvePoint<C> {
     ) -> Result<Self, SynthesisError> {
         // TODO
         let p = self.get_point();
-        
+
         Self::witness(cs, || {
             let p = p.ok_or(SynthesisError::AssignmentMissing)?;
             let p = p.unwrap_or(C::zero());
@@ -1597,7 +1597,7 @@ impl<C: Curve> CurvePoint<C> {
     ) -> Result<Self, SynthesisError> {
         // TODO
         let p = self.get_point();
-        
+
         Self::witness(cs, || {
             let p = p.ok_or(SynthesisError::AssignmentMissing)?;
             let p = p.unwrap_or(C::zero());

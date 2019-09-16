@@ -1297,25 +1297,68 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
     fn get_challenge_scalar<CS: ConstraintSystem<E1::Scalar>>(
         &self,
-        cs: CS,
-        bits: &[AllocatedBit]
-    ) -> Result<AllocatedNum<E1::Scalar>, SynthesisError>
-    {
+        mut cs: CS,
+        bits: &[AllocatedBit],
+    ) -> Result<AllocatedNum<E1::Scalar>, SynthesisError> {
         assert_eq!(bits.len(), 128);
-        // TODO
-        AllocatedNum::alloc(cs, || {
-            let mut cur = E1::Scalar::zero();
-            for b in bits.iter().rev() {
-                cur = cur + &cur;
-                if let Some(b) = b.get_value() {
-                    if b {
-                        cur = cur + &E1::Scalar::one();
-                    }
-                }
-            }
+        let mut acc = Combination::from(Num::constant(E1::Scalar::one()));
 
-            Ok(crate::util::get_challenge_scalar(cur))
-        })
+        for i in 0..64 {
+            let should_negate = &bits[i * 2];
+            let should_endo = &bits[i * 2 + 1];
+
+            // acc = acc + acc
+            acc = acc.scale(E1::Scalar::from_u128(2));
+            // tmp = 1 - 2b
+            // acc = acc + tmp
+            acc = acc + Combination::from(AllocatedNum::one(&mut cs));
+            acc = acc
+                + (Combination::from(AllocatedNum::from(should_negate.clone()))
+                    .scale(-E1::Scalar::from_u128(2)));
+            // acc = (1 - b') acc + b' acc * beta
+            //     = acc - b' * acc + b' * acc * beta
+            //     = (b' * beta - b') * (acc) + acc
+            let mut outval = None;
+            let (a, b, c) = cs.multiply(
+                || format!("should_endo round {}", i),
+                || {
+                    let acc = acc.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                    let should_endo = should_endo
+                        .get_value()
+                        .ok_or(SynthesisError::AssignmentMissing)?;
+                    let should_endo = if should_endo {
+                        E1::Scalar::one()
+                    } else {
+                        E1::Scalar::zero()
+                    };
+                    let beta = E1::Scalar::BETA;
+
+                    let lhs = should_endo * &beta - &should_endo;
+                    let rhs = acc;
+                    let out = lhs * &rhs;
+                    outval = Some(out);
+
+                    Ok((lhs, rhs, out))
+                },
+            )?;
+            cs.enforce_zero(
+                LinearCombination::from(a) + should_endo.get_variable()
+                    - (Coeff::Full(E1::Scalar::BETA), should_endo.get_variable()),
+            );
+            let acclc = acc.lc(&mut cs);
+            cs.enforce_zero(LinearCombination::from(b) - &acclc);
+
+            acc = acc + Combination::from(Num::from(AllocatedNum::from_raw_unchecked(outval, c)));
+        }
+
+        let newacc = AllocatedNum::alloc(cs.namespace(|| "final acc value"), || {
+            acc.get_value().ok_or(SynthesisError::AssignmentMissing)
+        })?;
+
+        let acclc = acc.lc(&mut cs);
+        cs.enforce_zero(LinearCombination::from(newacc.get_variable()) - &acclc);
+
+        Ok(newacc)
     }
 
     fn get_challenge<CS: ConstraintSystem<E1::Scalar>>(
