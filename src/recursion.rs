@@ -1575,7 +1575,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                     }
                 }
             } else {
-                let dummy_deferred = Deferred::<E2::Scalar>::dummy(self.params.k);
+                let dummy_deferred = Deferred::<E1::Scalar>::dummy(self.params.k);
                 let bytes = dummy_deferred.to_bytes();
                 for (_, byte) in bytes.into_iter().enumerate() {
                     for i in 0..8 {

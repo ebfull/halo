@@ -183,7 +183,6 @@ impl<F: Field> Deferred<F> {
             .collect();
         let mut challenges_inv = challenges.clone();
         F::batch_invert(&mut challenges_inv);
-        let gx_old_opening = compute_b(F::one(), &challenges, &challenges_inv);
         let b_one = compute_b(F::one(), &challenges, &challenges_inv);
 
         Deferred {
@@ -198,7 +197,7 @@ impl<F: Field> Deferred<F> {
             rx_opening: F::zero(),
             rxy_opening: F::zero(),
             challenges_sq_packed_old: challenges_sq_packed.clone(),
-            gx_old_opening,
+            gx_old_opening: b_one,
             challenges_sq_packed_new: challenges_sq_packed.clone(),
             b_x: b_one,
             b_xy: b_one,
