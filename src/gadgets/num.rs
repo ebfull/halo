@@ -542,6 +542,13 @@ impl<F: Field> Add<(Coeff<F>, Num<F>)> for Combination<F> {
 }
 
 impl<F: Field> Combination<F> {
+    pub fn zero() -> Self {
+        Combination {
+            value: Some(F::zero()),
+            terms: vec![]
+        }
+    }
+
     pub fn scale(self, by: F) -> Self {
         let value = self.value.map(|v| v * by);
         let terms = self.terms.into_iter().map(|t| t.scale(by)).collect();

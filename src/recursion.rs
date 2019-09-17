@@ -542,8 +542,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         &self,
         mut cs: CS,
         base_case: AllocatedBit,
-        lhs: &Num<E1::Scalar>,
-        rhs: &Num<E1::Scalar>,
+        lhs: &Combination<E1::Scalar>,
+        rhs: &Combination<E1::Scalar>,
     ) -> Result<(), SynthesisError> {
         let not_basecase = base_case.get_value().map(|v| (!v).into());
 
@@ -553,8 +553,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         let (a, b, c) = cs.multiply(
             || "num_equal_unless_base_case",
             || {
-                let lhs = lhs.value().ok_or(SynthesisError::AssignmentMissing)?;
-                let rhs = rhs.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
                 let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
 
                 Ok((lhs - &rhs, not_basecase, Field::zero()))
@@ -573,34 +573,61 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         &self,
         mut cs: CS,
         base_case: AllocatedBit,
-        lhs: &[AllocatedBit],
-        rhs: &[AllocatedBit],
+        mut lhs: &[AllocatedBit],
+        mut rhs: &[AllocatedBit],
     ) -> Result<(), SynthesisError> {
         assert_eq!(lhs.len(), rhs.len());
 
-        let not_basecase = base_case.get_value().map(|v| (!v).into());
+        let mut i = 0;
+        while lhs.len() > 0 {
+            i += 1;
+            let mut coeff = E1::Scalar::one();
+            let mut lhs_lc = Combination::zero();
+            let mut rhs_lc = Combination::zero();
 
-        for (lhs, rhs) in lhs.iter().zip(rhs.iter()) {
-            // lhs - rhs * (1 - base_case) = 0
-            // if base_case is true, then 1 - base_case will be zero
-            // if base_case is false, then lhs - rhs must be zero, and therefore they are equal
-            let (a, b, c) = cs.multiply(
-                || "equal_unless_base_case",
-                || {
-                    let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-                    let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-                    let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
+            let mut truncate_by = 0;
+            for (i, (lhs, rhs)) in lhs.iter().zip(rhs.iter()).take(250).enumerate() {
+                lhs_lc = lhs_lc + (Coeff::Full(coeff), Num::from(AllocatedNum::from(lhs.clone())));
+                rhs_lc = rhs_lc + (Coeff::Full(coeff), Num::from(AllocatedNum::from(rhs.clone())));
 
-                    let lhs: E1::Scalar = lhs.into();
-                    let rhs: E1::Scalar = rhs.into();
+                coeff = coeff + &coeff;
+                truncate_by = i + 1;
+            }
 
-                    Ok((lhs - &rhs, not_basecase, Field::zero()))
-                },
+            self.num_equal_unless_base_case(
+                cs.namespace(|| format!("check {}", i)),
+                base_case.clone(),
+                &lhs_lc,
+                &rhs_lc
             )?;
-            cs.enforce_zero(LinearCombination::from(a) - lhs.get_variable() + rhs.get_variable());
-            cs.enforce_zero(LinearCombination::from(b) - CS::ONE + base_case.get_variable());
-            cs.enforce_zero(LinearCombination::from(c))
+
+            lhs = &lhs[truncate_by..];
+            rhs = &rhs[truncate_by..];
         }
+
+        // let not_basecase = base_case.get_value().map(|v| (!v).into());
+
+        // for (lhs, rhs) in lhs.iter().zip(rhs.iter()) {
+        //     // lhs - rhs * (1 - base_case) = 0
+        //     // if base_case is true, then 1 - base_case will be zero
+        //     // if base_case is false, then lhs - rhs must be zero, and therefore they are equal
+        //     let (a, b, c) = cs.multiply(
+        //         || "equal_unless_base_case",
+        //         || {
+        //             let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+        //             let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+        //             let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
+
+        //             let lhs: E1::Scalar = lhs.into();
+        //             let rhs: E1::Scalar = rhs.into();
+
+        //             Ok((lhs - &rhs, not_basecase, Field::zero()))
+        //         },
+        //     )?;
+        //     cs.enforce_zero(LinearCombination::from(a) - lhs.get_variable() + rhs.get_variable());
+        //     cs.enforce_zero(LinearCombination::from(b) - CS::ONE + base_case.get_variable());
+        //     cs.enforce_zero(LinearCombination::from(c))
+        // }
 
         Ok(())
     }
@@ -1263,8 +1290,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 .get_xy();
             {
                 let mut cs = cs.namespace(|| format!("p_{} == [a_{}] g_new", j, j));
-                self.num_equal_unless_base_case(cs.namespace(|| "x"), base_case.clone(), &x1, &x2)?;
-                self.num_equal_unless_base_case(cs.namespace(|| "y"), base_case.clone(), &y1, &y2)?;
+                self.num_equal_unless_base_case(cs.namespace(|| "x"), base_case.clone(), &Combination::from(x1), &Combination::from(x2))?;
+                self.num_equal_unless_base_case(cs.namespace(|| "y"), base_case.clone(), &Combination::from(y1), &Combination::from(y2))?;
             }
 
             let (x1, y1) = v[j].get_xy();
@@ -1274,8 +1301,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 .get_xy();
             {
                 let mut cs = cs.namespace(|| format!("v_{} == [a_{} b_{}] g", j, j, j));
-                self.num_equal_unless_base_case(cs.namespace(|| "x"), base_case.clone(), &x1, &x2)?;
-                self.num_equal_unless_base_case(cs.namespace(|| "y"), base_case.clone(), &y1, &y2)?;
+                self.num_equal_unless_base_case(cs.namespace(|| "x"), base_case.clone(), &Combination::from(x1), &Combination::from(x2))?;
+                self.num_equal_unless_base_case(cs.namespace(|| "y"), base_case.clone(), &Combination::from(y1), &Combination::from(y2))?;
             }
         }
 
