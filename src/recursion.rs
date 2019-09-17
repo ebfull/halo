@@ -930,26 +930,26 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             let p_commitment = p_commitment * &z + leftovers.g_new;
             */
             let p_commitment = r_commitment.clone();
-            let p_commitment = p_commitment.multiply_fast(cs.namespace(|| "mul z 1"), &z)?;
+            let p_commitment = p_commitment.multiply_endo(cs.namespace(|| "mul z 1"), &z)?;
             let p_commitment =
                 p_commitment.add(cs.namespace(|| "add s_old_commitment"), &s_old_commitment)?;
-            let p_commitment = p_commitment.multiply_fast(cs.namespace(|| "mul z 2"), &z)?;
+            let p_commitment = p_commitment.multiply_endo(cs.namespace(|| "mul z 2"), &z)?;
             let p_commitment =
                 p_commitment.add(cs.namespace(|| "add s_cur_commitment"), &s_cur_commitment)?;
-            let p_commitment = p_commitment.multiply_fast(cs.namespace(|| "mul z 3"), &z)?;
+            let p_commitment = p_commitment.multiply_endo(cs.namespace(|| "mul z 3"), &z)?;
             let p_commitment = p_commitment.add(
                 cs.namespace(|| "add t_positive_commitment"),
                 &t_positive_commitment,
             )?;
-            let p_commitment = p_commitment.multiply_fast(cs.namespace(|| "mul z 4"), &z)?;
+            let p_commitment = p_commitment.multiply_endo(cs.namespace(|| "mul z 4"), &z)?;
             let p_commitment = p_commitment.add(
                 cs.namespace(|| "add t_negative_commitment"),
                 &t_negative_commitment,
             )?;
-            let p_commitment = p_commitment.multiply_fast(cs.namespace(|| "mul z 5"), &z)?;
+            let p_commitment = p_commitment.multiply_endo(cs.namespace(|| "mul z 5"), &z)?;
             let p_commitment =
                 p_commitment.add(cs.namespace(|| "add s_new_commitment"), &s_new_commitment)?;
-            let p_commitment = p_commitment.multiply_fast(cs.namespace(|| "mul z 6"), &z)?;
+            let p_commitment = p_commitment.multiply_endo(cs.namespace(|| "mul z 6"), &z)?;
             p_commitment.add(cs.namespace(|| "add g_old"), &g_old)?
         };
 
@@ -965,26 +965,26 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             let p_opening = p_opening * &z + &gx_old_opening;
             */
             let p_opening = rx_opening_pt;
-            let p_opening = p_opening.multiply_fast(cs.namespace(|| "mul z 1"), &z)?;
+            let p_opening = p_opening.multiply_endo(cs.namespace(|| "mul z 1"), &z)?;
             let p_opening =
                 p_opening.add(cs.namespace(|| "add sx_old_opening_pt"), &sx_old_opening_pt)?;
-            let p_opening = p_opening.multiply_fast(cs.namespace(|| "mul z 2"), &z)?;
+            let p_opening = p_opening.multiply_endo(cs.namespace(|| "mul z 2"), &z)?;
             let p_opening =
                 p_opening.add(cs.namespace(|| "add sx_cur_opening_pt"), &sx_cur_opening_pt)?;
-            let p_opening = p_opening.multiply_fast(cs.namespace(|| "mul z 3"), &z)?;
+            let p_opening = p_opening.multiply_endo(cs.namespace(|| "mul z 3"), &z)?;
             let p_opening = p_opening.add(
                 cs.namespace(|| "add tx_positive_opening_pt"),
                 &tx_positive_opening_pt,
             )?;
-            let p_opening = p_opening.multiply_fast(cs.namespace(|| "mul z 4"), &z)?;
+            let p_opening = p_opening.multiply_endo(cs.namespace(|| "mul z 4"), &z)?;
             let p_opening = p_opening.add(
                 cs.namespace(|| "add tx_negative_opening_pt"),
                 &tx_negative_opening_pt,
             )?;
-            let p_opening = p_opening.multiply_fast(cs.namespace(|| "mul z 5"), &z)?;
+            let p_opening = p_opening.multiply_endo(cs.namespace(|| "mul z 5"), &z)?;
             let p_opening =
                 p_opening.add(cs.namespace(|| "add sx_new_opening_pt"), &sx_new_opening_pt)?;
-            let p_opening = p_opening.multiply_fast(cs.namespace(|| "mul z 6"), &z)?;
+            let p_opening = p_opening.multiply_endo(cs.namespace(|| "mul z 6"), &z)?;
             p_opening.add(cs.namespace(|| "add gx_old_opening_pt"), &gx_old_opening_pt)?
         };
 
@@ -995,13 +995,13 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             let qy_opening = self.sx_cur_opening + &(ky_opening * &z);
             */
 
-            let q_commitment = k_commitment.multiply_fast(cs.namespace(|| "mul z 1"), &z)?;
+            let q_commitment = k_commitment.multiply_endo(cs.namespace(|| "mul z 1"), &z)?;
             q_commitment.add(cs.namespace(|| "add c_commitment"), &c_commitment)?
         };
 
         let qy_opening = {
             let mut cs = cs.namespace(|| "qy_opening");
-            let qy_opening = ky_opening_pt.multiply_fast(cs.namespace(|| "mul z 2"), &z)?;
+            let qy_opening = ky_opening_pt.multiply_endo(cs.namespace(|| "mul z 2"), &z)?;
             qy_opening.add(cs.namespace(|| "add sx_cur_opening_pt"), &sx_cur_opening_pt)?
         };
 

@@ -635,7 +635,8 @@ impl<C: Curve> Proof<C> {
 
         // Obtain the challenge z
 
-        let z = get_challenge::<_, C::Scalar>(&mut transcript);
+        let mut z = get_challenge::<_, C::Scalar>(&mut transcript);
+        z = get_challenge_scalar(z);
 
         // Compute P, the commitment to p(x), and p, the value it
         // must open to
@@ -884,7 +885,8 @@ impl<C: Curve> Proof<C> {
         let gx_old_opening = compute_b(x, &challenges_old, &challenges_old_inv);
         append_scalar::<C>(&mut transcript, &gx_old_opening);
 
-        let z = get_challenge::<_, C::Scalar>(&mut transcript);
+        let mut z = get_challenge::<_, C::Scalar>(&mut transcript);
+        z = get_challenge_scalar(z);
         //println!("VERIFIER: z in the verifier: {:?}", z);
 
         let p_commitment = self.r_commitment;
