@@ -2,7 +2,7 @@ use crate::rescue::Rescue;
 use crate::*;
 
 /// Packed challenge that happens to end up being valid on both curves
-const MAGIC: u64 = 7;
+const MAGIC: u64 = 12;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Leftovers<C: Curve> {

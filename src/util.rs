@@ -352,8 +352,10 @@ pub fn get_challenge_scalar<F1: Field, F2: Field>(challenge: F1) -> F2 {
     let challenge = challenge.get_lower_128();
 
     let mut acc = F2::one();
+    acc = acc + acc;
+    acc = acc + F2::one();
 
-    for i in 0..64 {
+    for i in 1..64 {
         let should_negate = (challenge >> (i * 2)) & 1 == 1;
         let should_endo = (challenge >> (i * 2 + 1)) & 1 == 1;
 

@@ -1301,9 +1301,9 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         bits: &[AllocatedBit],
     ) -> Result<AllocatedNum<E1::Scalar>, SynthesisError> {
         assert_eq!(bits.len(), 128);
-        let mut acc = Combination::from(Num::constant(E1::Scalar::one()));
+        let mut acc = Combination::from(Num::constant(E1::Scalar::one() + &E1::Scalar::one() + &E1::Scalar::one()));
 
-        for i in 0..64 {
+        for i in 1..64 {
             let should_negate = &bits[i * 2];
             let should_endo = &bits[i * 2 + 1];
 

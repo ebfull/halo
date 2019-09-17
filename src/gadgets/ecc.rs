@@ -1609,24 +1609,33 @@ impl<C: Curve> CurvePoint<C> {
         mut cs: CS,
         other: &[AllocatedBit],
     ) -> Result<Self, SynthesisError> {
+        // let p = self.get_point();
+
+        // return Self::witness(cs, || {
+        //     let p = p.ok_or(SynthesisError::AssignmentMissing)?;
+        //     let p = p.unwrap_or(C::zero());
+
+        //     let mut cur = C::Scalar::zero();
+        //     for b in other.iter().rev() {
+        //         cur = cur + &cur;
+        //         if let Some(b) = b.get_value() {
+        //             if b {
+        //                 cur = cur + &C::Scalar::one();
+        //             }
+        //         }
+        //     }
+
+        //     let tmp = crate::util::get_challenge_scalar(cur);
+
+        //     Ok(p * &tmp)
+        // });
+
         assert_eq!(other.len(), 128);
 
         let mut acc = self.double(cs.namespace(|| "[2] Acc"))?;
-        let base = self.conditional_neg(
-            cs.namespace(|| format!("conditional negation {}", 0)),
-            &Boolean::from(other[0].clone())
-        )?;
-        acc = acc.add_incomplete(cs.namespace(|| "[3] Acc"), &base)?;
-        acc = acc.conditional_endo(
-            cs.namespace(|| format!("conditional endo {}", 0)),
-            &Boolean::from(other[1].clone())
-        )?;
+        acc = acc.add_incomplete(cs.namespace(|| "[3] Acc"), self)?;
         
-        for i in 0..64 {
-            if i == 0 {
-                // We do this already.
-                continue;
-            }
+        for i in 1..64 {
             let should_negate = &other[i * 2];
             let should_endo = &other[i * 2 + 1];
 
@@ -1649,9 +1658,9 @@ impl<C: Curve> CurvePoint<C> {
             let x = x.value().ok_or(SynthesisError::AssignmentMissing)?;
             let is_identity = self.is_identity.get_value().ok_or(SynthesisError::AssignmentMissing)?;
             let is_identity = if is_identity {
-                Field::one()
-            } else {
                 Field::zero()
+            } else {
+                Field::one()
             };
 
             let rhs = x * &is_identity;
@@ -1661,16 +1670,16 @@ impl<C: Curve> CurvePoint<C> {
         })?;
         let xlc = x.lc(&mut cs);
         cs.enforce_zero(LinearCombination::from(a) - &xlc);
-        cs.enforce_zero(LinearCombination::from(b) - &self.is_identity.lc(CS::ONE, Coeff::One));
+        cs.enforce_zero(LinearCombination::from(b) - &self.is_identity.not().lc(CS::ONE, Coeff::One));
 
         let mut yfvalue = None;
         let (a, b, yf) = cs.multiply(|| "final y coordinate", || {
             let y = y.value().ok_or(SynthesisError::AssignmentMissing)?;
             let is_identity = self.is_identity.get_value().ok_or(SynthesisError::AssignmentMissing)?;
             let is_identity = if is_identity {
-                Field::one()
-            } else {
                 Field::zero()
+            } else {
+                Field::one()
             };
 
             let rhs = y * &is_identity;
@@ -1680,7 +1689,7 @@ impl<C: Curve> CurvePoint<C> {
         })?;
         let ylc = y.lc(&mut cs);
         cs.enforce_zero(LinearCombination::from(a) - &ylc);
-        cs.enforce_zero(LinearCombination::from(b) - &self.is_identity.lc(CS::ONE, Coeff::One));
+        cs.enforce_zero(LinearCombination::from(b) - &self.is_identity.not().lc(CS::ONE, Coeff::One));
 
         Ok(CurvePoint {
             x: AllocatedNum::from_raw_unchecked(xfvalue, xf).into(),

@@ -607,7 +607,7 @@ fn main() {
             CycleStep::A(old_proof) => {
                 println!("creating proof {}", height);
                 let start = Instant::now();
-                //assert!(halo::dev::recursive_is_satisfied::<_, _, _, halo::Basic>(&params1, &params0, old_proof.as_ref(), &circuit, &input).unwrap());
+                //assert_eq!(halo::dev::recursive_is_satisfied::<_, _, _, halo::Basic>(&params1, &params0, old_proof.as_ref(), &circuit, &input), Ok(true));
                 let proof = RecursiveProof::<Ec1, Ec0>::create_proof(
                     &params1,
                     &params0,
@@ -628,7 +628,7 @@ fn main() {
             CycleStep::B(old_proof) => {
                 println!("creating proof {}", height);
                 let start = Instant::now();
-                //assert!(halo::dev::recursive_is_satisfied::<_, _, _, halo::Basic>(&params0, &params1, old_proof.as_ref(), &circuit, &input).unwrap());
+                //assert_eq!(halo::dev::recursive_is_satisfied::<_, _, _, halo::Basic>(&params0, &params1, old_proof.as_ref(), &circuit, &input), Ok(true));
                 let proof = RecursiveProof::<Ec0, Ec1>::create_proof(
                     &params0,
                     &params1,
