@@ -178,7 +178,7 @@ impl<C: Curve> CurvePoint<C> {
                 Ok((x_self, endoer, x_ret))
             },
         )?;
-        let x_self_lc = self.y.lc(&mut cs);
+        let x_self_lc = self.x.lc(&mut cs);
         cs.enforce_zero(x_self_lc - x_self_var);
         cs.enforce_zero(
             LinearCombination::from(endoer)
@@ -1611,9 +1611,22 @@ impl<C: Curve> CurvePoint<C> {
     ) -> Result<Self, SynthesisError> {
         assert_eq!(other.len(), 128);
 
-        let mut acc = self.clone();
+        let mut acc = self.double(cs.namespace(|| "[2] Acc"))?;
+        let base = self.conditional_neg(
+            cs.namespace(|| format!("conditional negation {}", 0)),
+            &Boolean::from(other[0].clone())
+        )?;
+        acc = acc.add_incomplete(cs.namespace(|| "[3] Acc"), &base)?;
+        acc = acc.conditional_endo(
+            cs.namespace(|| format!("conditional endo {}", 0)),
+            &Boolean::from(other[1].clone())
+        )?;
         
         for i in 0..64 {
+            if i == 0 {
+                // We do this already.
+                continue;
+            }
             let should_negate = &other[i * 2];
             let should_endo = &other[i * 2 + 1];
 
@@ -1939,13 +1952,18 @@ impl<C: Curve> CurvePoint<C> {
         }
 
         let inverted_val = p.map(|p| {
-            let inv = p * mulby.invert().unwrap();
-            let coords = inv.get_xy();
-            if coords.is_some().into() {
-                let (x, y) = coords.unwrap();
-                (x, y, false)
-            } else {
+            let inv = mulby.invert();
+            if inv.is_none().into() {
                 (C::Base::zero(), C::Base::zero(), true)
+            } else {
+                let inv = p * &inv.unwrap();
+                let coords = inv.get_xy();
+                if coords.is_some().into() {
+                    let (x, y) = coords.unwrap();
+                    (x, y, false)
+                } else {
+                    (C::Base::zero(), C::Base::zero(), true)
+                }
             }
         });
 
@@ -2063,6 +2081,126 @@ mod test {
                 let y2_lc = y2.lc(&mut cs);
                 cs.enforce_zero(x2_lc - (Coeff::Zero, CS::ONE));
                 cs.enforce_zero(y2_lc - (Coeff::Zero, CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn conditional_endo_identity() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                mut cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let p = CurvePoint::<Ec1>::identity();
+
+                let ppos =
+                    p.conditional_endo(cs.namespace(|| "no endo"), &Boolean::constant(false))?;
+                let (ppos_x, ppos_y) = ppos.get_xy();
+                let ppos_x_lc = ppos_x.lc(&mut cs);
+                let ppos_y_lc = ppos_y.lc(&mut cs);
+                cs.enforce_zero(ppos_x_lc);
+                cs.enforce_zero(ppos_y_lc);
+
+                let ppos =
+                    p.conditional_endo(cs.namespace(|| "yes endo"), &Boolean::constant(true))?;
+                let (ppos_x, ppos_y) = ppos.get_xy();
+                let ppos_x_lc = ppos_x.lc(&mut cs);
+                let ppos_y_lc = ppos_y.lc(&mut cs);
+                cs.enforce_zero(ppos_x_lc);
+                cs.enforce_zero(ppos_y_lc);
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn conditional_endo() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                mut cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let two = Ec1::one().double();
+                let endo = two * &Fq::BETA;
+
+                let (two_x, two_y) = two.get_xy().unwrap();
+                let (endo_x, endo_y) = endo.get_xy().unwrap();
+
+                let p = CurvePoint::<Ec1>::constant(two_x, two_y);
+
+                let ppos =
+                    p.conditional_endo(cs.namespace(|| "no endo"), &Boolean::constant(false))?;
+                let (ppos_x, ppos_y) = ppos.get_xy();
+                let ppos_x_lc = ppos_x.lc(&mut cs);
+                let ppos_y_lc = ppos_y.lc(&mut cs);
+                cs.enforce_zero(ppos_x_lc - (Coeff::Full(two_x), CS::ONE));
+                cs.enforce_zero(ppos_y_lc - (Coeff::Full(two_y), CS::ONE));
+
+                let pneg =
+                    p.conditional_endo(cs.namespace(|| "endo"), &Boolean::constant(true))?;
+                let (pneg_x, pneg_y) = pneg.get_xy();
+                let pneg_x_lc = pneg_x.lc(&mut cs);
+                let pneg_y_lc = pneg_y.lc(&mut cs);
+                cs.enforce_zero(pneg_x_lc - (Coeff::Full(endo_x), CS::ONE));
+                cs.enforce_zero(pneg_y_lc - (Coeff::Full(endo_y), CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn conditional_negation_identity() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                mut cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let p = CurvePoint::<Ec1>::identity();
+
+                let ppos =
+                    p.conditional_neg(cs.namespace(|| "no negation"), &Boolean::constant(false))?;
+                let (ppos_x, ppos_y) = ppos.get_xy();
+                let ppos_x_lc = ppos_x.lc(&mut cs);
+                let ppos_y_lc = ppos_y.lc(&mut cs);
+                cs.enforce_zero(ppos_x_lc);
+                cs.enforce_zero(ppos_y_lc);
+
+                let ppos =
+                    p.conditional_neg(cs.namespace(|| "yes negation"), &Boolean::constant(true))?;
+                let (ppos_x, ppos_y) = ppos.get_xy();
+                let ppos_x_lc = ppos_x.lc(&mut cs);
+                let ppos_y_lc = ppos_y.lc(&mut cs);
+                cs.enforce_zero(ppos_x_lc);
+                cs.enforce_zero(ppos_y_lc);
 
                 Ok(())
             }
@@ -2732,6 +2870,42 @@ mod test {
                 let pinv5_y_lc = pinv5_y.lc(&mut cs);
                 cs.enforce_zero(pinv5_x_lc - (Coeff::Full(invfive_x), CS::ONE));
                 cs.enforce_zero(pinv5_y_lc - (Coeff::Full(invfive_y), CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn multiply_endo() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                mut cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let p = CurvePoint::<Ec1>::witness(&mut cs, || Ok(Ec1::one()))?;
+
+                let mut scalar5 = vec![
+                    AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(true))?; 128
+                ];
+                scalar5[1] = AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(false))?;
+                scalar5[2] = AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(false))?;
+                scalar5[3] = AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(false))?;
+
+                let pinv5 = p.multiply_endo(cs.namespace(|| "[5^-1] 0"), &scalar5)?;
+                let (pinv5_x, pinv5_y) = pinv5.get_xy();
+                let pinv5_x_lc = pinv5_x.lc(&mut cs);
+                let pinv5_y_lc = pinv5_y.lc(&mut cs);
+                cs.enforce_zero(pinv5_x_lc);
+                cs.enforce_zero(pinv5_y_lc);
 
                 Ok(())
             }
