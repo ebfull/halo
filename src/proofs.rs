@@ -1,6 +1,9 @@
 use crate::rescue::Rescue;
 use crate::*;
 
+/// Packed challenge that happens to end up being valid on both curves
+const MAGIC: u64 = 12;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Leftovers<C: Curve> {
     // comes from circuit
@@ -10,7 +13,7 @@ pub struct Leftovers<C: Curve> {
     // comes from circuit
     pub g_new: C,
     // comes from circuit
-    pub challenges_new: Vec<C::Scalar>,
+    pub challenges_sq_packed_new: Vec<C::Scalar>,
 }
 
 impl<C: Curve> Leftovers<C> {
@@ -29,8 +32,7 @@ impl<C: Curve> Leftovers<C> {
                 ret.extend(C::Base::zero().to_bytes()[..].iter().cloned());
             }
         }
-        // TODO: This is 128-bit
-        ret.extend(self.y_new.to_bytes()[..].iter().cloned());
+        ret.extend(self.y_new.to_bytes()[..].iter().cloned().take(16));
         {
             let xy = self.g_new.get_xy();
 
@@ -43,8 +45,8 @@ impl<C: Curve> Leftovers<C> {
                 ret.extend(C::Base::zero().to_bytes()[..].iter().cloned());
             }
         }
-        for challenge in &self.challenges_new {
-            ret.extend(challenge.to_bytes()[..].iter().cloned());
+        for challenge in &self.challenges_sq_packed_new {
+            ret.extend(challenge.to_bytes()[..].iter().cloned().take(16));
         }
 
         ret
@@ -55,15 +57,25 @@ impl<C: Curve> Leftovers<C> {
     pub fn dummy(params: &Params<C>) -> Leftovers<C> {
         let y_new = C::Scalar::zero();
         let s_new_commitment = C::zero();
-        let challenges_new = vec![C::Scalar::one(); params.k];
-        let g_new =
-            compute_g_for_inner_product(&params.generators, &challenges_new, C::Scalar::one());
+        let challenges_sq_packed_new = vec![C::Scalar::from_u64(MAGIC); params.k];
+        let challenges_sq_new: Vec<C::Scalar> = challenges_sq_packed_new
+            .iter()
+            .map(|v| get_challenge_scalar(*v))
+            .collect();
+        let challenges_new: Vec<C::Scalar> = challenges_sq_new
+            .iter()
+            .map(|v| v.sqrt().unwrap())
+            .collect(); // TODO: DUMMY IN OTHER FUNCTION
+        let mut challenges_inv_new = challenges_new;
+        let allinv = Field::batch_invert(&mut challenges_inv_new);
+
+        let g_new = compute_g_for_inner_product(&params.generators, &challenges_sq_new, allinv);
 
         Leftovers {
             s_new_commitment,
             y_new,
             g_new,
-            challenges_new,
+            challenges_sq_packed_new,
         }
     }
 
@@ -75,23 +87,27 @@ impl<C: Curve> Leftovers<C> {
     ) -> Result<bool, SynthesisError> {
         let sx = params.compute_sx::<_, S>(circuit, self.y_new)?;
         let s_new_commitment = params.commit(&sx, false);
-        let mut challenges_sq = self.challenges_new.clone();
-        assert_eq!(challenges_sq.len(), params.k);
+        assert_eq!(self.challenges_sq_packed_new.len(), params.k);
+
+        let challenges_sq_new: Vec<C::Scalar> = self
+            .challenges_sq_packed_new
+            .iter()
+            .map(|v| get_challenge_scalar(*v))
+            .collect();
+
         let mut allinv = C::Scalar::one();
-        for c in &mut challenges_sq {
-            allinv = allinv * &(*c);
-            *c = c.square();
+        for c in &challenges_sq_new {
+            allinv = allinv * &(c.sqrt().unwrap()); // TODO
         }
         allinv = allinv.invert().unwrap();
-        let g_new = compute_g_for_inner_product(&params.generators, &challenges_sq, allinv);
+        let g_new = compute_g_for_inner_product(&params.generators, &challenges_sq_new, allinv);
 
         Ok((g_new == self.g_new) && (s_new_commitment == self.s_new_commitment))
     }
 }
 
-/*
-(16 + 2k) F
-*/
+// 4 * 128 + 6 * 256 + k * 128 + 256 + k * 128 + 5 * 256
+// = 12 * 256 + (4 + 2k) * 128
 #[derive(Clone)]
 pub struct Deferred<F: Field> {
     // comes from circuit
@@ -111,11 +127,11 @@ pub struct Deferred<F: Field> {
     pub rxy_opening: F,
 
     // enforces to equal old leftovers
-    pub challenges_old: Vec<F>,
+    pub challenges_sq_packed_old: Vec<F>,
     // fed to circuit
     pub gx_old_opening: F,
     // comes from circuit
-    pub challenges_new: Vec<F>,
+    pub challenges_sq_packed_new: Vec<F>,
     // fed to circuit
     pub b_x: F,
     pub b_xy: F,
@@ -128,11 +144,10 @@ impl<F: Field> Deferred<F> {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut ret = vec![];
 
-        // TODO: they're 128-bit
-        ret.extend(self.x.to_bytes()[..].iter().cloned());
-        ret.extend(self.y_old.to_bytes()[..].iter().cloned());
-        ret.extend(self.y_cur.to_bytes()[..].iter().cloned());
-        ret.extend(self.y_new.to_bytes()[..].iter().cloned());
+        ret.extend(self.x.to_bytes()[..].iter().cloned().take(16));
+        ret.extend(self.y_old.to_bytes()[..].iter().cloned().take(16));
+        ret.extend(self.y_cur.to_bytes()[..].iter().cloned().take(16));
+        ret.extend(self.y_new.to_bytes()[..].iter().cloned().take(16));
 
         ret.extend(self.ky_opening.to_bytes()[..].iter().cloned());
         ret.extend(self.tx_positive_opening.to_bytes()[..].iter().cloned());
@@ -140,12 +155,12 @@ impl<F: Field> Deferred<F> {
         ret.extend(self.sx_cur_opening.to_bytes()[..].iter().cloned());
         ret.extend(self.rx_opening.to_bytes()[..].iter().cloned());
         ret.extend(self.rxy_opening.to_bytes()[..].iter().cloned());
-        for a in &self.challenges_old {
-            ret.extend(a.to_bytes()[..].iter().cloned());
+        for a in &self.challenges_sq_packed_old {
+            ret.extend(a.to_bytes()[..].iter().cloned().take(16));
         }
         ret.extend(self.gx_old_opening.to_bytes()[..].iter().cloned());
-        for a in &self.challenges_new {
-            ret.extend(a.to_bytes()[..].iter().cloned());
+        for a in &self.challenges_sq_packed_new {
+            ret.extend(a.to_bytes()[..].iter().cloned().take(16));
         }
         ret.extend(self.b_x.to_bytes()[..].iter().cloned());
         ret.extend(self.b_xy.to_bytes()[..].iter().cloned());
@@ -157,9 +172,18 @@ impl<F: Field> Deferred<F> {
     }
 
     pub fn dummy(k: usize) -> Self {
-        let challenges = vec![F::one(); k];
-        let gx_old_opening = compute_b(F::one(), &challenges, &challenges);
-        let b_one = compute_b(F::one(), &challenges, &challenges);
+        let challenges_sq_packed = vec![F::from_u64(MAGIC); k];
+        let challenges_sq_new: Vec<F> = challenges_sq_packed
+            .iter()
+            .map(|v| get_challenge_scalar(*v))
+            .collect();
+        let challenges: Vec<F> = challenges_sq_new
+            .iter()
+            .map(|v| v.sqrt().unwrap())
+            .collect();
+        let mut challenges_inv = challenges.clone();
+        F::batch_invert(&mut challenges_inv);
+        let b_one = compute_b(F::one(), &challenges, &challenges_inv);
 
         Deferred {
             x: F::one(),
@@ -172,9 +196,9 @@ impl<F: Field> Deferred<F> {
             sx_cur_opening: F::zero(),
             rx_opening: F::zero(),
             rxy_opening: F::zero(),
-            challenges_old: challenges.clone(),
-            gx_old_opening,
-            challenges_new: challenges.clone(),
+            challenges_sq_packed_old: challenges_sq_packed.clone(),
+            gx_old_opening: b_one,
+            challenges_sq_packed_new: challenges_sq_packed.clone(),
             b_x: b_one,
             b_xy: b_one,
             b_y_old: b_one,
@@ -243,20 +267,40 @@ impl<F: Field> Deferred<F> {
         let (lhs, rhs) = self.compute(k);
 
         let correct_gx_old_opening = {
-            let mut challenges_inv = self.challenges_old.clone();
+            let challenges_sq_old: Vec<F> = self
+                .challenges_sq_packed_old
+                .iter()
+                .map(|v| get_challenge_scalar(*v))
+                .collect();
 
+            let mut challenges = challenges_sq_old.clone();
+            for a in &mut challenges {
+                *a = a.sqrt().unwrap(); // TODO
+            }
+
+            let mut challenges_inv = challenges.clone();
             F::batch_invert(&mut challenges_inv);
-            compute_b(self.x, &self.challenges_old, &challenges_inv)
+            compute_b(self.x, &challenges, &challenges_inv)
         };
 
         // TODO: prover could have put a zero here
-        let mut challenges_inv = self.challenges_new.clone();
+        let challenges_sq_new: Vec<F> = self
+            .challenges_sq_packed_new
+            .iter()
+            .map(|v| get_challenge_scalar(*v))
+            .collect();
+
+        let mut challenges = challenges_sq_new.clone();
+        for a in &mut challenges {
+            *a = a.sqrt().unwrap(); // TODO
+        }
+        let mut challenges_inv = challenges.clone();
         F::batch_invert(&mut challenges_inv);
-        let b_x = compute_b(self.x, &self.challenges_new, &challenges_inv);
-        let b_xy = compute_b(self.x * self.y_cur, &self.challenges_new, &challenges_inv);
-        let b_y_old = compute_b(self.y_old, &self.challenges_new, &challenges_inv);
-        let b_y_cur = compute_b(self.y_cur, &self.challenges_new, &challenges_inv);
-        let b_y_new = compute_b(self.y_new, &self.challenges_new, &challenges_inv);
+        let b_x = compute_b(self.x, &challenges, &challenges_inv);
+        let b_xy = compute_b(self.x * self.y_cur, &challenges, &challenges_inv);
+        let b_y_old = compute_b(self.y_old, &challenges, &challenges_inv);
+        let b_y_cur = compute_b(self.y_cur, &challenges, &challenges_inv);
+        let b_y_new = compute_b(self.y_new, &challenges, &challenges_inv);
 
         lhs == rhs
             && correct_gx_old_opening == self.gx_old_opening
@@ -426,20 +470,19 @@ impl<C: Curve> Proof<C> {
         let s_old_commitment = old_leftovers.s_new_commitment;
 
         // Compute the coefficients for G_old
-        let challenges_old_sq: Vec<C::Scalar> = old_leftovers
-            .challenges_new
+        let challenges_sq_old: Vec<C::Scalar> = old_leftovers
+            .challenges_sq_packed_new
             .iter()
-            .map(|a| a.square())
+            .map(|v| get_challenge_scalar(*v))
             .collect();
-        let mut challenges_old_inv = old_leftovers.challenges_new.clone();
-        for c in &mut challenges_old_inv {
-            *c = c.invert().unwrap();
-        }
-        let mut allinv_old = C::Scalar::one();
-        for c in &old_leftovers.challenges_new {
-            allinv_old *= &c.invert().unwrap();
-        }
-        let gx_old = compute_g_coeffs_for_inner_product(&challenges_old_sq, allinv_old);
+
+        let challenges_old: Vec<C::Scalar> = challenges_sq_old
+            .iter()
+            .map(|a| a.sqrt().unwrap())
+            .collect();
+        let mut challenges_old_inv = challenges_old.clone();
+        let allinv_old = Field::batch_invert(&mut challenges_old_inv);
+        let gx_old = compute_g_coeffs_for_inner_product(&challenges_sq_old, allinv_old);
 
         // Get G_old
         let g_old_commitment = old_leftovers.g_new;
@@ -586,13 +629,14 @@ impl<C: Curve> Proof<C> {
         let gx_old_opening = params.compute_opening(&gx_old, x, false);
         assert_eq!(
             gx_old_opening,
-            compute_b(x, &old_leftovers.challenges_new, &challenges_old_inv)
+            compute_b(x, &challenges_old, &challenges_old_inv)
         );
         append_scalar::<C>(&mut transcript, &gx_old_opening);
 
         // Obtain the challenge z
 
-        let z = get_challenge::<_, C::Scalar>(&mut transcript);
+        let mut z = get_challenge::<_, C::Scalar>(&mut transcript);
+        z = get_challenge_scalar(z);
 
         // Compute P, the commitment to p(x), and p, the value it
         // must open to
@@ -654,7 +698,7 @@ impl<C: Curve> Proof<C> {
         }
 
         let mut transcript = transcript;
-        let (inner_product, challenges_new, g_new) = MultiPolynomialOpening::new_proof(
+        let (inner_product, challenges_sq_packed_new, g_new) = MultiPolynomialOpening::new_proof(
             &mut transcript,
             &[
                 (
@@ -711,7 +755,7 @@ impl<C: Curve> Proof<C> {
             s_new_commitment,
             y_new,
             g_new,
-            challenges_new,
+            challenges_sq_packed_new,
         };
 
         Ok((
@@ -744,7 +788,7 @@ impl<C: Curve> Proof<C> {
         circuit: &CS,
         inputs: &[C::Scalar],
         k_commitment: Option<C>,
-    ) -> Result<(bool, Leftovers<C>, Deferred<C::Scalar>), SynthesisError> {
+    ) -> Result<(bool, Leftovers<C>, Deferred<C::Scalar>, Vec<u8>), SynthesisError> {
         struct InputMap {
             inputs: Vec<usize>,
         }
@@ -825,14 +869,24 @@ impl<C: Curve> Proof<C> {
         append_scalar::<C>(&mut transcript, &self.tx_negative_opening);
         append_scalar::<C>(&mut transcript, &self.sx_new_opening);
 
-        let mut challenges_old_inv = leftovers.challenges_new.clone();
-        for c in &mut challenges_old_inv {
-            *c = c.invert().unwrap()
+        let challenges_sq_old: Vec<C::Scalar> = leftovers
+            .challenges_sq_packed_new
+            .iter()
+            .map(|v| get_challenge_scalar(*v))
+            .collect();
+
+        let mut challenges_old = challenges_sq_old.clone();
+        for c in &mut challenges_old {
+            *c = c.sqrt().unwrap(); // TODO
         }
-        let gx_old_opening = compute_b(x, &leftovers.challenges_new, &challenges_old_inv);
+
+        let mut challenges_old_inv = challenges_old.clone();
+        Field::batch_invert(&mut challenges_old_inv);
+        let gx_old_opening = compute_b(x, &challenges_old, &challenges_old_inv);
         append_scalar::<C>(&mut transcript, &gx_old_opening);
 
-        let z = get_challenge::<_, C::Scalar>(&mut transcript);
+        let mut z = get_challenge::<_, C::Scalar>(&mut transcript);
+        z = get_challenge_scalar(z);
         //println!("VERIFIER: z in the verifier: {:?}", z);
 
         let p_commitment = self.r_commitment;
@@ -855,49 +909,60 @@ impl<C: Curve> Proof<C> {
         let qy_opening = self.sx_cur_opening + &(ky_opening * &z);
 
         let mut transcript = transcript;
-        let (inner_product_satisfied, challenges_new, g_new) = self.inner_product.verify_proof(
-            &mut transcript,
-            &[
-                PolynomialOpening {
-                    commitment: p_commitment,
-                    opening: p_opening,
-                    point: x,
-                    right_edge: false,
-                },
-                PolynomialOpening {
-                    commitment: self.r_commitment,
-                    opening: self.rxy_opening,
-                    point: x * &y_cur,
-                    right_edge: true,
-                },
-                PolynomialOpening {
-                    commitment: self.c_commitment,
-                    opening: self.sx_old_opening,
-                    point: leftovers.y_new,
-                    right_edge: false,
-                },
-                PolynomialOpening {
-                    commitment: q_commitment,
-                    opening: qy_opening,
-                    point: y_cur,
-                    right_edge: false,
-                },
-                PolynomialOpening {
-                    commitment: self.c_commitment,
-                    opening: self.sx_new_opening,
-                    point: y_new,
-                    right_edge: false,
-                },
-            ],
-            params.k,
-        );
+        let (inner_product_satisfied, challenges_sq_packed_new, g_new, forkvalues) =
+            self.inner_product.verify_proof(
+                &mut transcript,
+                &[
+                    PolynomialOpening {
+                        commitment: p_commitment,
+                        opening: p_opening,
+                        point: x,
+                        right_edge: false,
+                    },
+                    PolynomialOpening {
+                        commitment: self.r_commitment,
+                        opening: self.rxy_opening,
+                        point: x * &y_cur,
+                        right_edge: true,
+                    },
+                    PolynomialOpening {
+                        commitment: self.c_commitment,
+                        opening: self.sx_old_opening,
+                        point: leftovers.y_new,
+                        right_edge: false,
+                    },
+                    PolynomialOpening {
+                        commitment: q_commitment,
+                        opening: qy_opening,
+                        point: y_cur,
+                        right_edge: false,
+                    },
+                    PolynomialOpening {
+                        commitment: self.c_commitment,
+                        opening: self.sx_new_opening,
+                        point: y_new,
+                        right_edge: false,
+                    },
+                ],
+                params.k,
+            );
 
         let metadata = Leftovers {
             s_new_commitment: self.s_new_commitment,
             y_new,
             g_new,
-            challenges_new: challenges_new.clone(),
+            challenges_sq_packed_new: challenges_sq_packed_new.clone(),
         };
+
+        let mut challenges_sq_new = challenges_sq_packed_new.clone();
+        for c in &mut challenges_sq_new {
+            *c = get_challenge_scalar(*c);
+        }
+
+        let mut challenges_new = challenges_sq_new.clone();
+        for c in &mut challenges_new {
+            *c = c.sqrt().unwrap(); // TODO
+        }
 
         let mut challenges_new_inv = challenges_new.clone();
         C::Scalar::batch_invert(&mut challenges_new_inv);
@@ -915,9 +980,9 @@ impl<C: Curve> Proof<C> {
             sx_cur_opening: self.sx_cur_opening,
             rx_opening: self.rx_opening,
             rxy_opening: self.rxy_opening,
-            challenges_old: leftovers.challenges_new.clone(),
+            challenges_sq_packed_old: leftovers.challenges_sq_packed_new.clone(),
             gx_old_opening,
-            challenges_new: challenges_new.clone(),
+            challenges_sq_packed_new: challenges_sq_packed_new.clone(),
             b_x: compute_b(x, &challenges_new, &challenges_new_inv),
             b_xy: compute_b(x * &y_cur, &challenges_new, &challenges_new_inv),
             b_y_old: compute_b(leftovers.y_new, &challenges_new, &challenges_new_inv),
@@ -925,7 +990,7 @@ impl<C: Curve> Proof<C> {
             b_y_new: compute_b(y_new, &challenges_new, &challenges_new_inv),
         };
 
-        Ok((inner_product_satisfied, metadata, deferred))
+        Ok((inner_product_satisfied, metadata, deferred, forkvalues))
     }
 }
 
@@ -1003,7 +1068,7 @@ fn my_test_circuit() {
         .unwrap());
 
     // partially verify proof (without doing any linear time procedures)
-    let (valid_proof, verifier_new_leftovers, deferred) = proof
+    let (valid_proof, verifier_new_leftovers, deferred, _) = proof
         .verify::<_, Basic>(
             &dummy_leftovers,
             &params,
@@ -1027,7 +1092,7 @@ fn my_test_circuit() {
         .verify::<_, Basic>(&params, &verifier_circuit)
         .unwrap());
 
-    let (valid_proof, verifier_new_leftovers, deferred) = proof
+    let (valid_proof, verifier_new_leftovers, deferred, _) = proof
         .verify::<_, Basic>(
             &verifier_new_leftovers,
             &params,
@@ -1216,7 +1281,7 @@ impl<C: Curve> MultiPolynomialOpening<C> {
         transcript: &mut Rescue<C::Base>,
         instances: &[PolynomialOpening<C>],
         k: usize,
-    ) -> (bool, Vec<C::Scalar>, C) {
+    ) -> (bool, Vec<C::Scalar>, C, Vec<u8>) {
         // TODO: verify lengths of stuff before we proceed
 
         let mut p = vec![];
@@ -1229,8 +1294,8 @@ impl<C: Curve> MultiPolynomialOpening<C> {
 
         let mut challenges = vec![];
         let mut challenges_inv = vec![];
-        let mut challenges_sq = vec![];
-        let mut challenges_inv_sq = vec![];
+        let mut challenges_sq_packed = vec![];
+        let mut forkvalues = vec![];
         assert_eq!(self.rounds.len(), k);
 
         for round in &self.rounds {
@@ -1240,16 +1305,35 @@ impl<C: Curve> MultiPolynomialOpening<C> {
                 append_scalar::<C>(transcript, &round.l[j]);
                 append_scalar::<C>(transcript, &round.r[j]);
             }
-
-            let challenge = get_challenge::<_, C::Scalar>(transcript);
+            let mut forkvalue = C::Base::zero();
+            let mut forkvalue_u8 = 0;
+            let (challenge, challenge_sq, challenge_sq_packed) = loop {
+                let mut transcript = transcript.clone();
+                transcript.absorb(forkvalue);
+                let challenge_sq_packed = get_challenge::<_, C::Scalar>(&mut transcript);
+                let challenge_sq: C::Scalar = get_challenge_scalar(challenge_sq_packed);
+                match challenge_sq.sqrt().to_option() {
+                    Some(challenge) => {
+                        break (challenge, challenge_sq, challenge_sq_packed);
+                    }
+                    None => {
+                        forkvalue = forkvalue + &C::Base::one();
+                        forkvalue_u8 += 1;
+                    }
+                }
+            };
+            forkvalues.push(forkvalue_u8);
+            transcript.absorb(forkvalue);
+            assert_eq!(
+                get_challenge::<_, C::Scalar>(transcript),
+                challenge_sq_packed
+            );
             let challenge_inv = challenge.invert().unwrap();
-            let challenge_sq = challenge.square();
             let challenge_inv_sq = challenge_inv.square();
 
             challenges.push(challenge);
             challenges_inv.push(challenge_inv);
-            challenges_sq.push(challenge_sq);
-            challenges_inv_sq.push(challenge_inv_sq);
+            challenges_sq_packed.push(challenge_sq_packed);
 
             for j in 0..instances.len() {
                 p[j] = p[j] + (round.L[j] * challenge_sq);
@@ -1263,15 +1347,15 @@ impl<C: Curve> MultiPolynomialOpening<C> {
             let b = compute_b(instances[j].point, &challenges, &challenges_inv);
 
             if p[j] != (self.g * self.a[j]) {
-                return (false, challenges, self.g);
+                return (false, challenges_sq_packed, self.g, forkvalues);
             }
 
             if v[j] != (self.a[j] * &b) {
-                return (false, challenges, self.g);
+                return (false, challenges_sq_packed, self.g, forkvalues);
             }
         }
 
-        return (true, challenges, self.g);
+        return (true, challenges_sq_packed, self.g, forkvalues);
     }
 
     pub fn new_proof<'a>(
@@ -1304,7 +1388,7 @@ impl<C: Curve> MultiPolynomialOpening<C> {
             b.push(v);
         }
 
-        let mut challenges = vec![];
+        let mut challenges_sq_packed = vec![];
         {
             let mut k = k;
             #[allow(non_snake_case)]
@@ -1329,10 +1413,29 @@ impl<C: Curve> MultiPolynomialOpening<C> {
                     round_l.push(this_l);
                     round_r.push(this_r);
                 }
-                let challenge = get_challenge::<_, C::Scalar>(transcript);
+                let mut forkvalue = C::Base::zero();
+                let (challenge, challenge_sq, challenge_sq_packed) = loop {
+                    let mut transcript = transcript.clone();
+                    transcript.absorb(forkvalue);
+                    let challenge_sq_packed = get_challenge::<_, C::Scalar>(&mut transcript);
+                    let challenge_sq: C::Scalar = get_challenge_scalar(challenge_sq_packed);
+                    match challenge_sq.sqrt().to_option() {
+                        Some(challenge) => {
+                            break (challenge, challenge_sq, challenge_sq_packed);
+                        }
+                        None => {
+                            forkvalue = forkvalue + &C::Base::one();
+                        }
+                    }
+                };
+                transcript.absorb(forkvalue);
+                assert_eq!(
+                    get_challenge::<_, C::Scalar>(transcript),
+                    challenge_sq_packed
+                );
                 let challenge_inv = challenge.invert().unwrap();
 
-                challenges.push(challenge);
+                challenges_sq_packed.push(challenge_sq_packed);
 
                 for j in 0..instances.len() {
                     for i in 0..l {
@@ -1372,7 +1475,7 @@ impl<C: Curve> MultiPolynomialOpening<C> {
                 a: final_a,
                 g: generators[0],
             },
-            challenges,
+            challenges_sq_packed,
             generators[0],
         )
     }
@@ -1398,7 +1501,7 @@ fn get_challenge<F1: Field, F2: Field>(transcript: &mut Rescue<F1>) -> F2 {
     let challenge = transcript.squeeze();
     let challenge = challenge.get_lower_128();
 
-    let challenge = challenge | (1u128 << 127);
+    let challenge = challenge | (1 << 127);
 
     F2::from_u128(challenge)
 }

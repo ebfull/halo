@@ -592,8 +592,8 @@ fn main() {
 
     println!("Making parameters");
     let start = Instant::now();
-    let params0: Params<Ec0> = Params::new(23);
-    let params1: Params<Ec1> = Params::new(23);
+    let params0: Params<Ec0> = Params::new(22);
+    let params1: Params<Ec1> = Params::new(22);
     println!("done, took {:?}", start.elapsed());
 
     let circuit = BitcoinHeaderCircuit;
@@ -607,6 +607,7 @@ fn main() {
             CycleStep::A(old_proof) => {
                 println!("creating proof {}", height);
                 let start = Instant::now();
+                //assert_eq!(halo::dev::recursive_is_satisfied::<_, _, _, halo::Basic>(&params1, &params0, old_proof.as_ref(), &circuit, &input), Ok(true));
                 let proof = RecursiveProof::<Ec1, Ec0>::create_proof(
                     &params1,
                     &params0,
@@ -627,6 +628,7 @@ fn main() {
             CycleStep::B(old_proof) => {
                 println!("creating proof {}", height);
                 let start = Instant::now();
+                //assert_eq!(halo::dev::recursive_is_satisfied::<_, _, _, halo::Basic>(&params0, &params1, old_proof.as_ref(), &circuit, &input), Ok(true));
                 let proof = RecursiveProof::<Ec0, Ec1>::create_proof(
                     &params0,
                     &params1,

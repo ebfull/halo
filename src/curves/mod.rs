@@ -33,6 +33,9 @@ pub trait Curve:
     type Scalar: Field;
     type Base: Field;
 
+    const BETA_SCALAR: Self::Scalar;
+    const BETA_BASE: Self::Base;
+
     fn zero() -> Self;
     fn one() -> Self;
 

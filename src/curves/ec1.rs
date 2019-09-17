@@ -45,6 +45,9 @@ impl Curve for Ec1 {
     type Scalar = Fq;
     type Base = Fp;
 
+    const BETA_SCALAR: Self::Scalar = Fq::BETA;
+    const BETA_BASE: Self::Base = Fp::BETA;
+
     fn b() -> Self::Base {
         B
     }
@@ -363,4 +366,12 @@ fn test_curve() {
     assert!(g * a != g * b);
 
     assert_eq!(g + Ec1::zero(), g - Ec1::zero());
+}
+
+#[test]
+fn test_endo() {
+    let g = Ec1::one();
+    let (x, y) = g.get_xy().unwrap();
+    let x = x * Ec1::BETA_BASE;
+    assert_eq!(g * Ec1::BETA_SCALAR, Ec1::from_xy_unchecked(x, y));
 }

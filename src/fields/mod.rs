@@ -48,6 +48,9 @@ pub trait Field:
     /// RESCUE_INVALPHA * RESCUE_ALPHA = 1 mod (p - 1)
     const RESCUE_INVALPHA: [u64; 4];
 
+    /// Element of multiplicative order 3.
+    const BETA: Self;
+
     fn is_zero(&self) -> Choice;
 
     fn from_u64(v: u64) -> Self;

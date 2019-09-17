@@ -26,17 +26,18 @@ where
         circuit: &CS,
         new_payload: &[u8],
     ) -> Result<Self, SynthesisError> {
-        let (newdeferred, new_leftovers, old_leftovers) = match old_proof {
+        let (newdeferred, new_leftovers, old_leftovers, forkvalues) = match old_proof {
             Some(old_proof) => {
-                let (_, newdeferred, l1, l2) =
+                let (_, newdeferred, l1, l2, forkvalues) =
                     old_proof.verify_inner(e2params, e1params, circuit)?;
 
-                (newdeferred, l1, l2)
+                (newdeferred, l1, l2, forkvalues)
             }
             None => (
                 Deferred::dummy(e2params.k),
                 Leftovers::dummy(e2params),
                 Leftovers::dummy(e1params),
+                vec![0; e2params.k],
             ),
         };
 
@@ -47,6 +48,7 @@ where
             proof: None,
             inner_circuit: circuit,
             new_payload,
+            forkvalues: Some(&forkvalues[..]),
             old_leftovers: Some(old_leftovers.clone()),
             new_leftovers: Some(new_leftovers.clone()),
             deferred: Some(newdeferred.clone()),
@@ -76,7 +78,16 @@ where
         e1params: &Params<E1>,
         e2params: &Params<E2>,
         circuit: &CS,
-    ) -> Result<(bool, Deferred<E1::Scalar>, Leftovers<E1>, Leftovers<E2>), SynthesisError> {
+    ) -> Result<
+        (
+            bool,
+            Deferred<E1::Scalar>,
+            Leftovers<E1>,
+            Leftovers<E2>,
+            Vec<u8>,
+        ),
+        SynthesisError,
+    > {
         let circuit1 = VerificationCircuit::<E1, E2, _> {
             _marker: PhantomData,
             params: e2params,
@@ -84,6 +95,7 @@ where
             proof: None,
             inner_circuit: circuit,
             new_payload: &self.payload,
+            forkvalues: None,
             old_leftovers: None,
             new_leftovers: None,
             deferred: None,
@@ -96,6 +108,7 @@ where
             proof: None,
             inner_circuit: circuit,
             new_payload: &self.payload,
+            forkvalues: None,
             old_leftovers: None,
             new_leftovers: None,
             deferred: None,
@@ -131,7 +144,7 @@ where
             }
         }
 
-        let (worked, leftovers, deferred) = self.proof.verify::<_, Basic>(
+        let (worked, leftovers, deferred, forkvalues) = self.proof.verify::<_, Basic>(
             &self.oldproof1,
             e1params,
             &circuit1,
@@ -141,7 +154,13 @@ where
 
         let worked = worked & self.oldproof2.verify::<_, Basic>(e2params, &circuit2)?;
 
-        Ok((worked, deferred, leftovers, self.oldproof2.clone()))
+        Ok((
+            worked,
+            deferred,
+            leftovers,
+            self.oldproof2.clone(),
+            forkvalues,
+        ))
     }
 
     pub fn verify<CS: RecursiveCircuit<E1::Scalar> + RecursiveCircuit<E2::Scalar>>(
@@ -157,6 +176,7 @@ where
             proof: None,
             inner_circuit: circuit,
             new_payload: &self.payload,
+            forkvalues: None,
             old_leftovers: None,
             new_leftovers: None,
             deferred: None,
@@ -169,12 +189,13 @@ where
             proof: None,
             inner_circuit: circuit,
             new_payload: &self.payload,
+            forkvalues: None,
             old_leftovers: None,
             new_leftovers: None,
             deferred: None,
         };
 
-        let (worked, deferred, a, b) = self.verify_inner(e1params, e2params, circuit)?;
+        let (worked, deferred, a, b, _) = self.verify_inner(e1params, e2params, circuit)?;
 
         Ok(worked
             & self.deferred.verify(e2params.k)
@@ -191,6 +212,7 @@ pub(crate) struct VerificationCircuit<'a, C1: Curve, C2: Curve, CS: RecursiveCir
     pub(crate) inner_circuit: &'a CS,
     pub(crate) proof: Option<&'a RecursiveProof<C2, C1>>,
     pub(crate) new_payload: &'a [u8],
+    pub(crate) forkvalues: Option<&'a [u8]>,
     pub(crate) old_leftovers: Option<Leftovers<C1>>,
     pub(crate) new_leftovers: Option<Leftovers<C2>>,
     pub(crate) deferred: Option<Deferred<C2::Scalar>>,
@@ -205,38 +227,17 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         mut deferred: &[AllocatedBit],
     ) -> Result<(), SynthesisError> {
         // Unpack all of the deferred data
-        /*
-        x: F,
-        y_old: F,
-        y_cur: F,
-        y_new: F,
-        ky_opening: F,
-        tx_positive_opening: F,
-        tx_negative_opening: F,
-        sx_cur_opening: F,
-        rx_opening: F,
-        rxy_opening: F,
-        challenges_old: Vec<F>,
-        gx_old_opening: F,
-        challenges_new: Vec<F>,
-        b_x: F,
-        b_xy: F,
-        b_y_old: F,
-        b_y_cur: F,
-        b_y_new: F,
-        */
-
-        let x = self.obtain_scalar_from_bits(cs.namespace(|| "pack x"), &deferred[0..256])?;
-        deferred = &deferred[256..];
+        let x = self.obtain_scalar_from_bits(cs.namespace(|| "pack x"), &deferred[0..128])?;
+        deferred = &deferred[128..];
         let y_old =
-            self.obtain_scalar_from_bits(cs.namespace(|| "pack y_old"), &deferred[0..256])?;
-        deferred = &deferred[256..];
+            self.obtain_scalar_from_bits(cs.namespace(|| "pack y_old"), &deferred[0..128])?;
+        deferred = &deferred[128..];
         let y_cur =
-            self.obtain_scalar_from_bits(cs.namespace(|| "pack y_cur"), &deferred[0..256])?;
-        deferred = &deferred[256..];
+            self.obtain_scalar_from_bits(cs.namespace(|| "pack y_cur"), &deferred[0..128])?;
+        deferred = &deferred[128..];
         let y_new =
-            self.obtain_scalar_from_bits(cs.namespace(|| "pack y_new"), &deferred[0..256])?;
-        deferred = &deferred[256..];
+            self.obtain_scalar_from_bits(cs.namespace(|| "pack y_new"), &deferred[0..128])?;
+        deferred = &deferred[128..];
         let ky_opening =
             self.obtain_scalar_from_bits(cs.namespace(|| "pack ky_opening"), &deferred[0..256])?;
         deferred = &deferred[256..];
@@ -259,24 +260,24 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         let rxy_opening =
             self.obtain_scalar_from_bits(cs.namespace(|| "pack rxy_opening"), &deferred[0..256])?;
         deferred = &deferred[256..];
-        let mut challenges_old = vec![];
+        let mut challenges_sq_old = vec![];
         for i in 0..self.params.k {
-            challenges_old.push(self.obtain_scalar_from_bits(
+            challenges_sq_old.push(self.get_challenge_scalar(
                 cs.namespace(|| format!("pack old challenge {}", i)),
-                &deferred[0..256],
+                &deferred[0..128],
             )?);
-            deferred = &deferred[256..];
+            deferred = &deferred[128..];
         }
         let gx_old_opening = self
             .obtain_scalar_from_bits(cs.namespace(|| "pack gx_old_opening"), &deferred[0..256])?;
         deferred = &deferred[256..];
-        let mut challenges_new = vec![];
+        let mut challenges_sq_new = vec![];
         for i in 0..self.params.k {
-            challenges_new.push(self.obtain_scalar_from_bits(
+            challenges_sq_new.push(self.get_challenge_scalar(
                 cs.namespace(|| format!("pack new challenge {}", i)),
-                &deferred[0..256],
+                &deferred[0..128],
             )?);
-            deferred = &deferred[256..];
+            deferred = &deferred[128..];
         }
         let b_x = self.obtain_scalar_from_bits(cs.namespace(|| "pack b_x"), &deferred[0..256])?;
         deferred = &deferred[256..];
@@ -417,6 +418,10 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         // Check gx_old_opening
         {
+            let mut challenges_old = challenges_sq_old.clone();
+            for (i, c) in challenges_old.iter_mut().enumerate() {
+                *c = c.sqrt(cs.namespace(|| format!("sqrt old challenge_sq {}", i)))?;
+            }
             let mut challenges_old_inv = challenges_old.clone();
             for (i, c) in challenges_old_inv.iter_mut().enumerate() {
                 *c = c.invert(cs.namespace(|| format!("invert old challenge {}", i)))?;
@@ -433,6 +438,10 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         }
 
         // Check the other `b` entries
+        let mut challenges_new = challenges_sq_new.clone();
+        for (i, c) in challenges_new.iter_mut().enumerate() {
+            *c = c.sqrt(cs.namespace(|| format!("sqrt new challenge_sq {}", i)))?;
+        }
         let mut challenges_new_inv = challenges_new.clone();
         for (i, c) in challenges_new_inv.iter_mut().enumerate() {
             *c = c.invert(cs.namespace(|| format!("invert new challenge {}", i)))?;
@@ -533,8 +542,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         &self,
         mut cs: CS,
         base_case: AllocatedBit,
-        lhs: &Num<E1::Scalar>,
-        rhs: &Num<E1::Scalar>,
+        lhs: &Combination<E1::Scalar>,
+        rhs: &Combination<E1::Scalar>,
     ) -> Result<(), SynthesisError> {
         let not_basecase = base_case.get_value().map(|v| (!v).into());
 
@@ -544,8 +553,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         let (a, b, c) = cs.multiply(
             || "num_equal_unless_base_case",
             || {
-                let lhs = lhs.value().ok_or(SynthesisError::AssignmentMissing)?;
-                let rhs = rhs.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
                 let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
 
                 Ok((lhs - &rhs, not_basecase, Field::zero()))
@@ -564,34 +573,61 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         &self,
         mut cs: CS,
         base_case: AllocatedBit,
-        lhs: &[AllocatedBit],
-        rhs: &[AllocatedBit],
+        mut lhs: &[AllocatedBit],
+        mut rhs: &[AllocatedBit],
     ) -> Result<(), SynthesisError> {
         assert_eq!(lhs.len(), rhs.len());
 
-        let not_basecase = base_case.get_value().map(|v| (!v).into());
+        let mut i = 0;
+        while lhs.len() > 0 {
+            i += 1;
+            let mut coeff = E1::Scalar::one();
+            let mut lhs_lc = Combination::zero();
+            let mut rhs_lc = Combination::zero();
 
-        for (lhs, rhs) in lhs.iter().zip(rhs.iter()) {
-            // lhs - rhs * (1 - base_case) = 0
-            // if base_case is true, then 1 - base_case will be zero
-            // if base_case is false, then lhs - rhs must be zero, and therefore they are equal
-            let (a, b, c) = cs.multiply(
-                || "equal_unless_base_case",
-                || {
-                    let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-                    let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-                    let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
+            let mut truncate_by = 0;
+            for (i, (lhs, rhs)) in lhs.iter().zip(rhs.iter()).take(250).enumerate() {
+                lhs_lc = lhs_lc + (Coeff::Full(coeff), Num::from(AllocatedNum::from(lhs.clone())));
+                rhs_lc = rhs_lc + (Coeff::Full(coeff), Num::from(AllocatedNum::from(rhs.clone())));
 
-                    let lhs: E1::Scalar = lhs.into();
-                    let rhs: E1::Scalar = rhs.into();
+                coeff = coeff + &coeff;
+                truncate_by = i + 1;
+            }
 
-                    Ok((lhs - &rhs, not_basecase, Field::zero()))
-                },
+            self.num_equal_unless_base_case(
+                cs.namespace(|| format!("check {}", i)),
+                base_case.clone(),
+                &lhs_lc,
+                &rhs_lc
             )?;
-            cs.enforce_zero(LinearCombination::from(a) - lhs.get_variable() + rhs.get_variable());
-            cs.enforce_zero(LinearCombination::from(b) - CS::ONE + base_case.get_variable());
-            cs.enforce_zero(LinearCombination::from(c))
+
+            lhs = &lhs[truncate_by..];
+            rhs = &rhs[truncate_by..];
         }
+
+        // let not_basecase = base_case.get_value().map(|v| (!v).into());
+
+        // for (lhs, rhs) in lhs.iter().zip(rhs.iter()) {
+        //     // lhs - rhs * (1 - base_case) = 0
+        //     // if base_case is true, then 1 - base_case will be zero
+        //     // if base_case is false, then lhs - rhs must be zero, and therefore they are equal
+        //     let (a, b, c) = cs.multiply(
+        //         || "equal_unless_base_case",
+        //         || {
+        //             let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+        //             let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+        //             let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
+
+        //             let lhs: E1::Scalar = lhs.into();
+        //             let rhs: E1::Scalar = rhs.into();
+
+        //             Ok((lhs - &rhs, not_basecase, Field::zero()))
+        //         },
+        //     )?;
+        //     cs.enforce_zero(LinearCombination::from(a) - lhs.get_variable() + rhs.get_variable());
+        //     cs.enforce_zero(LinearCombination::from(b) - CS::ONE + base_case.get_variable());
+        //     cs.enforce_zero(LinearCombination::from(c))
+        // }
 
         Ok(())
     }
@@ -601,8 +637,6 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         mut cs: CS,
         bits: &[AllocatedBit],
     ) -> Result<AllocatedNum<E1::Scalar>, SynthesisError> {
-        assert_eq!(bits.len(), 256);
-
         let mut value = Some(E1::Scalar::zero());
         let mut cur = E1::Scalar::one();
         let mut lc = LinearCombination::zero();
@@ -763,7 +797,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         let ky_opening_pt = g.multiply(
             cs.namespace(|| "ky_opening_pt"),
-            &new_deferred[256 * 4..256 * 5],
+            &new_deferred[128 * 4..128 * 4 + 256],
         )?;
         self.commit_point(
             cs.namespace(|| "commit ky_opening_pt"),
@@ -773,7 +807,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         let rx_opening_pt = g.multiply(
             cs.namespace(|| "rx_opening_pt"),
-            &new_deferred[256 * 8..256 * 9],
+            &new_deferred[128 * 4 + 256 * 4..128 * 4 + 256 * 4 + 256],
         )?;
         self.commit_point(
             cs.namespace(|| "commit rx_opening_pt"),
@@ -783,7 +817,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         let rxy_opening_pt = g.multiply(
             cs.namespace(|| "rxy_opening_pt"),
-            &new_deferred[256 * 9..256 * 10],
+            &new_deferred[128 * 4 + 256 * 5..128 * 4 + 256 * 5 + 256],
         )?;
         self.commit_point(
             cs.namespace(|| "commit rxy_opening_pt"),
@@ -806,7 +840,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         let sx_cur_opening_pt = g.multiply(
             cs.namespace(|| "sx_cur_opening_pt"),
-            &new_deferred[256 * 7..256 * 8],
+            &new_deferred[128 * 4 + 256 * 3..128 * 4 + 256 * 3 + 256],
         )?;
         self.commit_point(
             cs.namespace(|| "commit sx_cur_opening_pt"),
@@ -816,7 +850,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         let tx_positive_opening_pt = g.multiply(
             cs.namespace(|| "tx_positive_opening_pt"),
-            &new_deferred[256 * 5..256 * 6],
+            &new_deferred[128 * 4 + 256 * 1..128 * 4 + 256 * 1 + 256],
         )?;
         self.commit_point(
             cs.namespace(|| "commit tx_positive_opening_pt"),
@@ -826,7 +860,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         let tx_negative_opening_pt = g.multiply(
             cs.namespace(|| "tx_negative_opening_pt"),
-            &new_deferred[256 * 6..256 * 7],
+            &new_deferred[128 * 4 + 256 * 2..128 * 4 + 256 * 2 + 256],
         )?;
         self.commit_point(
             cs.namespace(|| "commit tx_negative_opening_pt"),
@@ -849,7 +883,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
         let gx_old_opening_pt = g.multiply(
             cs.namespace(|| "gx_old_opening_pt"),
-            &new_deferred[256 * (10 + self.params.k)..256 * (11 + self.params.k)],
+            &new_deferred[256 * 6 + (4 + self.params.k) * 128..256 * 7 + (4 + self.params.k) * 128],
         )?;
         self.commit_point(
             cs.namespace(|| "commit gx_old_opening_pt"),
@@ -901,13 +935,13 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 cs.namespace(|| "x"),
                 base_case.clone(),
                 &x,
-                &old_leftovers[256 * 3..256 * 4],
+                &old_leftovers[256 * 2 + 128..256 * 3 + 128],
             )?;
             self.equal_unless_base_case(
                 cs.namespace(|| "y"),
                 base_case.clone(),
                 &y,
-                &old_leftovers[256 * 4..256 * 5],
+                &old_leftovers[256 * 3 + 128..256 * 4 + 128],
             )?;
         }
 
@@ -923,26 +957,26 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             let p_commitment = p_commitment * &z + leftovers.g_new;
             */
             let p_commitment = r_commitment.clone();
-            let p_commitment = p_commitment.multiply_fast(cs.namespace(|| "mul z 1"), &z)?;
+            let p_commitment = p_commitment.multiply_endo(cs.namespace(|| "mul z 1"), &z)?;
             let p_commitment =
                 p_commitment.add(cs.namespace(|| "add s_old_commitment"), &s_old_commitment)?;
-            let p_commitment = p_commitment.multiply_fast(cs.namespace(|| "mul z 2"), &z)?;
+            let p_commitment = p_commitment.multiply_endo(cs.namespace(|| "mul z 2"), &z)?;
             let p_commitment =
                 p_commitment.add(cs.namespace(|| "add s_cur_commitment"), &s_cur_commitment)?;
-            let p_commitment = p_commitment.multiply_fast(cs.namespace(|| "mul z 3"), &z)?;
+            let p_commitment = p_commitment.multiply_endo(cs.namespace(|| "mul z 3"), &z)?;
             let p_commitment = p_commitment.add(
                 cs.namespace(|| "add t_positive_commitment"),
                 &t_positive_commitment,
             )?;
-            let p_commitment = p_commitment.multiply_fast(cs.namespace(|| "mul z 4"), &z)?;
+            let p_commitment = p_commitment.multiply_endo(cs.namespace(|| "mul z 4"), &z)?;
             let p_commitment = p_commitment.add(
                 cs.namespace(|| "add t_negative_commitment"),
                 &t_negative_commitment,
             )?;
-            let p_commitment = p_commitment.multiply_fast(cs.namespace(|| "mul z 5"), &z)?;
+            let p_commitment = p_commitment.multiply_endo(cs.namespace(|| "mul z 5"), &z)?;
             let p_commitment =
                 p_commitment.add(cs.namespace(|| "add s_new_commitment"), &s_new_commitment)?;
-            let p_commitment = p_commitment.multiply_fast(cs.namespace(|| "mul z 6"), &z)?;
+            let p_commitment = p_commitment.multiply_endo(cs.namespace(|| "mul z 6"), &z)?;
             p_commitment.add(cs.namespace(|| "add g_old"), &g_old)?
         };
 
@@ -958,26 +992,26 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             let p_opening = p_opening * &z + &gx_old_opening;
             */
             let p_opening = rx_opening_pt;
-            let p_opening = p_opening.multiply_fast(cs.namespace(|| "mul z 1"), &z)?;
+            let p_opening = p_opening.multiply_endo(cs.namespace(|| "mul z 1"), &z)?;
             let p_opening =
                 p_opening.add(cs.namespace(|| "add sx_old_opening_pt"), &sx_old_opening_pt)?;
-            let p_opening = p_opening.multiply_fast(cs.namespace(|| "mul z 2"), &z)?;
+            let p_opening = p_opening.multiply_endo(cs.namespace(|| "mul z 2"), &z)?;
             let p_opening =
                 p_opening.add(cs.namespace(|| "add sx_cur_opening_pt"), &sx_cur_opening_pt)?;
-            let p_opening = p_opening.multiply_fast(cs.namespace(|| "mul z 3"), &z)?;
+            let p_opening = p_opening.multiply_endo(cs.namespace(|| "mul z 3"), &z)?;
             let p_opening = p_opening.add(
                 cs.namespace(|| "add tx_positive_opening_pt"),
                 &tx_positive_opening_pt,
             )?;
-            let p_opening = p_opening.multiply_fast(cs.namespace(|| "mul z 4"), &z)?;
+            let p_opening = p_opening.multiply_endo(cs.namespace(|| "mul z 4"), &z)?;
             let p_opening = p_opening.add(
                 cs.namespace(|| "add tx_negative_opening_pt"),
                 &tx_negative_opening_pt,
             )?;
-            let p_opening = p_opening.multiply_fast(cs.namespace(|| "mul z 5"), &z)?;
+            let p_opening = p_opening.multiply_endo(cs.namespace(|| "mul z 5"), &z)?;
             let p_opening =
                 p_opening.add(cs.namespace(|| "add sx_new_opening_pt"), &sx_new_opening_pt)?;
-            let p_opening = p_opening.multiply_fast(cs.namespace(|| "mul z 6"), &z)?;
+            let p_opening = p_opening.multiply_endo(cs.namespace(|| "mul z 6"), &z)?;
             p_opening.add(cs.namespace(|| "add gx_old_opening_pt"), &gx_old_opening_pt)?
         };
 
@@ -988,25 +1022,31 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
             let qy_opening = self.sx_cur_opening + &(ky_opening * &z);
             */
 
-            let q_commitment = k_commitment.multiply_fast(cs.namespace(|| "mul z 1"), &z)?;
+            let q_commitment = k_commitment.multiply_endo(cs.namespace(|| "mul z 1"), &z)?;
             q_commitment.add(cs.namespace(|| "add c_commitment"), &c_commitment)?
         };
 
         let qy_opening = {
             let mut cs = cs.namespace(|| "qy_opening");
-            let qy_opening = ky_opening_pt.multiply_fast(cs.namespace(|| "mul z 2"), &z)?;
+            let qy_opening = ky_opening_pt.multiply_endo(cs.namespace(|| "mul z 2"), &z)?;
             qy_opening.add(cs.namespace(|| "add sx_cur_opening_pt"), &sx_cur_opening_pt)?
         };
 
+        // 7 * 256 + (4 + 2k) * 128
         let b = &[
-            &new_deferred[256 * (11 + 2 * self.params.k)..256 * (11 + 2 * self.params.k) + 256],
-            &new_deferred[256 * (12 + 2 * self.params.k)..256 * (12 + 2 * self.params.k) + 256],
-            &new_deferred[256 * (13 + 2 * self.params.k)..256 * (13 + 2 * self.params.k) + 256],
-            &new_deferred[256 * (14 + 2 * self.params.k)..256 * (14 + 2 * self.params.k) + 256],
-            &new_deferred[256 * (15 + 2 * self.params.k)..256 * (15 + 2 * self.params.k) + 256],
+            &new_deferred[256 * 7 + (4 + 2 * self.params.k) * 128
+                ..256 * 7 + (4 + 2 * self.params.k) * 128 + 256],
+            &new_deferred[256 * 8 + (4 + 2 * self.params.k) * 128
+                ..256 * 8 + (4 + 2 * self.params.k) * 128 + 256],
+            &new_deferred[256 * 9 + (4 + 2 * self.params.k) * 128
+                ..256 * 9 + (4 + 2 * self.params.k) * 128 + 256],
+            &new_deferred[256 * 10 + (4 + 2 * self.params.k) * 128
+                ..256 * 10 + (4 + 2 * self.params.k) * 128 + 256],
+            &new_deferred[256 * 11 + (4 + 2 * self.params.k) * 128
+                ..256 * 11 + (4 + 2 * self.params.k) * 128 + 256],
         ];
 
-        let (g_new, challenges_new) = self.verify_inner_product(
+        let (g_new, challenges_sq_packed_new) = self.verify_inner_product(
             cs.namespace(|| "inner product"),
             &base_case,
             transcript,
@@ -1054,11 +1094,6 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 &y_new,
                 &new_leftovers[512..512 + 128],
             )?;
-            for i in 0..128 {
-                cs.enforce_zero(LinearCombination::from(
-                    new_leftovers[512 + 128 + i].get_variable(),
-                ));
-            }
         }
 
         {
@@ -1070,42 +1105,32 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 cs.namespace(|| "x"),
                 base_case.clone(),
                 &x,
-                &new_leftovers[256 * 3..256 * 4],
+                &new_leftovers[256 * 2 + 128..256 * 3 + 128],
             )?;
             self.equal_unless_base_case(
                 cs.namespace(|| "y"),
                 base_case.clone(),
                 &y,
-                &new_leftovers[256 * 4..256 * 5],
+                &new_leftovers[256 * 3 + 128..256 * 4 + 128],
             )?;
         }
 
-        for (i, challenge) in challenges_new.into_iter().enumerate() {
+        for (i, challenge_sq_packed) in challenges_sq_packed_new.into_iter().enumerate() {
             self.equal_unless_base_case(
                 cs.namespace(|| format!("challenge {} in new_leftovers", i)),
                 base_case.clone(),
-                &challenge,
-                &new_leftovers[256 * 5 + 256 * i..256 * 5 + 256 * i + 128],
+                &challenge_sq_packed,
+                &new_leftovers[256 * 4 + 128 + 128 * i..256 * 4 + 128 + 128 * i + 128],
             )?;
-            for j in 0..128 {
-                cs.enforce_zero(LinearCombination::from(
-                    new_leftovers[256 * 5 + 256 * i + 128 + j].get_variable(),
-                ));
-            }
 
-            // k + 11 is the start on deferred for the new challenges
+            // 4 * 128 + 6 * 256 + k * 128 + 256 is the start
             self.equal_unless_base_case(
                 cs.namespace(|| format!("challenge {} in new_deferred", i)),
                 base_case.clone(),
-                &challenge,
-                &new_deferred[256 * (11 + self.params.k) + i * 256
-                    ..256 * (11 + self.params.k) + i * 256 + 128],
+                &challenge_sq_packed,
+                &new_deferred[(4 * 128 + 6 * 256 + self.params.k * 128 + 256) + i * 128
+                    ..(4 * 128 + 6 * 256 + self.params.k * 128 + 256) + i * 128 + 128],
             )?;
-            for j in 0..128 {
-                cs.enforce_zero(LinearCombination::from(
-                    new_deferred[256 * (11 + self.params.k) + i * 256 + 128 + j].get_variable(),
-                ));
-            }
         }
 
         // x (deferred)
@@ -1116,11 +1141,6 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 &x,
                 &new_deferred[0..128],
             )?;
-            for i in 0..128 {
-                cs.enforce_zero(LinearCombination::from(
-                    new_deferred[128 + i].get_variable(),
-                ));
-            }
         }
 
         // y_cur (deferred)
@@ -1129,13 +1149,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 cs.namespace(|| "challenge y_cur in new_deferred"),
                 base_case.clone(),
                 &y_cur,
-                &new_deferred[256 * 2..256 * 2 + 128],
+                &new_deferred[128 * 2..128 * 2 + 128],
             )?;
-            for i in 0..128 {
-                cs.enforce_zero(LinearCombination::from(
-                    new_deferred[256 * 2 + 128 + i].get_variable(),
-                ));
-            }
         }
 
         // y_new (deferred)
@@ -1144,13 +1159,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 cs.namespace(|| "challenge y_new in new_deferred"),
                 base_case.clone(),
                 &y_new,
-                &new_deferred[256 * 3..256 * 3 + 128],
+                &new_deferred[128 * 3..128 * 3 + 128],
             )?;
-            for i in 0..128 {
-                cs.enforce_zero(LinearCombination::from(
-                    new_deferred[256 * 3 + 128 + i].get_variable(),
-                ));
-            }
         }
 
         Ok(())
@@ -1166,7 +1176,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         b: &[&[AllocatedBit]],
     ) -> Result<(CurvePoint<E2>, Vec<Vec<AllocatedBit>>), SynthesisError> {
         assert_eq!(commitments.len(), openings.len());
-        let mut challenges = vec![];
+        let mut challenges_sq_packed = vec![];
 
         let mut p = commitments.to_vec();
         let mut v = openings.to_vec();
@@ -1209,42 +1219,42 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 tmp.push((L, R, l, r));
             }
 
-            let challenge = self.get_challenge(
+            let forkvalue =
+                AllocatedNum::alloc(cs.namespace(|| format!("fork for challenge {}", i)), || {
+                    let val = self.forkvalues.ok_or(SynthesisError::AssignmentMissing)?[i];
+
+                    let fe = Field::from_u128(val as u128);
+
+                    Ok(fe)
+                })?;
+
+            transcript.absorb(
+                cs.namespace(|| format!("transcript absorb fork value {}", i)),
+                Num::from(forkvalue),
+            )?;
+
+            let challenge_sq_packed = self.get_challenge(
                 cs.namespace(|| format!("round challenge {}", i)),
                 transcript,
             )?;
-            challenges.push(challenge.clone());
+            challenges_sq_packed.push(challenge_sq_packed.clone());
 
             for (j, tmp) in tmp.into_iter().enumerate() {
-                let L = tmp
-                    .0
-                    .multiply_fast(cs.namespace(|| format!("[challenge] L_{}", j)), &challenge)?;
-                let L = L.multiply_fast(
+                let L = tmp.0.multiply_endo(
                     cs.namespace(|| format!("[challenge^2] L_{}", j)),
-                    &challenge,
+                    &challenge_sq_packed,
                 )?;
-                let R = tmp.1.multiply_inv_fast(
-                    cs.namespace(|| format!("[challenge^-1] R_{}", j)),
-                    &challenge,
-                )?;
-                let R = R.multiply_inv_fast(
+                let R = tmp.1.multiply_inv_endo(
                     cs.namespace(|| format!("[challenge^-2] R_{}", j)),
-                    &challenge,
+                    &challenge_sq_packed,
                 )?;
-                let l = tmp
-                    .2
-                    .multiply_fast(cs.namespace(|| format!("[challenge] l_{}", j)), &challenge)?;
-                let l = l.multiply_fast(
+                let l = tmp.2.multiply_endo(
                     cs.namespace(|| format!("[challenge^2] l_{}", j)),
-                    &challenge,
+                    &challenge_sq_packed,
                 )?;
-                let r = tmp.3.multiply_inv_fast(
-                    cs.namespace(|| format!("[challenge^-1] r_{}", j)),
-                    &challenge,
-                )?;
-                let r = r.multiply_inv_fast(
+                let r = tmp.3.multiply_inv_endo(
                     cs.namespace(|| format!("[challenge^-2] r_{}", j)),
-                    &challenge,
+                    &challenge_sq_packed,
                 )?;
 
                 p[j] = p[j].add(cs.namespace(|| format!("p_{} + L_{}", j, j)), &L)?;
@@ -1260,20 +1270,6 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 .map(|proof| proof.proof.inner_product.g)
                 .unwrap_or(E2::zero()))
         })?;
-
-        /*
-        for j in 0..instances.len() {
-            let b = compute_b(instances[j].point, &challenges, &challenges_inv);
-
-            if p[j] != (self.g * self.a[j]) {
-                return (false, challenges, self.g);
-            }
-
-            if v[j] != (self.a[j] * &b) {
-                return (false, challenges, self.g);
-            }
-        }
-        */
 
         let g = {
             let (x, y) = E2::one().get_xy().unwrap();
@@ -1294,8 +1290,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 .get_xy();
             {
                 let mut cs = cs.namespace(|| format!("p_{} == [a_{}] g_new", j, j));
-                self.num_equal_unless_base_case(cs.namespace(|| "x"), base_case.clone(), &x1, &x2)?;
-                self.num_equal_unless_base_case(cs.namespace(|| "y"), base_case.clone(), &y1, &y2)?;
+                self.num_equal_unless_base_case(cs.namespace(|| "x"), base_case.clone(), &Combination::from(x1), &Combination::from(x2))?;
+                self.num_equal_unless_base_case(cs.namespace(|| "y"), base_case.clone(), &Combination::from(y1), &Combination::from(y2))?;
             }
 
             let (x1, y1) = v[j].get_xy();
@@ -1305,12 +1301,12 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 .get_xy();
             {
                 let mut cs = cs.namespace(|| format!("v_{} == [a_{} b_{}] g", j, j, j));
-                self.num_equal_unless_base_case(cs.namespace(|| "x"), base_case.clone(), &x1, &x2)?;
-                self.num_equal_unless_base_case(cs.namespace(|| "y"), base_case.clone(), &y1, &y2)?;
+                self.num_equal_unless_base_case(cs.namespace(|| "x"), base_case.clone(), &Combination::from(x1), &Combination::from(x2))?;
+                self.num_equal_unless_base_case(cs.namespace(|| "y"), base_case.clone(), &Combination::from(y1), &Combination::from(y2))?;
             }
         }
 
-        Ok((g_new, challenges))
+        Ok((g_new, challenges_sq_packed))
     }
 
     fn commit_point<CS: ConstraintSystem<E1::Scalar>>(
@@ -1326,6 +1322,72 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         Ok(())
     }
 
+    fn get_challenge_scalar<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        bits: &[AllocatedBit],
+    ) -> Result<AllocatedNum<E1::Scalar>, SynthesisError> {
+        assert_eq!(bits.len(), 128);
+        let mut acc = Combination::from(Num::constant(E1::Scalar::one() + &E1::Scalar::one() + &E1::Scalar::one()));
+
+        for i in 1..64 {
+            let should_negate = &bits[i * 2];
+            let should_endo = &bits[i * 2 + 1];
+
+            // acc = acc + acc
+            acc = acc.scale(E1::Scalar::from_u128(2));
+            // tmp = 1 - 2b
+            // acc = acc + tmp
+            acc = acc + Combination::from(AllocatedNum::one(&mut cs));
+            acc = acc
+                + (Combination::from(AllocatedNum::from(should_negate.clone()))
+                    .scale(-E1::Scalar::from_u128(2)));
+            // acc = (1 - b') acc + b' acc * beta
+            //     = acc - b' * acc + b' * acc * beta
+            //     = (b' * beta - b') * (acc) + acc
+            let mut outval = None;
+            let (a, b, c) = cs.multiply(
+                || format!("should_endo round {}", i),
+                || {
+                    let acc = acc.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+                    let should_endo = should_endo
+                        .get_value()
+                        .ok_or(SynthesisError::AssignmentMissing)?;
+                    let should_endo = if should_endo {
+                        E1::Scalar::one()
+                    } else {
+                        E1::Scalar::zero()
+                    };
+                    let beta = E1::Scalar::BETA;
+
+                    let lhs = should_endo * &beta - &should_endo;
+                    let rhs = acc;
+                    let out = lhs * &rhs;
+                    outval = Some(out);
+
+                    Ok((lhs, rhs, out))
+                },
+            )?;
+            cs.enforce_zero(
+                LinearCombination::from(a) + should_endo.get_variable()
+                    - (Coeff::Full(E1::Scalar::BETA), should_endo.get_variable()),
+            );
+            let acclc = acc.lc(&mut cs);
+            cs.enforce_zero(LinearCombination::from(b) - &acclc);
+
+            acc = acc + Combination::from(Num::from(AllocatedNum::from_raw_unchecked(outval, c)));
+        }
+
+        let newacc = AllocatedNum::alloc(cs.namespace(|| "final acc value"), || {
+            acc.get_value().ok_or(SynthesisError::AssignmentMissing)
+        })?;
+
+        let acclc = acc.lc(&mut cs);
+        cs.enforce_zero(LinearCombination::from(newacc.get_variable()) - &acclc);
+
+        Ok(newacc)
+    }
+
     fn get_challenge<CS: ConstraintSystem<E1::Scalar>>(
         &self,
         mut cs: CS,
@@ -1334,7 +1396,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         let num = transcript.squeeze(cs.namespace(|| "squeeze"))?;
         let mut bits = unpack_fe(cs.namespace(|| "unpack"), &num.into())?;
         bits.truncate(127);
-        bits.push(AllocatedBit::one(cs.namespace(|| "set top bit to 1")));
+        bits.push(AllocatedBit::one(cs));
 
         Ok(bits)
     }
@@ -1376,8 +1438,9 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                     }
                 }
             } else {
-                // 256 * (5 + k)
-                let num_bits = 256 * (5 + self.params.k);
+                // (256 * 2) + 128 + (256 * 2) + (128 * k)
+                // = 256 * 4 + 128 * (k + 1)
+                let num_bits = 256 * 4 + 128 * (self.params.k + 1);
                 for i in 0..num_bits {
                     leftovers1.push(AllocatedBit::alloc_input_unchecked(
                         cs.namespace(|| format!("bit {}", i)),
@@ -1402,8 +1465,9 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                     }
                 }
             } else {
-                // 256 * (5 + k)
-                let num_bits = 256 * (5 + self.params.k);
+                // (256 * 2) + 128 + (256 * 2) + (128 * k)
+                // = 256 * 4 + 128 * (k + 1)
+                let num_bits = 256 * 4 + 128 * (self.params.k + 1);
                 for i in 0..num_bits {
                     leftovers2.push(AllocatedBit::alloc_input_unchecked(
                         cs.namespace(|| format!("bit {}", i)),
@@ -1428,11 +1492,11 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                     }
                 }
             } else {
-                // 256 * (16 + 2k)
-                let num_bits = 256 * (16 + 2 * self.params.k);
+                // 12 * 256 + (4 + 2k) * 128
+                let num_bits = 12 * 256 + (4 + 2 * self.params.k) * 128;
                 for i in 0..num_bits {
                     deferred.push(AllocatedBit::alloc_input_unchecked(
-                        cs.namespace(|| format!("bit {}", i)),
+                        cs.namespace(|| format!("deferred bit {}", i)),
                         || Ok(false),
                     )?);
                 }
@@ -1553,8 +1617,9 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                     }
                 }
             } else {
-                // 256 * (5 + k)
-                let num_bits = 256 * (5 + self.params.k);
+                // (256 * 2) + 128 + (256 * 2) + (128 * k)
+                // = 256 * 4 + 128 * (k + 1)
+                let num_bits = 256 * 4 + 128 * (self.params.k + 1);
                 for i in 0..num_bits {
                     old_leftovers1.push(AllocatedBit::alloc(
                         cs.namespace(|| format!("bit {}", i)),
@@ -1580,7 +1645,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                     }
                 }
             } else {
-                let dummy_deferred = Deferred::<E2::Scalar>::dummy(self.params.k);
+                let dummy_deferred = Deferred::<E1::Scalar>::dummy(self.params.k);
                 let bytes = dummy_deferred.to_bytes();
                 for (_, byte) in bytes.into_iter().enumerate() {
                     for i in 0..8 {
@@ -1593,6 +1658,8 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 }
             }
         }
+
+        assert_eq!(old_deferred.len(), deferred.len());
 
         let mut bits_for_k_commitment = vec![];
         bits_for_k_commitment.extend(old_payload.clone());
@@ -1632,16 +1699,16 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         self.equal_unless_base_case(
             cs.namespace(|| "deferred[challeges] == old_leftovers1[challenges]"),
             base_case.clone(),
-            &deferred[256 * 10..256 * (10 + self.params.k)],
-            &old_leftovers1[256 * 5..],
+            &deferred[256 * 8..256 * 8 + 128 * self.params.k],
+            &old_leftovers1[256 * 4 + 128..],
         )?;
 
         // deferred y_old should be the same
         self.equal_unless_base_case(
             cs.namespace(|| "deferred[y_old] == old_leftovers1[y_old]"),
             base_case.clone(),
-            &deferred[256 * 1..256 * 2],
-            &old_leftovers1[256 * 2..256 * 3],
+            &deferred[128 * 1..128 * 2],
+            &old_leftovers1[256 * 2..256 * 2 + 128],
         )?;
 
         self.inner_circuit.synthesize(

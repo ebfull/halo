@@ -153,6 +153,48 @@ impl<C: Curve> CurvePoint<C> {
         (self.x, self.y)
     }
 
+    pub fn conditional_endo<CS: ConstraintSystem<C::Base>>(
+        &self,
+        mut cs: CS,
+        condition: &Boolean,
+    ) -> Result<Self, SynthesisError> {
+        let x_ret_val = self
+            .x
+            .value()
+            .and_then(|x| condition.get_value().map(|b| if b { x * &C::Base::BETA } else { x }));
+        
+        // x_self × ((endo - 1).bit + 1) = x_ret
+        let (x_self_var, endoer, x_ret_var) = cs.multiply(
+            || "x_self × ((endo - 1).bit + 1) = x_ret",
+            || {
+                let x_self = self.x.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let x_ret = x_ret_val.ok_or(SynthesisError::AssignmentMissing)?;
+                let bit = condition
+                    .get_value()
+                    .ok_or(SynthesisError::AssignmentMissing)?;
+
+                let endoer = if bit { C::Base::BETA } else { C::Base::one() };
+
+                Ok((x_self, endoer, x_ret))
+            },
+        )?;
+        let x_self_lc = self.x.lc(&mut cs);
+        cs.enforce_zero(x_self_lc - x_self_var);
+        cs.enforce_zero(
+            LinearCombination::from(endoer)
+                - CS::ONE
+                - &condition.lc(CS::ONE, Coeff::Full(C::Base::BETA - &C::Base::one()))
+        );
+        
+        let x_ret = AllocatedNum::from_raw_unchecked(x_ret_val, x_ret_var);
+
+        Ok(CurvePoint {
+            x: x_ret.into(),
+            y: self.y,
+            is_identity: self.is_identity.clone(),
+        })
+    }
+
     /// Returns -P if condition is true, else returns P.
     pub fn conditional_neg<CS: ConstraintSystem<C::Base>>(
         &self,
@@ -163,9 +205,6 @@ impl<C: Curve> CurvePoint<C> {
             .y
             .value()
             .and_then(|y| condition.get_value().map(|b| if b { -y } else { y }));
-        let y_ret = AllocatedNum::alloc(cs.namespace(|| "y_ret"), || {
-            y_ret_val.ok_or(SynthesisError::AssignmentMissing)
-        })?;
 
         // y_self × (1 - 2.bit) = y_ret
         let (y_self_var, negator, y_ret_var) = cs.multiply(
@@ -189,7 +228,8 @@ impl<C: Curve> CurvePoint<C> {
                 - &condition.lc(CS::ONE, Coeff::Full(C::Base::from_u64(2)))
                 - negator,
         );
-        cs.enforce_zero(y_ret.lc() - y_ret_var);
+
+        let y_ret = AllocatedNum::from_raw_unchecked(y_ret_val, y_ret_var);
 
         Ok(CurvePoint {
             x: self.x,
@@ -1564,6 +1604,158 @@ impl<C: Curve> CurvePoint<C> {
         Ok(ret)
     }
 
+    pub fn multiply_endo<CS: ConstraintSystem<C::Base>>(
+        &self,
+        mut cs: CS,
+        other: &[AllocatedBit],
+    ) -> Result<Self, SynthesisError> {
+        // let p = self.get_point();
+
+        // return Self::witness(cs, || {
+        //     let p = p.ok_or(SynthesisError::AssignmentMissing)?;
+        //     let p = p.unwrap_or(C::zero());
+
+        //     let mut cur = C::Scalar::zero();
+        //     for b in other.iter().rev() {
+        //         cur = cur + &cur;
+        //         if let Some(b) = b.get_value() {
+        //             if b {
+        //                 cur = cur + &C::Scalar::one();
+        //             }
+        //         }
+        //     }
+
+        //     let tmp = crate::util::get_challenge_scalar(cur);
+
+        //     Ok(p * &tmp)
+        // });
+
+        assert_eq!(other.len(), 128);
+
+        let mut acc = self.double(cs.namespace(|| "[2] Acc"))?;
+        acc = acc.add_incomplete(cs.namespace(|| "[3] Acc"), self)?;
+        
+        for i in 1..64 {
+            let should_negate = &other[i * 2];
+            let should_endo = &other[i * 2 + 1];
+
+            let base = self.conditional_neg(
+                cs.namespace(|| format!("conditional negation {}", i)),
+                &Boolean::from(should_negate.clone())
+            )?;
+
+            acc = acc.double_and_add_incomplete(cs.namespace(|| format!("double and add {}", i)), &base)?;
+            acc = acc.conditional_endo(
+                cs.namespace(|| format!("conditional endo {}", i)),
+                &Boolean::from(should_endo.clone())
+            )?;
+        }
+
+        let (x, y) = acc.get_xy();
+
+        let mut xfvalue = None;
+        let (a, b, xf) = cs.multiply(|| "final x coordinate", || {
+            let x = x.value().ok_or(SynthesisError::AssignmentMissing)?;
+            let is_identity = self.is_identity.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+            let is_identity = if is_identity {
+                Field::zero()
+            } else {
+                Field::one()
+            };
+
+            let rhs = x * &is_identity;
+            xfvalue = Some(rhs);
+
+            Ok((x, is_identity, rhs))
+        })?;
+        let xlc = x.lc(&mut cs);
+        cs.enforce_zero(LinearCombination::from(a) - &xlc);
+        cs.enforce_zero(LinearCombination::from(b) - &self.is_identity.not().lc(CS::ONE, Coeff::One));
+
+        let mut yfvalue = None;
+        let (a, b, yf) = cs.multiply(|| "final y coordinate", || {
+            let y = y.value().ok_or(SynthesisError::AssignmentMissing)?;
+            let is_identity = self.is_identity.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+            let is_identity = if is_identity {
+                Field::zero()
+            } else {
+                Field::one()
+            };
+
+            let rhs = y * &is_identity;
+            yfvalue = Some(rhs);
+
+            Ok((y, is_identity, rhs))
+        })?;
+        let ylc = y.lc(&mut cs);
+        cs.enforce_zero(LinearCombination::from(a) - &ylc);
+        cs.enforce_zero(LinearCombination::from(b) - &self.is_identity.not().lc(CS::ONE, Coeff::One));
+
+        Ok(CurvePoint {
+            x: AllocatedNum::from_raw_unchecked(xfvalue, xf).into(),
+            y: AllocatedNum::from_raw_unchecked(yfvalue, yf).into(),
+            is_identity: self.is_identity.clone()
+        })
+
+        /*
+        // TODO
+        let p = self.get_point();
+
+        Self::witness(cs, || {
+            let p = p.ok_or(SynthesisError::AssignmentMissing)?;
+            let p = p.unwrap_or(C::zero());
+
+            let mut cur = C::Scalar::zero();
+            for b in other.iter().rev() {
+                cur = cur + &cur;
+                if let Some(b) = b.get_value() {
+                    if b {
+                        cur = cur + &C::Scalar::one();
+                    }
+                }
+            }
+
+            Ok(p * &crate::util::get_challenge_scalar(cur))
+        })
+        */
+    }
+
+    pub fn multiply_inv_endo<CS: ConstraintSystem<C::Base>>(
+        &self,
+        mut cs: CS,
+        other: &[AllocatedBit],
+    ) -> Result<Self, SynthesisError> {
+        let res = Self::witness(&mut cs, || {
+            let p = self.get_point().ok_or(SynthesisError::AssignmentMissing)?;
+            let p = p.unwrap_or(C::zero());
+
+            let mut cur = C::Scalar::zero();
+            for b in other.iter().rev() {
+                cur = cur + &cur;
+                if let Some(b) = b.get_value() {
+                    if b {
+                        cur = cur + &C::Scalar::one();
+                    }
+                }
+            }
+            let cur: C::Scalar = crate::util::get_challenge_scalar(cur);
+            let cur: C::Scalar = cur.invert().unwrap_or(C::Scalar::zero());
+
+            Ok(p * &cur)
+        })?;
+
+        let should_be_original = res.multiply_endo(&mut cs, other)?;
+
+        let x1 = self.x.lc(&mut cs);
+        let x2 = should_be_original.x.lc(&mut cs);
+        let y1 = self.y.lc(&mut cs);
+        let y2 = should_be_original.y.lc(&mut cs);
+        cs.enforce_zero(x1 - &x2);
+        cs.enforce_zero(y1 - &y2);
+
+        Ok(res)
+    }
+
     /// Multiply by a little-endian scalar.
     ///
     /// Requires that the top bit of other is set.
@@ -1769,13 +1961,18 @@ impl<C: Curve> CurvePoint<C> {
         }
 
         let inverted_val = p.map(|p| {
-            let inv = p * mulby.invert().unwrap();
-            let coords = inv.get_xy();
-            if coords.is_some().into() {
-                let (x, y) = coords.unwrap();
-                (x, y, false)
-            } else {
+            let inv = mulby.invert();
+            if inv.is_none().into() {
                 (C::Base::zero(), C::Base::zero(), true)
+            } else {
+                let inv = p * &inv.unwrap();
+                let coords = inv.get_xy();
+                if coords.is_some().into() {
+                    let (x, y) = coords.unwrap();
+                    (x, y, false)
+                } else {
+                    (C::Base::zero(), C::Base::zero(), true)
+                }
             }
         });
 
@@ -1893,6 +2090,126 @@ mod test {
                 let y2_lc = y2.lc(&mut cs);
                 cs.enforce_zero(x2_lc - (Coeff::Zero, CS::ONE));
                 cs.enforce_zero(y2_lc - (Coeff::Zero, CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn conditional_endo_identity() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                mut cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let p = CurvePoint::<Ec1>::identity();
+
+                let ppos =
+                    p.conditional_endo(cs.namespace(|| "no endo"), &Boolean::constant(false))?;
+                let (ppos_x, ppos_y) = ppos.get_xy();
+                let ppos_x_lc = ppos_x.lc(&mut cs);
+                let ppos_y_lc = ppos_y.lc(&mut cs);
+                cs.enforce_zero(ppos_x_lc);
+                cs.enforce_zero(ppos_y_lc);
+
+                let ppos =
+                    p.conditional_endo(cs.namespace(|| "yes endo"), &Boolean::constant(true))?;
+                let (ppos_x, ppos_y) = ppos.get_xy();
+                let ppos_x_lc = ppos_x.lc(&mut cs);
+                let ppos_y_lc = ppos_y.lc(&mut cs);
+                cs.enforce_zero(ppos_x_lc);
+                cs.enforce_zero(ppos_y_lc);
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn conditional_endo() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                mut cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let two = Ec1::one().double();
+                let endo = two * &Fq::BETA;
+
+                let (two_x, two_y) = two.get_xy().unwrap();
+                let (endo_x, endo_y) = endo.get_xy().unwrap();
+
+                let p = CurvePoint::<Ec1>::constant(two_x, two_y);
+
+                let ppos =
+                    p.conditional_endo(cs.namespace(|| "no endo"), &Boolean::constant(false))?;
+                let (ppos_x, ppos_y) = ppos.get_xy();
+                let ppos_x_lc = ppos_x.lc(&mut cs);
+                let ppos_y_lc = ppos_y.lc(&mut cs);
+                cs.enforce_zero(ppos_x_lc - (Coeff::Full(two_x), CS::ONE));
+                cs.enforce_zero(ppos_y_lc - (Coeff::Full(two_y), CS::ONE));
+
+                let pneg =
+                    p.conditional_endo(cs.namespace(|| "endo"), &Boolean::constant(true))?;
+                let (pneg_x, pneg_y) = pneg.get_xy();
+                let pneg_x_lc = pneg_x.lc(&mut cs);
+                let pneg_y_lc = pneg_y.lc(&mut cs);
+                cs.enforce_zero(pneg_x_lc - (Coeff::Full(endo_x), CS::ONE));
+                cs.enforce_zero(pneg_y_lc - (Coeff::Full(endo_y), CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn conditional_negation_identity() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                mut cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let p = CurvePoint::<Ec1>::identity();
+
+                let ppos =
+                    p.conditional_neg(cs.namespace(|| "no negation"), &Boolean::constant(false))?;
+                let (ppos_x, ppos_y) = ppos.get_xy();
+                let ppos_x_lc = ppos_x.lc(&mut cs);
+                let ppos_y_lc = ppos_y.lc(&mut cs);
+                cs.enforce_zero(ppos_x_lc);
+                cs.enforce_zero(ppos_y_lc);
+
+                let ppos =
+                    p.conditional_neg(cs.namespace(|| "yes negation"), &Boolean::constant(true))?;
+                let (ppos_x, ppos_y) = ppos.get_xy();
+                let ppos_x_lc = ppos_x.lc(&mut cs);
+                let ppos_y_lc = ppos_y.lc(&mut cs);
+                cs.enforce_zero(ppos_x_lc);
+                cs.enforce_zero(ppos_y_lc);
 
                 Ok(())
             }
@@ -2562,6 +2879,42 @@ mod test {
                 let pinv5_y_lc = pinv5_y.lc(&mut cs);
                 cs.enforce_zero(pinv5_x_lc - (Coeff::Full(invfive_x), CS::ONE));
                 cs.enforce_zero(pinv5_y_lc - (Coeff::Full(invfive_y), CS::ONE));
+
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            is_satisfied::<_, _, Basic>(&TestCircuit::default(), &[]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn multiply_endo() {
+        #[derive(Default)]
+        struct TestCircuit;
+
+        impl Circuit<Fp> for TestCircuit {
+            fn synthesize<CS: ConstraintSystem<Fp>>(
+                &self,
+                mut cs: &mut CS,
+            ) -> Result<(), SynthesisError> {
+                let p = CurvePoint::<Ec1>::witness(&mut cs, || Ok(Ec1::one()))?;
+
+                let mut scalar5 = vec![
+                    AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(true))?; 128
+                ];
+                scalar5[1] = AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(false))?;
+                scalar5[2] = AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(false))?;
+                scalar5[3] = AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(false))?;
+
+                let pinv5 = p.multiply_endo(cs.namespace(|| "[5^-1] 0"), &scalar5)?;
+                let (pinv5_x, pinv5_y) = pinv5.get_xy();
+                let pinv5_x_lc = pinv5_x.lc(&mut cs);
+                let pinv5_y_lc = pinv5_y.lc(&mut cs);
+                cs.enforce_zero(pinv5_x_lc);
+                cs.enforce_zero(pinv5_y_lc);
 
                 Ok(())
             }
