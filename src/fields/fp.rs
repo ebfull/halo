@@ -69,12 +69,12 @@ impl ConditionallySelectable for Fp {
 }
 
 /// Constant representing the modulus
-/// p = 0x5c5e464a35c12769bac2a757742b393081be9c1a3201248299fffe7d00000001
+/// p = 0x40000000000000000000000000000000038aa1276c3f59b9a14064e200000001
 const MODULUS: Fp = Fp([
-    0x99fffe7d00000001,
-    0x81be9c1a32012482,
-    0xbac2a757742b3930,
-    0x5c5e464a35c12769,
+    0xa14064e200000001,
+    0x38aa1276c3f59b9,
+    0x0,
+    0x4000000000000000,
 ]);
 
 impl<'a> Neg for &'a Fp {
@@ -126,46 +126,46 @@ impl_binops_additive!(Fp, Fp);
 impl_binops_multiplicative!(Fp, Fp);
 
 /// INV = -(p^{-1} mod 2^64) mod 2^64
-const INV: u64 = 0x99fffe7cffffffff;
+const INV: u64 = 0xa14064e1ffffffff;
 
 /// R = 2^256 mod p
 const R: Fp = Fp([
-    0xcc000305fffffffe,
-    0xfc82c7cb9bfdb6fa,
-    0x8a7ab15117a98d9e,
-    0x4743736b947db12c,
+    0x1c3ed159fffffffd,
+    0xf5601c89bb41f2d3,
+    0xffffffffffffffff,
+    0x3fffffffffffffff,
 ]);
 
 /// R^2 = 2^512 mod p
 const R2: Fp = Fp([
-    0xd21bca6b0eb7ce9,
-    0xc614650905b5e467,
-    0x55a4ae6f7ea066f2,
-    0x2e5132263865a7a9,
+    0x280c9c4000000010,
+    0x91a4409b5400af74,
+    0xdd7b28e19094c659,
+    0xc8ad9107ccca0e,
 ]);
 
 /// R^3 = 2^768 mod p
 const R3: Fp = Fp([
-    0xac7322921fbf5412,
-    0xbc777a2173080bf6,
-    0xeb3580f5a4178af9,
-    0x4d3b7a048e8aadd0,
+    0x98fb3d144380a737,
+    0xf9fdbeb55b7eb87c,
+    0x63f75cb999eafa89,
+    0x217cb214ebb8fc72,
 ]);
 
-const S: u32 = 32;
+const S: u32 = 33;
 
 /// GENERATOR^t where t * 2^s + 1 = p
 /// with t odd. In other words, this
 /// is a 2^s root of unity.
 ///
-/// `GENERATOR = 7 mod p` is a generator
+/// `GENERATOR = 5 mod p` is a generator
 /// of the p - 1 order multiplicative
 /// subgroup.
-const ROOT_OF_UNITY: Fp = Fp([
-    0xb257e41b129e5b76,
-    0x373020854649fe24,
-    0xabfc522920f57d27,
-    0x267b428852549f85,
+const ROOT_OF_UNITY: Fp = Fp::from_raw([
+    0x53de9f31b88837ce,
+    0xff46e8f3f3ea99d6,
+    0xf624f2eaaf8c2d57,
+    0x2ae45117890ee2fc,
 ]);
 
 impl Default for Fp {
@@ -402,20 +402,20 @@ impl<'a> From<&'a Fp> for [u8; 32] {
 impl Field for Fp {
     const NUM_BITS: u32 = 255;
     const CAPACITY: u32 = 254;
-    const S: u32 = 32;
+    const S: u32 = S;
     const ALPHA: Self = ROOT_OF_UNITY;
     const RESCUE_ALPHA: u64 = 5;
     const RESCUE_INVALPHA: [u64; 4] = [
-        0xf5ffff17cccccccd,
-        0x1aa590dc846715e7,
-        0x700e6467ac19ef1d,
-        0x376bc3c62040b13f,
+        0x810050b4cccccccd,
+        0x360880ec56991494,
+        0x3333333333333333,
+        0x3333333333333333,
     ];
     const BETA: Self = Fp::from_raw([
-        0x33fffcfa00000002,
-        0xc37d383464024905,
-        0x96d4c09e11330dde,
-        0x5c5e464a35c12768,
+        0x8598abb3a410c9c8,
+        0x7881fb239ba41a26,
+        0x9bebc9146ef83d9a,
+        0x1508415ab5e97c94,
     ]);
 
     fn is_zero(&self) -> Choice {
@@ -449,13 +449,7 @@ impl Field for Fp {
         // https://eprint.iacr.org/2012/685.pdf (page 12, algorithm 5)
 
         // w = self^((t - 1) // 2)
-        //   = self^4863756571045496379202482778528253400332876963716109537123122544446
-        let w = self.pow_vartime(&[
-            0x190092414cffff3e,
-            0xba159c9840df4e0d,
-            0x1ae093b4dd6153ab,
-            0x2e2f2325,
-        ]);
+        let w = self.pow_vartime(&[0xdb0fd66e68501938, 0xe2a849, 0x0, 0x10000000]);
 
         let mut v = S;
         let mut x = self * w;
@@ -496,10 +490,10 @@ impl Field for Fp {
     /// failing if the element is zero.
     fn invert(&self) -> CtOption<Self> {
         let tmp = self.pow_vartime(&[
-            0x99fffe7cffffffff,
-            0x81be9c1a32012482,
-            0xbac2a757742b3930,
-            0x5c5e464a35c12769,
+            0xa14064e1ffffffff,
+            0x38aa1276c3f59b9,
+            0x0,
+            0x4000000000000000,
         ]);
 
         CtOption::new(tmp, !self.ct_eq(&Self::zero()))
@@ -554,4 +548,19 @@ impl Field for Fp {
 
         u128::from(tmp.0[0]) | (u128::from(tmp.0[1]) << 64)
     }
+}
+
+#[test]
+fn test_inv() {
+    // Compute -(r^{-1} mod 2^64) mod 2^64 by exponentiating
+    // by totient(2**64) - 1
+
+    let mut inv = 1u64;
+    for _ in 0..63 {
+        inv = inv.wrapping_mul(inv);
+        inv = inv.wrapping_mul(MODULUS.0[0]);
+    }
+    inv = inv.wrapping_neg();
+
+    assert_eq!(inv, INV);
 }

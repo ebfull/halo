@@ -69,12 +69,12 @@ impl ConditionallySelectable for Fq {
 }
 
 /// Constant representing the modulus
-/// q = 0x5c5e464a35c12769bac2a757742b39311b849d0f1801860419fffe7d00000001
+/// q = 0x40000000000000000000000000000000038aa127696286c9842cafd400000001
 const MODULUS: Fq = Fq([
-    0x19fffe7d00000001,
-    0x1b849d0f18018604,
-    0xbac2a757742b3931,
-    0x5c5e464a35c12769,
+    0xa14064e200000001,
+    0x38aa1276c3f59b9,
+    0x0,
+    0x4000000000000000,
 ]);
 
 impl<'a> Neg for &'a Fq {
@@ -126,33 +126,33 @@ impl_binops_additive!(Fq, Fq);
 impl_binops_multiplicative!(Fq, Fq);
 
 /// INV = -(q^{-1} mod 2^64) mod 2^64
-const INV: u64 = 0x19fffe7cffffffff;
+const INV: u64 = 0xa14064e1ffffffff;
 
 /// R = 2^256 mod q
 const R: Fq = Fq([
-    0xcc000305fffffffe,
-    0xc8f6c5e1cffcf3f7,
-    0x8a7ab15117a98d9d,
-    0x4743736b947db12c,
+    0x7379f083fffffffd,
+    0xf5601c89c3d86ba3,
+    0xffffffffffffffff,
+    0x3fffffffffffffff,
 ]);
 
 /// R^2 = 2^512 mod q
 const R2: Fq = Fq([
-    0x7418827fc8e3c388,
-    0x24985f46055ea406,
-    0xc634c5733d537aee,
-    0x383854eab47eb60e,
+    0x8595fa8000000010,
+    0x7e16a565c6895230,
+    0xf4c0e6fcb03aa0a2,
+    0xc8ad9106886013,
 ]);
 
 /// R^3 = 2^768 mod q
 const R3: Fq = Fq([
-    0x2130119bf7bd2f09,
-    0xfd60bd87bbee441f,
-    0x295664a9829b9d51,
-    0x1501fb9c767aa429,
+    0xa624f338075cdb5e,
+    0x57964eacb8fe21f2,
+    0xcb266d18c0413bc2,
+    0xa42cdf95f959577,
 ]);
 
-const S: u32 = 32;
+const S: u32 = 34;
 
 /// GENERATOR^t where t * 2^s + 1 = q
 /// with t odd. In other words, this
@@ -161,11 +161,11 @@ const S: u32 = 32;
 /// `GENERATOR = 5 mod q` is a generator
 /// of the q - 1 order multiplicative
 /// subgroup.
-const ROOT_OF_UNITY: Fq = Fq([
-    0x19b9e2a2025f29b6,
-    0xd58c9c00bb70545a,
-    0xfd1fba57e713394e,
-    0x2f1ed67b4030702c,
+const ROOT_OF_UNITY: Fq = Fq::from_raw([
+    0x1cbd3234869d57ec,
+    0xa287dd1b8084fbf,
+    0xf1dbcb645a987293,
+    0x113efc510dc03c0b,
 ]);
 
 impl Default for Fq {
@@ -402,20 +402,20 @@ impl<'a> From<&'a Fq> for [u8; 32] {
 impl Field for Fq {
     const NUM_BITS: u32 = 255;
     const CAPACITY: u32 = 254;
-    const S: u32 = 32;
+    const S: u32 = S;
     const ALPHA: Self = ROOT_OF_UNITY;
     const RESCUE_ALPHA: u64 = 5;
     const RESCUE_INVALPHA: [u64; 4] = [
-        0x3d9998fecccccccd,
-        0xa49b7206099a359b,
-        0x4ab442efc8114a13,
-        0x24f282841580762a,
+        0xd023bfdccccccccd,
+        0x360880ec544ed23a,
+        0x3333333333333333,
+        0x3333333333333333,
     ];
     const BETA: Self = Fq::from_raw([
-        0xc0fffc3880000002,
-        0x230cec8b8a02aa85,
-        0x28cbb3fac2af2389,
-        0x5c5e464a35c12769,
+        0x4394c2bd148fa4fd,
+        0x69cf8de720e52ec1,
+        0x87ad8b5ff9731ffe,
+        0x36c66d3a1e049a58,
     ]);
 
     fn is_zero(&self) -> Choice {
@@ -449,13 +449,7 @@ impl Field for Fq {
         // https://eprint.iacr.org/2012/685.pdf (page 12, algorithm 5)
 
         // w = self^((t - 1) // 2)
-        //   = self^4863756571045496379202482778528253400356672252882373737080204295998
-        let w = self.pow_vartime(&[
-            0x8c00c3020cffff3e,
-            0xba159c988dc24e87,
-            0x1ae093b4dd6153ab,
-            0x2e2f2325,
-        ]);
+        let w = self.pow_vartime(&[0xed2c50d9308595fa, 0x715424, 0x0, 0x8000000]);
 
         let mut v = S;
         let mut x = self * w;
@@ -496,10 +490,10 @@ impl Field for Fq {
     /// failing if the element is zero.
     fn invert(&self) -> CtOption<Self> {
         let tmp = self.pow_vartime(&[
-            0x19fffe7cffffffff,
-            0x1b849d0f18018604,
-            0xbac2a757742b3931,
-            0x5c5e464a35c12769,
+            0x842cafd3ffffffff,
+            0x38aa127696286c9,
+            0x0,
+            0x4000000000000000,
         ]);
 
         CtOption::new(tmp, !self.ct_eq(&Self::zero()))
@@ -554,4 +548,20 @@ impl Field for Fq {
 
         u128::from(tmp.0[0]) | (u128::from(tmp.0[1]) << 64)
     }
+}
+
+
+#[test]
+fn test_inv() {
+    // Compute -(r^{-1} mod 2^64) mod 2^64 by exponentiating
+    // by totient(2**64) - 1
+
+    let mut inv = 1u64;
+    for _ in 0..63 {
+        inv = inv.wrapping_mul(inv);
+        inv = inv.wrapping_mul(MODULUS.0[0]);
+    }
+    inv = inv.wrapping_neg();
+
+    assert_eq!(inv, INV);
 }

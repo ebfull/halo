@@ -34,7 +34,11 @@ pub trait Curve:
     + ConditionallySelectable
     + ConstantTimeEq
 {
-    type Affine: CurveAffine<Projective = Self, Scalar = <Self as Curve>::Scalar, Base = <Self as Curve>::Base>;
+    type Affine: CurveAffine<
+        Projective = Self,
+        Scalar = <Self as Curve>::Scalar,
+        Base = <Self as Curve>::Base,
+    >;
     type Scalar: Field;
     type Base: Field;
 
@@ -81,7 +85,11 @@ pub trait CurveAffine:
     + ConditionallySelectable
     + ConstantTimeEq
 {
-    type Projective: Curve<Affine = Self, Scalar = <Self as CurveAffine>::Scalar, Base = <Self as CurveAffine>::Base>;
+    type Projective: Curve<
+        Affine = Self,
+        Scalar = <Self as CurveAffine>::Scalar,
+        Base = <Self as CurveAffine>::Base,
+    >;
     type Scalar: Field;
     type Base: Field;
 
@@ -89,4 +97,6 @@ pub trait CurveAffine:
     fn to_projective(&self) -> Self::Projective;
     fn from_bytes(bytes: &[u8; 32]) -> CtOption<Self>;
     fn to_bytes(&self) -> [u8; 32];
+    fn from_bytes_wide(bytes: &[u8; 64]) -> CtOption<Self>;
+    fn to_bytes_wide(&self) -> [u8; 64];
 }
