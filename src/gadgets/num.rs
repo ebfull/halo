@@ -545,7 +545,7 @@ impl<F: Field> Combination<F> {
     pub fn zero() -> Self {
         Combination {
             value: Some(F::zero()),
-            terms: vec![]
+            terms: vec![],
         }
     }
 
