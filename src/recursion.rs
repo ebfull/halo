@@ -587,8 +587,16 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
 
             let mut truncate_by = 0;
             for (i, (lhs, rhs)) in lhs.iter().zip(rhs.iter()).take(250).enumerate() {
-                lhs_lc = lhs_lc + (Coeff::Full(coeff), Num::from(AllocatedNum::from(lhs.clone())));
-                rhs_lc = rhs_lc + (Coeff::Full(coeff), Num::from(AllocatedNum::from(rhs.clone())));
+                lhs_lc = lhs_lc
+                    + (
+                        Coeff::Full(coeff),
+                        Num::from(AllocatedNum::from(lhs.clone())),
+                    );
+                rhs_lc = rhs_lc
+                    + (
+                        Coeff::Full(coeff),
+                        Num::from(AllocatedNum::from(rhs.clone())),
+                    );
 
                 coeff = coeff + &coeff;
                 truncate_by = i + 1;
@@ -598,7 +606,7 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 cs.namespace(|| format!("check {}", i)),
                 base_case.clone(),
                 &lhs_lc,
-                &rhs_lc
+                &rhs_lc,
             )?;
 
             lhs = &lhs[truncate_by..];
@@ -1290,8 +1298,18 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 .get_xy();
             {
                 let mut cs = cs.namespace(|| format!("p_{} == [a_{}] g_new", j, j));
-                self.num_equal_unless_base_case(cs.namespace(|| "x"), base_case.clone(), &Combination::from(x1), &Combination::from(x2))?;
-                self.num_equal_unless_base_case(cs.namespace(|| "y"), base_case.clone(), &Combination::from(y1), &Combination::from(y2))?;
+                self.num_equal_unless_base_case(
+                    cs.namespace(|| "x"),
+                    base_case.clone(),
+                    &Combination::from(x1),
+                    &Combination::from(x2),
+                )?;
+                self.num_equal_unless_base_case(
+                    cs.namespace(|| "y"),
+                    base_case.clone(),
+                    &Combination::from(y1),
+                    &Combination::from(y2),
+                )?;
             }
 
             let (x1, y1) = v[j].get_xy();
@@ -1301,8 +1319,18 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
                 .get_xy();
             {
                 let mut cs = cs.namespace(|| format!("v_{} == [a_{} b_{}] g", j, j, j));
-                self.num_equal_unless_base_case(cs.namespace(|| "x"), base_case.clone(), &Combination::from(x1), &Combination::from(x2))?;
-                self.num_equal_unless_base_case(cs.namespace(|| "y"), base_case.clone(), &Combination::from(y1), &Combination::from(y2))?;
+                self.num_equal_unless_base_case(
+                    cs.namespace(|| "x"),
+                    base_case.clone(),
+                    &Combination::from(x1),
+                    &Combination::from(x2),
+                )?;
+                self.num_equal_unless_base_case(
+                    cs.namespace(|| "y"),
+                    base_case.clone(),
+                    &Combination::from(y1),
+                    &Combination::from(y2),
+                )?;
             }
         }
 
@@ -1328,7 +1356,9 @@ impl<'a, E1: Curve, E2: Curve<Base = E1::Scalar>, Inner: RecursiveCircuit<E1::Sc
         bits: &[AllocatedBit],
     ) -> Result<AllocatedNum<E1::Scalar>, SynthesisError> {
         assert_eq!(bits.len(), 128);
-        let mut acc = Combination::from(Num::constant(E1::Scalar::one() + &E1::Scalar::one() + &E1::Scalar::one()));
+        let mut acc = Combination::from(Num::constant(
+            E1::Scalar::one() + &E1::Scalar::one() + &E1::Scalar::one(),
+        ));
 
         for i in 1..64 {
             let should_negate = &bits[i * 2];

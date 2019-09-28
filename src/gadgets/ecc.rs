@@ -158,11 +158,12 @@ impl<C: Curve> CurvePoint<C> {
         mut cs: CS,
         condition: &Boolean,
     ) -> Result<Self, SynthesisError> {
-        let x_ret_val = self
-            .x
-            .value()
-            .and_then(|x| condition.get_value().map(|b| if b { x * &C::Base::BETA } else { x }));
-        
+        let x_ret_val = self.x.value().and_then(|x| {
+            condition
+                .get_value()
+                .map(|b| if b { x * &C::Base::BETA } else { x })
+        });
+
         // x_self × ((endo - 1).bit + 1) = x_ret
         let (x_self_var, endoer, x_ret_var) = cs.multiply(
             || "x_self × ((endo - 1).bit + 1) = x_ret",
@@ -183,9 +184,9 @@ impl<C: Curve> CurvePoint<C> {
         cs.enforce_zero(
             LinearCombination::from(endoer)
                 - CS::ONE
-                - &condition.lc(CS::ONE, Coeff::Full(C::Base::BETA - &C::Base::one()))
+                - &condition.lc(CS::ONE, Coeff::Full(C::Base::BETA - &C::Base::one())),
         );
-        
+
         let x_ret = AllocatedNum::from_raw_unchecked(x_ret_val, x_ret_var);
 
         Ok(CurvePoint {
@@ -1634,67 +1635,86 @@ impl<C: Curve> CurvePoint<C> {
 
         let mut acc = self.double(cs.namespace(|| "[2] Acc"))?;
         acc = acc.add_incomplete(cs.namespace(|| "[3] Acc"), self)?;
-        
+
         for i in 1..64 {
             let should_negate = &other[i * 2];
             let should_endo = &other[i * 2 + 1];
 
             let base = self.conditional_neg(
                 cs.namespace(|| format!("conditional negation {}", i)),
-                &Boolean::from(should_negate.clone())
+                &Boolean::from(should_negate.clone()),
             )?;
 
-            acc = acc.double_and_add_incomplete(cs.namespace(|| format!("double and add {}", i)), &base)?;
+            acc = acc.double_and_add_incomplete(
+                cs.namespace(|| format!("double and add {}", i)),
+                &base,
+            )?;
             acc = acc.conditional_endo(
                 cs.namespace(|| format!("conditional endo {}", i)),
-                &Boolean::from(should_endo.clone())
+                &Boolean::from(should_endo.clone()),
             )?;
         }
 
         let (x, y) = acc.get_xy();
 
         let mut xfvalue = None;
-        let (a, b, xf) = cs.multiply(|| "final x coordinate", || {
-            let x = x.value().ok_or(SynthesisError::AssignmentMissing)?;
-            let is_identity = self.is_identity.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let is_identity = if is_identity {
-                Field::zero()
-            } else {
-                Field::one()
-            };
+        let (a, b, xf) = cs.multiply(
+            || "final x coordinate",
+            || {
+                let x = x.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let is_identity = self
+                    .is_identity
+                    .get_value()
+                    .ok_or(SynthesisError::AssignmentMissing)?;
+                let is_identity = if is_identity {
+                    Field::zero()
+                } else {
+                    Field::one()
+                };
 
-            let rhs = x * &is_identity;
-            xfvalue = Some(rhs);
+                let rhs = x * &is_identity;
+                xfvalue = Some(rhs);
 
-            Ok((x, is_identity, rhs))
-        })?;
+                Ok((x, is_identity, rhs))
+            },
+        )?;
         let xlc = x.lc(&mut cs);
         cs.enforce_zero(LinearCombination::from(a) - &xlc);
-        cs.enforce_zero(LinearCombination::from(b) - &self.is_identity.not().lc(CS::ONE, Coeff::One));
+        cs.enforce_zero(
+            LinearCombination::from(b) - &self.is_identity.not().lc(CS::ONE, Coeff::One),
+        );
 
         let mut yfvalue = None;
-        let (a, b, yf) = cs.multiply(|| "final y coordinate", || {
-            let y = y.value().ok_or(SynthesisError::AssignmentMissing)?;
-            let is_identity = self.is_identity.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let is_identity = if is_identity {
-                Field::zero()
-            } else {
-                Field::one()
-            };
+        let (a, b, yf) = cs.multiply(
+            || "final y coordinate",
+            || {
+                let y = y.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let is_identity = self
+                    .is_identity
+                    .get_value()
+                    .ok_or(SynthesisError::AssignmentMissing)?;
+                let is_identity = if is_identity {
+                    Field::zero()
+                } else {
+                    Field::one()
+                };
 
-            let rhs = y * &is_identity;
-            yfvalue = Some(rhs);
+                let rhs = y * &is_identity;
+                yfvalue = Some(rhs);
 
-            Ok((y, is_identity, rhs))
-        })?;
+                Ok((y, is_identity, rhs))
+            },
+        )?;
         let ylc = y.lc(&mut cs);
         cs.enforce_zero(LinearCombination::from(a) - &ylc);
-        cs.enforce_zero(LinearCombination::from(b) - &self.is_identity.not().lc(CS::ONE, Coeff::One));
+        cs.enforce_zero(
+            LinearCombination::from(b) - &self.is_identity.not().lc(CS::ONE, Coeff::One),
+        );
 
         Ok(CurvePoint {
             x: AllocatedNum::from_raw_unchecked(xfvalue, xf).into(),
             y: AllocatedNum::from_raw_unchecked(yfvalue, yf).into(),
-            is_identity: self.is_identity.clone()
+            is_identity: self.is_identity.clone(),
         })
 
         /*
@@ -2165,8 +2185,7 @@ mod test {
                 cs.enforce_zero(ppos_x_lc - (Coeff::Full(two_x), CS::ONE));
                 cs.enforce_zero(ppos_y_lc - (Coeff::Full(two_y), CS::ONE));
 
-                let pneg =
-                    p.conditional_endo(cs.namespace(|| "endo"), &Boolean::constant(true))?;
+                let pneg = p.conditional_endo(cs.namespace(|| "endo"), &Boolean::constant(true))?;
                 let (pneg_x, pneg_y) = pneg.get_xy();
                 let pneg_x_lc = pneg_x.lc(&mut cs);
                 let pneg_y_lc = pneg_y.lc(&mut cs);
@@ -2902,9 +2921,8 @@ mod test {
             ) -> Result<(), SynthesisError> {
                 let p = CurvePoint::<Ec1>::witness(&mut cs, || Ok(Ec1::one()))?;
 
-                let mut scalar5 = vec![
-                    AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(true))?; 128
-                ];
+                let mut scalar5 =
+                    vec![AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(true))?; 128];
                 scalar5[1] = AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(false))?;
                 scalar5[2] = AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(false))?;
                 scalar5[3] = AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(false))?;

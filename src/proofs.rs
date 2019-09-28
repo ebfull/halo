@@ -418,7 +418,6 @@ impl<C: Curve> Proof<C> {
                 _coeff: Coeff<F>,
                 _y: &Self::LinearConstraintIndex,
             ) {
-
             }
 
             /// Compute a `LinearConstraintIndex` from `q`.
