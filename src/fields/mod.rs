@@ -40,7 +40,7 @@ pub trait Field:
     const S: u32;
 
     /// Generator of the 2^s multiplicative subgroup
-    const ALPHA: Self;
+    const ROOT_OF_UNITY: Self;
 
     /// Ideally the smallest prime such that gcd(p - 1, alpha) = 1
     const RESCUE_ALPHA: u64;
@@ -49,7 +49,7 @@ pub trait Field:
     const RESCUE_INVALPHA: [u64; 4];
 
     /// Element of multiplicative order 3.
-    const BETA: Self;
+    const ZETA: Self;
 
     fn is_zero(&self) -> Choice;
 

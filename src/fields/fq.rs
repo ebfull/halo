@@ -403,7 +403,7 @@ impl Field for Fq {
     const NUM_BITS: u32 = 255;
     const CAPACITY: u32 = 254;
     const S: u32 = S;
-    const ALPHA: Self = ROOT_OF_UNITY;
+    const ROOT_OF_UNITY: Self = ROOT_OF_UNITY;
     const RESCUE_ALPHA: u64 = 5;
     const RESCUE_INVALPHA: [u64; 4] = [
         0xd023bfdccccccccd,
@@ -411,7 +411,7 @@ impl Field for Fq {
         0x3333333333333333,
         0x3333333333333333,
     ];
-    const BETA: Self = Fq::from_raw([
+    const ZETA: Self = Fq::from_raw([
         0x4394c2bd148fa4fd,
         0x69cf8de720e52ec1,
         0x87ad8b5ff9731ffe,
@@ -549,7 +549,6 @@ impl Field for Fq {
         u128::from(tmp.0[0]) | (u128::from(tmp.0[1]) << 64)
     }
 }
-
 
 #[test]
 fn test_inv() {

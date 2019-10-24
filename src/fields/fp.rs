@@ -403,7 +403,7 @@ impl Field for Fp {
     const NUM_BITS: u32 = 255;
     const CAPACITY: u32 = 254;
     const S: u32 = S;
-    const ALPHA: Self = ROOT_OF_UNITY;
+    const ROOT_OF_UNITY: Self = ROOT_OF_UNITY;
     const RESCUE_ALPHA: u64 = 5;
     const RESCUE_INVALPHA: [u64; 4] = [
         0x810050b4cccccccd,
@@ -411,7 +411,7 @@ impl Field for Fp {
         0x3333333333333333,
         0x3333333333333333,
     ];
-    const BETA: Self = Fp::from_raw([
+    const ZETA: Self = Fp::from_raw([
         0x8598abb3a410c9c8,
         0x7881fb239ba41a26,
         0x9bebc9146ef83d9a,
