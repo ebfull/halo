@@ -1,4 +1,4 @@
-use crate::{CurveAffine, Curve, Field};
+use crate::{Curve, CurveAffine, Field};
 use crossbeam_utils::thread;
 use num_cpus;
 
@@ -40,14 +40,11 @@ pub fn compute_inner_product<F: Field>(a: &[F], b: &[F]) -> F {
     acc
 }
 
-/// TODO: Naive multiexp for now.
-pub fn multiexp<C: CurveAffine>(coeffs: &[C::Scalar], bases: &[C]) -> C::Projective
-{
+pub fn multiexp<C: CurveAffine>(coeffs: &[C::Scalar], bases: &[C]) -> C::Projective {
     assert_eq!(coeffs.len(), bases.len());
 
     let num_cpus = num_cpus::get();
     if coeffs.len() > num_cpus {
-        /*
         let chunk = coeffs.len() / num_cpus;
         let num_chunks = coeffs.chunks(chunk).len();
         let mut results = vec![C::Projective::zero(); num_chunks];
@@ -100,7 +97,7 @@ pub fn multiexp<C: CurveAffine>(coeffs: &[C::Scalar], bases: &[C]) -> C::Project
                         for (coeff, base) in coeffs.iter().zip(bases.iter()) {
                             let coeff = get_at(current_segment, c, coeff);
                             if coeff != 0 {
-                                buckets[coeff - 1] += base;
+                                buckets[coeff - 1] += *base;
                             }
                         }
 
@@ -110,27 +107,24 @@ pub fn multiexp<C: CurveAffine>(coeffs: &[C::Scalar], bases: &[C]) -> C::Project
                         //                    ((a) + b) + c
                         let mut running_sum = C::Projective::zero();
                         for exp in buckets.into_iter().rev() {
-                            running_sum += exp;
-                            *acc = *acc + running_sum;
+                            running_sum = running_sum + &exp;
+                            *acc = *acc + &running_sum;
                         }
                     }
                 });
             }
         })
         .unwrap();
-        results.iter().fold(C::Projective::zero(), |a, b| a + *b)
-        */
-        unimplemented!()
+        results.iter().fold(C::Projective::zero(), |a, b| a + b)
     } else {
-        //let mut acc = C::Projective::zero();
-        unimplemented!()
-        // for (coeff, base) in coeffs.iter().zip(bases.iter()) {
-        //     let coeff: F = *coeff;
-        //     let base: C = *base;
-        //     let product = base * coeff;
-        //     acc += &product;
-        // }
-        // acc
+        let mut acc = C::Projective::zero();
+        for (coeff, base) in coeffs.iter().zip(bases.iter()) {
+            let coeff = *coeff;
+            let base: C = *base;
+            let product = base * coeff;
+            acc = acc + &product;
+        }
+        acc
     }
 }
 

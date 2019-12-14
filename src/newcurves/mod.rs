@@ -18,32 +18,37 @@ pub trait Curve:
     + Mul<<Self as Curve>::Scalar, Output = Self>
     + Neg<Output = Self>
     + for<'a> Add<&'a Self, Output = Self>
-    + for<'a> Add<&'a <Self as Curve>::Affine, Output = Self>
-    + for<'a> Mul<&'a <Self as Curve>::Scalar, Output = Self>
-    + for<'a> Mul<<Self as Curve>::Scalar, Output = Self>
+    // + for<'a> Add<&'a <Self as Curve>::Affine, Output = Self>
+    // + for<'a> Mul<&'a <Self as Curve>::Scalar, Output = Self>
+    // + for<'a> Mul<<Self as Curve>::Scalar, Output = Self>
     + for<'a> Sub<&'a Self, Output = Self>
     + MulAssign<<Self as Curve>::Scalar>
     + AddAssign
     + SubAssign
-    + for<'a> MulAssign<&'a <Self as Curve>::Scalar>
+    // + for<'a> MulAssign<&'a <Self as Curve>::Scalar>
     + for<'a> AddAssign<&'a Self>
     + for<'a> SubAssign<&'a Self>
     + AddAssign<<Self as Curve>::Affine>
     + SubAssign<<Self as Curve>::Affine>
-    + for<'a> AddAssign<&'a <Self as Curve>::Affine>
-    + for<'a> SubAssign<&'a <Self as Curve>::Affine>
+    // + for<'a> AddAssign<&'a <Self as Curve>::Affine>
+    // + for<'a> SubAssign<&'a <Self as Curve>::Affine>
     + PartialEq
     + cmp::Eq
     + ConditionallySelectable
     + ConstantTimeEq
-    + for<'a> From<&'a <Self as Curve>::Affine>
+    // + for<'a> From<&'a <Self as Curve>::Affine>
     + From<<Self as Curve>::Affine>
 {
     type Affine: CurveAffine<
         Projective = Self,
         Scalar = <Self as Curve>::Scalar,
         Base = <Self as Curve>::Base,
-    >;
+    >
+        + Add<Output = Self>
+        + Sub<Output = Self>
+        + Mul<<Self as Curve>::Scalar, Output = Self>
+        + Neg<Output = <Self as Curve>::Affine>
+        + From<Self>;
     type Scalar: Field;
     type Base: Field;
 
@@ -91,22 +96,27 @@ pub trait CurveAffine:
     + Sub<Output = <Self as CurveAffine>::Projective>
     + Mul<<Self as CurveAffine>::Scalar, Output = <Self as CurveAffine>::Projective>
     + Neg<Output = Self>
-    + for<'a> Add<&'a Self, Output = <Self as CurveAffine>::Projective>
-    + for<'a> Sub<&'a Self, Output = <Self as CurveAffine>::Projective>
-    + for<'a> Mul<&'a <Self as CurveAffine>::Scalar, Output = <Self as CurveAffine>::Projective>
-    + for<'a> Mul<<Self as CurveAffine>::Scalar, Output = <Self as CurveAffine>::Projective>
+    // + for<'a> Add<&'a Self, Output = <Self as CurveAffine>::Projective>
+    // + for<'a> Sub<&'a Self, Output = <Self as CurveAffine>::Projective>
+    // + for<'a> Mul<&'a <Self as CurveAffine>::Scalar, Output = <Self as CurveAffine>::Projective>
+    // + for<'a> Mul<<Self as CurveAffine>::Scalar, Output = <Self as CurveAffine>::Projective>
     + PartialEq
     + cmp::Eq
     + ConditionallySelectable
     + ConstantTimeEq
-    + for<'a> From<&'a <Self as CurveAffine>::Projective>
+    // + for<'a> From<&'a <Self as CurveAffine>::Projective>
     + From<<Self as CurveAffine>::Projective>
 {
     type Projective: Curve<
         Affine = Self,
         Scalar = <Self as CurveAffine>::Scalar,
         Base = <Self as CurveAffine>::Base,
-    >;
+    >
+        + Mul<<Self as CurveAffine>::Scalar, Output = <Self as CurveAffine>::Projective>
+        + MulAssign<<Self as CurveAffine>::Scalar>
+        + AddAssign<Self>
+        + SubAssign<Self>
+        + From<Self>;
     type Scalar: Field;
     type Base: Field;
 
