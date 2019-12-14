@@ -438,6 +438,10 @@ impl Field for Fq {
         Fq::from_raw([v as u64, (v >> 64) as u64, 0, 0])
     }
 
+    fn double(&self) -> Self {
+        self.double()
+    }
+
     #[inline(always)]
     fn square(&self) -> Self {
         self.square()

@@ -5,8 +5,8 @@
 #[macro_use]
 mod util;
 
-mod fields;
 mod curves;
+mod fields;
 
 // mod circuits;
 // mod curves;
@@ -19,8 +19,8 @@ mod curves;
 // mod synthesis;
 
 // pub use circuits::*;
-pub use fields::*;
 pub use curves::*;
+pub use fields::*;
 // pub use gadgets::*;
 // pub use proofs::*;
 // pub use recursion::*;

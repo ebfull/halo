@@ -342,26 +342,19 @@ fn test_fft() {
     assert_eq!(valid_product, naive_product);
 }
 
-pub fn get_challenge_scalar<F1: Field, F2: Field>(challenge: F1) -> F2 {
-    let challenge = challenge.get_lower_128();
+pub struct Challenge(pub(crate) Vec<bool>);
 
-    let mut acc = F2::one();
-    acc = acc + acc;
-    acc = acc + F2::one();
+pub fn get_challenge_scalar<F: Field>(challenge: Challenge) -> F {
+    let mut acc = (F::ZETA + F::one()).double();
 
-    for i in 1..64 {
-        let should_negate = (challenge >> (i * 2)) & 1 == 1;
-        let should_endo = (challenge >> (i * 2 + 1)) & 1 == 1;
-
-        acc = acc + &acc;
-        if should_negate {
-            acc = acc - &F2::one();
+    assert!(challenge.0.len() % 2 == 0);
+    for x in challenge.0.chunks(2) {
+        if let &[should_negate, should_endo] = x {
+            let q = if should_negate { -F::one() } else { F::one() };
+            let q = if should_endo { q * F::ZETA } else { q };
+            acc = acc + q + acc;
         } else {
-            acc = acc + &F2::one();
-        }
-
-        if should_endo {
-            acc = acc * &F2::ZETA;
+            unreachable!()
         }
     }
 
@@ -383,7 +376,7 @@ pub fn compute_b<F: Field>(x: F, challenges: &[F], challenges_inv: &[F]) -> F {
     }
 }
 
-pub fn compute_g_coeffs_for_inner_product<F: Field>(challenges_sq: &[F], allinv: F) -> Vec<F> {
+pub fn compute_s<F: Field>(challenges_sq: &[F], allinv: F) -> Vec<F> {
     let lg_n = challenges_sq.len();
     let n = 1 << lg_n;
 
@@ -399,12 +392,14 @@ pub fn compute_g_coeffs_for_inner_product<F: Field>(challenges_sq: &[F], allinv:
     s
 }
 
-pub fn compute_g_for_inner_product<C: CurveAffine>(
+pub fn compute_g<C: CurveAffine>(
     generators: &[C],
     challenges_sq: &[C::Scalar],
     allinv: C::Scalar,
 ) -> C::Projective {
-    let s = compute_g_coeffs_for_inner_product::<C::Scalar>(challenges_sq, allinv);
+    let s = compute_s::<C::Scalar>(challenges_sq, allinv);
+
+    assert_eq!(generators.len(), s.len());
 
     multiexp(&s, &generators)
 }

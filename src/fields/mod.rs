@@ -53,6 +53,7 @@ pub trait Field:
 
     fn is_zero(&self) -> Choice;
 
+    fn double(&self) -> Self;
     fn from_u64(v: u64) -> Self;
     fn from_u128(v: u128) -> Self;
     fn sqrt(&self) -> CtOption<Self>;
