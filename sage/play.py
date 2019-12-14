@@ -10,16 +10,16 @@ eq = EllipticCurve(Fq, [0, 5])
 # assert(eq.order() == p)
 zetap = Fp(0b1010100001000010000010101101010110101111010010111110010010100100110111110101111001001000101000110111011111000001111011001101001111000100000011111101100100011100110111010010000011010001001101000010110011000101010111011001110100100000100001100100111001000)
 zetaq = Fq(0b11011011000110011011010011101000011110000001001001101001011000100001111010110110001011010111111111100101110011000111111111111001101001110011111000110111100111001000001110010100101110110000010100001110010100110000101011110100010100100011111010010011111101)
-# assert(zetap^3 == Fp(1))
-# assert(zetaq^3 == Fq(1))
-# a = ep.random_element()
-# a_endo1 = ep(a[0] * int(zetap), a[1])
-# a_endo2 = a * int(zetaq)
-# assert(a_endo1 == a_endo2)
-# a = eq.random_element()
-# a_endo1 = eq(a[0] * int(zetaq), a[1])
-# a_endo2 = a * int(zetap)
-# assert(a_endo1 == a_endo2)
+assert(zetap^3 == Fp(1))
+assert(zetaq^3 == Fq(1))
+a = ep.random_element()
+a_endo1 = ep(a[0] * int(zetap), a[1])
+a_endo2 = a * int(zetaq)
+assert(a_endo1 == a_endo2)
+a = eq.random_element()
+a_endo1 = eq(a[0] * int(zetaq), a[1])
+a_endo2 = a * int(zetap)
+assert(a_endo1 == a_endo2)
 Sp = 33
 Sq = 34
 
@@ -33,7 +33,7 @@ def fourhex(a):
     return s
 
 def printparams(name, prime, field, zeta, S):
-    print(("%s: " % name) + "%s" % fourhex(p))
+    print(("%s: " % name) + "%s" % fourhex(prime))
     R = 2^256 % prime
     R2 = 2^(256*2) % prime
     R3 = 2^(256*3) % prime
