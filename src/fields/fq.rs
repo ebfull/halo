@@ -71,8 +71,8 @@ impl ConditionallySelectable for Fq {
 /// Constant representing the modulus
 /// q = 0x40000000000000000000000000000000038aa127696286c9842cafd400000001
 const MODULUS: Fq = Fq([
-    0xa14064e200000001,
-    0x38aa1276c3f59b9,
+    0x842cafd400000001,
+    0x38aa127696286c9,
     0x0,
     0x4000000000000000,
 ]);
@@ -126,7 +126,7 @@ impl_binops_additive!(Fq, Fq);
 impl_binops_multiplicative!(Fq, Fq);
 
 /// INV = -(q^{-1} mod 2^64) mod 2^64
-const INV: u64 = 0xa14064e1ffffffff;
+const INV: u64 = 0x842cafd3ffffffff;
 
 /// R = 2^256 mod q
 const R: Fq = Fq([
@@ -563,4 +563,14 @@ fn test_inv() {
     inv = inv.wrapping_neg();
 
     assert_eq!(inv, INV);
+}
+
+#[test]
+fn test_zeta() {
+    let a = Fq::ZETA;
+    assert!(bool::from(a != Fq::one()));
+    let b = a * a;
+    assert!(bool::from(b != Fq::one()));
+    let c = b * a;
+    assert!(bool::from(c == Fq::one()));
 }

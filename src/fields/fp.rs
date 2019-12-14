@@ -564,3 +564,13 @@ fn test_inv() {
 
     assert_eq!(inv, INV);
 }
+
+#[test]
+fn test_zeta() {
+    let a = Fp::ZETA;
+    assert!(bool::from(a != Fp::one()));
+    let b = a * a;
+    assert!(bool::from(b != Fp::one()));
+    let c = b * a;
+    assert!(bool::from(c == Fp::one()));
+}
