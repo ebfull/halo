@@ -25,4 +25,4 @@ pub use newcurves::*;
 // pub use proofs::*;
 // pub use recursion::*;
 // pub use synthesis::*;
-// pub use util::*;
+pub use util::*;

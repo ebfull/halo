@@ -2,32 +2,35 @@ use crate::{Curve, CurveAffine, Field};
 use crossbeam_utils::thread;
 use num_cpus;
 
-// pub fn parallel_generator_collapse<C: Curve>(
-//     g: &mut [C],
-//     challenge: C::Scalar,
-//     challenge_inv: C::Scalar,
-// ) {
-//     let l = g.len() / 2;
+pub fn parallel_generator_collapse<C: CurveAffine>(
+    g: &mut [C],
+    challenge: C::Scalar,
+    challenge_inv: C::Scalar,
+) {
+    let l = g.len() / 2;
 
-//     let (g_lo, g_hi) = g.split_at_mut(l);
+    let (g_lo, g_hi) = g.split_at_mut(l);
 
-//     let num_cpus = num_cpus::get();
-//     let mut chunk = l / num_cpus;
-//     if chunk < num_cpus {
-//         chunk = l;
-//     }
+    let num_cpus = num_cpus::get();
+    let mut chunk = l / num_cpus;
+    if chunk < num_cpus {
+        chunk = l;
+    }
 
-//     thread::scope(|scope| {
-//         for (lo, hi) in g_lo.chunks_mut(chunk).zip(g_hi.chunks(chunk)) {
-//             scope.spawn(move |_| {
-//                 for (lo, hi) in lo.iter_mut().zip(hi.iter()) {
-//                     *lo = (*lo * &challenge_inv) + &(*hi * &challenge);
-//                 }
-//             });
-//         }
-//     })
-//     .unwrap();
-// }
+    thread::scope(|scope| {
+        for (lo, hi) in g_lo.chunks_mut(chunk).zip(g_hi.chunks(chunk)) {
+            scope.spawn(move |_| {
+                let mut tmp = Vec::with_capacity(lo.len());
+                for (lo, hi) in lo.iter().zip(hi.iter()) {
+                    // TODO: could use multiexp
+                    tmp.push(((*lo) * challenge_inv) + &((*hi) * challenge));
+                }
+                C::Projective::batch_to_affine(&tmp, lo);
+            });
+        }
+    })
+    .unwrap();
+}
 
 pub fn compute_inner_product<F: Field>(a: &[F], b: &[F]) -> F {
     assert_eq!(a.len(), b.len());
@@ -117,6 +120,7 @@ pub fn multiexp<C: CurveAffine>(coeffs: &[C::Scalar], bases: &[C]) -> C::Project
         .unwrap();
         results.iter().fold(C::Projective::zero(), |a, b| a + b)
     } else {
+        // TODO: use better algo
         let mut acc = C::Projective::zero();
         for (coeff, base) in coeffs.iter().zip(bases.iter()) {
             let coeff = *coeff;
@@ -395,15 +399,15 @@ pub fn compute_g_coeffs_for_inner_product<F: Field>(challenges_sq: &[F], allinv:
     s
 }
 
-// pub fn compute_g_for_inner_product<F: Field, C: Curve<Scalar = F>>(
-//     generators: &[C],
-//     challenges_sq: &[F],
-//     allinv: F,
-// ) -> C {
-//     let s = compute_g_coeffs_for_inner_product::<F>(challenges_sq, allinv);
+pub fn compute_g_for_inner_product<C: CurveAffine>(
+    generators: &[C],
+    challenges_sq: &[C::Scalar],
+    allinv: C::Scalar,
+) -> C::Projective {
+    let s = compute_g_coeffs_for_inner_product::<C::Scalar>(challenges_sq, allinv);
 
-//     multiexp(&s, &generators)
-// }
+    multiexp(&s, &generators)
+}
 
 #[test]
 fn test_compute_b() {
