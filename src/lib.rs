@@ -6,7 +6,7 @@
 mod util;
 
 mod fields;
-mod newcurves;
+mod curves;
 
 // mod circuits;
 // mod curves;
@@ -20,7 +20,7 @@ mod newcurves;
 
 // pub use circuits::*;
 pub use fields::*;
-pub use newcurves::*;
+pub use curves::*;
 // pub use gadgets::*;
 // pub use proofs::*;
 // pub use recursion::*;
