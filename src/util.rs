@@ -1,4 +1,4 @@
-use crate::{Curve, Field};
+use crate::{CurveAffine, Curve, Field};
 use crossbeam_utils::thread;
 use num_cpus;
 
@@ -40,103 +40,99 @@ pub fn compute_inner_product<F: Field>(a: &[F], b: &[F]) -> F {
     acc
 }
 
-// /// TODO: Naive multiexp for now.
-// pub fn multiexp<F: Field, C: Curve<Scalar = F>>(coeffs: &[C::Scalar], bases: &[C]) -> C {
-//     assert_eq!(coeffs.len(), bases.len());
+/// TODO: Naive multiexp for now.
+pub fn multiexp<C: CurveAffine>(coeffs: &[C::Scalar], bases: &[C]) -> C::Projective
+{
+    assert_eq!(coeffs.len(), bases.len());
 
-//     let num_cpus = num_cpus::get();
-//     if coeffs.len() > num_cpus {
-//         let chunk = coeffs.len() / num_cpus;
-//         let num_chunks = coeffs.chunks(chunk).len();
-//         let mut results = vec![C::zero(); num_chunks];
-//         thread::scope(|scope| {
-//             let chunk = coeffs.len() / num_cpus;
+    let num_cpus = num_cpus::get();
+    if coeffs.len() > num_cpus {
+        /*
+        let chunk = coeffs.len() / num_cpus;
+        let num_chunks = coeffs.chunks(chunk).len();
+        let mut results = vec![C::Projective::zero(); num_chunks];
+        thread::scope(|scope| {
+            let chunk = coeffs.len() / num_cpus;
 
-//             for ((coeffs, bases), acc) in coeffs
-//                 .chunks(chunk)
-//                 .zip(bases.chunks(chunk))
-//                 .zip(results.iter_mut())
-//             {
-//                 scope.spawn(move |_| {
-//                     let coeffs: Vec<[u8; 32]> = coeffs.iter().map(|a| a.to_bytes()).collect();
+            for ((coeffs, bases), acc) in coeffs
+                .chunks(chunk)
+                .zip(bases.chunks(chunk))
+                .zip(results.iter_mut())
+            {
+                scope.spawn(move |_| {
+                    let coeffs: Vec<[u8; 32]> = coeffs.iter().map(|a| a.to_bytes()).collect();
 
-//                     let c = if bases.len() < 32 {
-//                         3
-//                     } else {
-//                         (f64::from(bases.len() as u32)).ln().ceil() as usize
-//                     };
+                    let c = if bases.len() < 32 {
+                        3
+                    } else {
+                        (f64::from(bases.len() as u32)).ln().ceil() as usize
+                    };
 
-//                     fn get_at(segment: usize, c: usize, bytes: &[u8; 32]) -> usize {
-//                         let skip_bits = segment * c;
-//                         let skip_bytes = skip_bits / 8;
+                    fn get_at(segment: usize, c: usize, bytes: &[u8; 32]) -> usize {
+                        let skip_bits = segment * c;
+                        let skip_bytes = skip_bits / 8;
 
-//                         if skip_bytes >= 32 {
-//                             return 0;
-//                         }
+                        if skip_bytes >= 32 {
+                            return 0;
+                        }
 
-//                         let mut v = [0; 8];
-//                         for (v, o) in v.iter_mut().zip(bytes[skip_bytes..].iter()) {
-//                             *v = *o;
-//                         }
+                        let mut v = [0; 8];
+                        for (v, o) in v.iter_mut().zip(bytes[skip_bytes..].iter()) {
+                            *v = *o;
+                        }
 
-//                         let mut tmp = u64::from_le_bytes(v);
-//                         tmp >>= skip_bits - (skip_bytes * 8);
-//                         tmp = tmp % (1 << c);
+                        let mut tmp = u64::from_le_bytes(v);
+                        tmp >>= skip_bits - (skip_bytes * 8);
+                        tmp = tmp % (1 << c);
 
-//                         tmp as usize
-//                     }
+                        tmp as usize
+                    }
 
-//                     let segments = (256 / c) + 1;
+                    let segments = (256 / c) + 1;
 
-//                     for current_segment in (0..segments).rev() {
-//                         for _ in 0..c {
-//                             *acc = acc.double();
-//                         }
+                    for current_segment in (0..segments).rev() {
+                        for _ in 0..c {
+                            *acc = acc.double();
+                        }
 
-//                         let mut buckets = vec![C::zero(); (1 << c) - 1];
+                        let mut buckets = vec![C::Projective::zero(); (1 << c) - 1];
 
-//                         for (coeff, base) in coeffs.iter().zip(bases.iter()) {
-//                             let coeff = get_at(current_segment, c, coeff);
-//                             if coeff != 0 {
-//                                 buckets[coeff - 1] += base;
-//                             }
-//                         }
+                        for (coeff, base) in coeffs.iter().zip(bases.iter()) {
+                            let coeff = get_at(current_segment, c, coeff);
+                            if coeff != 0 {
+                                buckets[coeff - 1] += base;
+                            }
+                        }
 
-//                         // Summation by parts
-//                         // e.g. 3a + 2b + 1c = a +
-//                         //                    (a) + b +
-//                         //                    ((a) + b) + c
-//                         let mut running_sum = C::zero();
-//                         for exp in buckets.into_iter().rev() {
-//                             running_sum.add_assign(&exp);
-//                             acc.add_assign(&running_sum);
-//                         }
-//                     }
-
-//                     /*
-//                     for (coeff, base) in coeffs.iter().zip(bases.iter()) {
-//                         let coeff: F = *coeff;
-//                         let base: C = *base;
-//                         let product = base * coeff;
-//                         *acc = (*acc) + product;
-//                     }
-//                     */
-//                 });
-//             }
-//         })
-//         .unwrap();
-//         results.iter().fold(C::zero(), |a, b| a + *b)
-//     } else {
-//         let mut acc = C::zero();
-//         for (coeff, base) in coeffs.iter().zip(bases.iter()) {
-//             let coeff: F = *coeff;
-//             let base: C = *base;
-//             let product = base * coeff;
-//             acc += product;
-//         }
-//         acc
-//     }
-// }
+                        // Summation by parts
+                        // e.g. 3a + 2b + 1c = a +
+                        //                    (a) + b +
+                        //                    ((a) + b) + c
+                        let mut running_sum = C::Projective::zero();
+                        for exp in buckets.into_iter().rev() {
+                            running_sum += exp;
+                            *acc = *acc + running_sum;
+                        }
+                    }
+                });
+            }
+        })
+        .unwrap();
+        results.iter().fold(C::Projective::zero(), |a, b| a + *b)
+        */
+        unimplemented!()
+    } else {
+        //let mut acc = C::Projective::zero();
+        unimplemented!()
+        // for (coeff, base) in coeffs.iter().zip(bases.iter()) {
+        //     let coeff: F = *coeff;
+        //     let base: C = *base;
+        //     let product = base * coeff;
+        //     acc += &product;
+        // }
+        // acc
+    }
+}
 
 pub fn multiply_polynomials<F: Field>(mut a: Vec<F>, mut b: Vec<F>) -> Vec<F> {
     let degree_of_result = (a.len() - 1) + (b.len() - 1);
