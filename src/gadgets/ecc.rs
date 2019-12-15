@@ -3,7 +3,7 @@ use super::{AllocatedBit, Boolean, Num};
 use crate::{
     circuits::{Coeff, ConstraintSystem, LinearCombination, SynthesisError},
     fields::Field,
-    Curve,
+    CurveAffine, Curve,
 };
 use subtle::CtOption;
 
@@ -13,7 +13,7 @@ use subtle::CtOption;
 /// curve equation, or (0, 0). We also maintain a [`Boolean`] tracking whether
 /// it is the identity.
 #[derive(Debug, Clone)]
-pub struct CurvePoint<C: Curve> {
+pub struct CurvePoint<C: CurveAffine> {
     x: Num<C::Base>,
     y: Num<C::Base>,
 
@@ -21,7 +21,7 @@ pub struct CurvePoint<C: Curve> {
     is_identity: Boolean,
 }
 
-impl<C: Curve> CurvePoint<C> {
+impl<C: CurveAffine> CurvePoint<C> {
     /// Create a constant that is the identity.
     pub fn identity() -> Self {
         // Represent the identity internally as (0, 0).
@@ -158,11 +158,12 @@ impl<C: Curve> CurvePoint<C> {
         mut cs: CS,
         condition: &Boolean,
     ) -> Result<Self, SynthesisError> {
-        let x_ret_val = self
-            .x
-            .value()
-            .and_then(|x| condition.get_value().map(|b| if b { x * &C::Base::BETA } else { x }));
-        
+        let x_ret_val = self.x.value().and_then(|x| {
+            condition
+                .get_value()
+                .map(|b| if b { x * &C::Base::ZETA } else { x })
+        });
+
         // x_self × ((endo - 1).bit + 1) = x_ret
         let (x_self_var, endoer, x_ret_var) = cs.multiply(
             || "x_self × ((endo - 1).bit + 1) = x_ret",
@@ -173,7 +174,7 @@ impl<C: Curve> CurvePoint<C> {
                     .get_value()
                     .ok_or(SynthesisError::AssignmentMissing)?;
 
-                let endoer = if bit { C::Base::BETA } else { C::Base::one() };
+                let endoer = if bit { C::Base::ZETA } else { C::Base::one() };
 
                 Ok((x_self, endoer, x_ret))
             },
@@ -183,9 +184,9 @@ impl<C: Curve> CurvePoint<C> {
         cs.enforce_zero(
             LinearCombination::from(endoer)
                 - CS::ONE
-                - &condition.lc(CS::ONE, Coeff::Full(C::Base::BETA - &C::Base::one()))
+                - &condition.lc(CS::ONE, Coeff::Full(C::Base::ZETA - &C::Base::one())),
         );
-        
+
         let x_ret = AllocatedNum::from_raw_unchecked(x_ret_val, x_ret_var);
 
         Ok(CurvePoint {
@@ -377,7 +378,7 @@ impl<C: Curve> CurvePoint<C> {
         // it internally as (0, 0).
         let (x3_val, y3_val, p3_is_identity_val) = match p3_val {
             Some(p) => {
-                let coords = p.get_xy();
+                let coords = p.to_affine().get_xy();
                 if coords.is_some().into() {
                     let (x, y) = coords.unwrap();
                     (Some(x), Some(y), Some(false))
@@ -1009,7 +1010,7 @@ impl<C: Curve> CurvePoint<C> {
         let p1 = self.get_point().map(|p| p.unwrap());
         let p2 = other.get_point().map(|p| p.unwrap());
 
-        let p3_val = p1.and_then(|p1| p2.and_then(|p2| Some((p1 + p2).get_xy().unwrap())));
+        let p3_val = p1.and_then(|p1| p2.and_then(|p2| Some((p1 + p2).to_affine().get_xy().unwrap())));
 
         let p_out = match (p3_val, condition.get_value()) {
             (Some(p3), Some(b)) => {
@@ -1634,67 +1635,86 @@ impl<C: Curve> CurvePoint<C> {
 
         let mut acc = self.double(cs.namespace(|| "[2] Acc"))?;
         acc = acc.add_incomplete(cs.namespace(|| "[3] Acc"), self)?;
-        
+
         for i in 1..64 {
             let should_negate = &other[i * 2];
             let should_endo = &other[i * 2 + 1];
 
             let base = self.conditional_neg(
                 cs.namespace(|| format!("conditional negation {}", i)),
-                &Boolean::from(should_negate.clone())
+                &Boolean::from(should_negate.clone()),
             )?;
 
-            acc = acc.double_and_add_incomplete(cs.namespace(|| format!("double and add {}", i)), &base)?;
+            acc = acc.double_and_add_incomplete(
+                cs.namespace(|| format!("double and add {}", i)),
+                &base,
+            )?;
             acc = acc.conditional_endo(
                 cs.namespace(|| format!("conditional endo {}", i)),
-                &Boolean::from(should_endo.clone())
+                &Boolean::from(should_endo.clone()),
             )?;
         }
 
         let (x, y) = acc.get_xy();
 
         let mut xfvalue = None;
-        let (a, b, xf) = cs.multiply(|| "final x coordinate", || {
-            let x = x.value().ok_or(SynthesisError::AssignmentMissing)?;
-            let is_identity = self.is_identity.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let is_identity = if is_identity {
-                Field::zero()
-            } else {
-                Field::one()
-            };
+        let (a, b, xf) = cs.multiply(
+            || "final x coordinate",
+            || {
+                let x = x.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let is_identity = self
+                    .is_identity
+                    .get_value()
+                    .ok_or(SynthesisError::AssignmentMissing)?;
+                let is_identity = if is_identity {
+                    Field::zero()
+                } else {
+                    Field::one()
+                };
 
-            let rhs = x * &is_identity;
-            xfvalue = Some(rhs);
+                let rhs = x * &is_identity;
+                xfvalue = Some(rhs);
 
-            Ok((x, is_identity, rhs))
-        })?;
+                Ok((x, is_identity, rhs))
+            },
+        )?;
         let xlc = x.lc(&mut cs);
         cs.enforce_zero(LinearCombination::from(a) - &xlc);
-        cs.enforce_zero(LinearCombination::from(b) - &self.is_identity.not().lc(CS::ONE, Coeff::One));
+        cs.enforce_zero(
+            LinearCombination::from(b) - &self.is_identity.not().lc(CS::ONE, Coeff::One),
+        );
 
         let mut yfvalue = None;
-        let (a, b, yf) = cs.multiply(|| "final y coordinate", || {
-            let y = y.value().ok_or(SynthesisError::AssignmentMissing)?;
-            let is_identity = self.is_identity.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let is_identity = if is_identity {
-                Field::zero()
-            } else {
-                Field::one()
-            };
+        let (a, b, yf) = cs.multiply(
+            || "final y coordinate",
+            || {
+                let y = y.value().ok_or(SynthesisError::AssignmentMissing)?;
+                let is_identity = self
+                    .is_identity
+                    .get_value()
+                    .ok_or(SynthesisError::AssignmentMissing)?;
+                let is_identity = if is_identity {
+                    Field::zero()
+                } else {
+                    Field::one()
+                };
 
-            let rhs = y * &is_identity;
-            yfvalue = Some(rhs);
+                let rhs = y * &is_identity;
+                yfvalue = Some(rhs);
 
-            Ok((y, is_identity, rhs))
-        })?;
+                Ok((y, is_identity, rhs))
+            },
+        )?;
         let ylc = y.lc(&mut cs);
         cs.enforce_zero(LinearCombination::from(a) - &ylc);
-        cs.enforce_zero(LinearCombination::from(b) - &self.is_identity.not().lc(CS::ONE, Coeff::One));
+        cs.enforce_zero(
+            LinearCombination::from(b) - &self.is_identity.not().lc(CS::ONE, Coeff::One),
+        );
 
         Ok(CurvePoint {
             x: AllocatedNum::from_raw_unchecked(xfvalue, xf).into(),
             y: AllocatedNum::from_raw_unchecked(yfvalue, yf).into(),
-            is_identity: self.is_identity.clone()
+            is_identity: self.is_identity.clone(),
         })
 
         /*
@@ -1729,19 +1749,20 @@ impl<C: Curve> CurvePoint<C> {
             let p = self.get_point().ok_or(SynthesisError::AssignmentMissing)?;
             let p = p.unwrap_or(C::zero());
 
-            let mut cur = C::Scalar::zero();
+            let mut cur = vec![];
             for b in other.iter().rev() {
-                cur = cur + &cur;
                 if let Some(b) = b.get_value() {
                     if b {
-                        cur = cur + &C::Scalar::one();
+                        cur.push(true);
+                    } else {
+                        cur.push(false);
                     }
                 }
             }
-            let cur: C::Scalar = crate::util::get_challenge_scalar(cur);
+            let cur: C::Scalar = crate::util::get_challenge_scalar(crate::util::Challenge(cur));
             let cur: C::Scalar = cur.invert().unwrap_or(C::Scalar::zero());
 
-            Ok(p * &cur)
+            Ok((p * cur).to_affine())
         })?;
 
         let should_be_original = res.multiply_endo(&mut cs, other)?;
@@ -1965,7 +1986,7 @@ impl<C: Curve> CurvePoint<C> {
             if inv.is_none().into() {
                 (C::Base::zero(), C::Base::zero(), true)
             } else {
-                let inv = p * &inv.unwrap();
+                let inv = (p * inv.unwrap()).to_affine();
                 let coords = inv.get_xy();
                 if coords.is_some().into() {
                     let (x, y) = coords.unwrap();
@@ -2034,7 +2055,7 @@ mod test {
     use super::CurvePoint;
     use crate::{
         circuits::{Circuit, Coeff, ConstraintSystem, SynthesisError},
-        curves::{Curve, Ec1},
+        curves::{CurveAffine, EpAffine, Curve, Ep},
         dev::is_satisfied,
         fields::{Field, Fp, Fq},
         gadgets::boolean::{AllocatedBit, Boolean},
@@ -2051,8 +2072,8 @@ mod test {
                 &self,
                 cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let _ = CurvePoint::witness(cs.namespace(|| "one"), || Ok(Ec1::one()))?;
-                let _ = CurvePoint::witness(cs.namespace(|| "zero"), || Ok(Ec1::zero()))?;
+                let _ = CurvePoint::witness(cs.namespace(|| "one"), || Ok(EpAffine::one()))?;
+                let _ = CurvePoint::witness(cs.namespace(|| "zero"), || Ok(EpAffine::zero()))?;
 
                 Ok(())
             }
@@ -2074,7 +2095,7 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let one = Ec1::one();
+                let one = EpAffine::one();
                 let one_coords = one.get_xy().unwrap();
 
                 let p1 = CurvePoint::witness(cs.namespace(|| "one"), || Ok(one))?;
@@ -2084,7 +2105,7 @@ mod test {
                 cs.enforce_zero(x1_lc - (Coeff::Full(one_coords.0), CS::ONE));
                 cs.enforce_zero(y1_lc - (Coeff::Full(one_coords.1), CS::ONE));
 
-                let p2 = CurvePoint::witness(cs.namespace(|| "zero"), || Ok(Ec1::zero()))?;
+                let p2 = CurvePoint::witness(cs.namespace(|| "zero"), || Ok(EpAffine::zero()))?;
                 let (x2, y2) = p2.get_xy();
                 let x2_lc = x2.lc(&mut cs);
                 let y2_lc = y2.lc(&mut cs);
@@ -2111,7 +2132,7 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let p = CurvePoint::<Ec1>::identity();
+                let p = CurvePoint::<EpAffine>::identity();
 
                 let ppos =
                     p.conditional_endo(cs.namespace(|| "no endo"), &Boolean::constant(false))?;
@@ -2149,13 +2170,13 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let two = Ec1::one().double();
-                let endo = two * &Fq::BETA;
+                let two = Ep::one().double().to_affine();
+                let endo = two.to_projective().endo().to_affine();
 
                 let (two_x, two_y) = two.get_xy().unwrap();
                 let (endo_x, endo_y) = endo.get_xy().unwrap();
 
-                let p = CurvePoint::<Ec1>::constant(two_x, two_y);
+                let p = CurvePoint::<EpAffine>::constant(two_x, two_y);
 
                 let ppos =
                     p.conditional_endo(cs.namespace(|| "no endo"), &Boolean::constant(false))?;
@@ -2165,8 +2186,7 @@ mod test {
                 cs.enforce_zero(ppos_x_lc - (Coeff::Full(two_x), CS::ONE));
                 cs.enforce_zero(ppos_y_lc - (Coeff::Full(two_y), CS::ONE));
 
-                let pneg =
-                    p.conditional_endo(cs.namespace(|| "endo"), &Boolean::constant(true))?;
+                let pneg = p.conditional_endo(cs.namespace(|| "endo"), &Boolean::constant(true))?;
                 let (pneg_x, pneg_y) = pneg.get_xy();
                 let pneg_x_lc = pneg_x.lc(&mut cs);
                 let pneg_y_lc = pneg_y.lc(&mut cs);
@@ -2193,7 +2213,7 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let p = CurvePoint::<Ec1>::identity();
+                let p = CurvePoint::<EpAffine>::identity();
 
                 let ppos =
                     p.conditional_neg(cs.namespace(|| "no negation"), &Boolean::constant(false))?;
@@ -2231,13 +2251,13 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let two = Ec1::one().double();
+                let two = Ep::one().double().to_affine();
                 let negtwo = -two;
 
                 let (two_x, two_y) = two.get_xy().unwrap();
                 let (negtwo_x, negtwo_y) = negtwo.get_xy().unwrap();
 
-                let p = CurvePoint::<Ec1>::constant(two_x, two_y);
+                let p = CurvePoint::<EpAffine>::constant(two_x, two_y);
 
                 let ppos =
                     p.conditional_neg(cs.namespace(|| "no negation"), &Boolean::constant(false))?;
@@ -2275,16 +2295,20 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let one = Ec1::one();
+                let one = EpAffine::one().to_projective();
                 let two = one.double();
                 let three = one + two;
+
+                let one = one.to_affine();
+                let two = two.to_affine();
+                let three = three.to_affine();
 
                 let (one_x, one_y) = one.get_xy().unwrap();
                 let (two_x, two_y) = two.get_xy().unwrap();
                 let (three_x, three_y) = three.get_xy().unwrap();
 
-                let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
-                let p2 = CurvePoint::<Ec1>::constant(two_x, two_y);
+                let p1 = CurvePoint::<EpAffine>::constant(one_x, one_y);
+                let p2 = CurvePoint::<EpAffine>::constant(two_x, two_y);
 
                 let p3 = p1.add(cs.namespace(|| "1 + 2"), &p2)?;
                 let (p3_x, p3_y) = p3.get_xy();
@@ -2313,14 +2337,14 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let two = Ec1::one().double();
+                let two = Ep::one().double().to_affine();
                 let negtwo = -two;
 
                 let (two_x, two_y) = two.get_xy().unwrap();
                 let (negtwo_x, negtwo_y) = negtwo.get_xy().unwrap();
 
-                let p1 = CurvePoint::<Ec1>::constant(two_x, two_y);
-                let p2 = CurvePoint::<Ec1>::constant(negtwo_x, negtwo_y);
+                let p1 = CurvePoint::<EpAffine>::constant(two_x, two_y);
+                let p2 = CurvePoint::<EpAffine>::constant(negtwo_x, negtwo_y);
 
                 let psum = p1.add(cs.namespace(|| "2 + (-2)"), &p2)?;
                 let (psum_x, psum_y) = psum.get_xy();
@@ -2349,8 +2373,8 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let zero = Ec1::zero();
-                let one = Ec1::one();
+                let zero = EpAffine::zero();
+                let one = EpAffine::one();
 
                 let (one_x, one_y) = one.get_xy().unwrap();
 
@@ -2384,14 +2408,14 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let zero = Ec1::zero();
-                let one = Ec1::one();
-                let two = one.double();
+                let zero = EpAffine::zero();
+                let one = EpAffine::one();
+                let two = one.to_projective().double().to_affine();
 
                 let (two_x, two_y) = two.get_xy().unwrap();
 
                 let p0 = CurvePoint::witness(cs.namespace(|| "0"), || Ok(zero))?;
-                let p2 = CurvePoint::<Ec1>::constant(two_x, two_y);
+                let p2 = CurvePoint::<EpAffine>::constant(two_x, two_y);
 
                 let psum = p0.add(cs.namespace(|| "0 + 2"), &p2)?;
                 let (psum_x, psum_y) = psum.get_xy();
@@ -2420,7 +2444,7 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let zero = Ec1::zero();
+                let zero = EpAffine::zero();
                 let p0 = CurvePoint::witness(cs.namespace(|| "0"), || Ok(zero))?;
 
                 let psum = p0.add(cs.namespace(|| "0 + 0"), &p0)?;
@@ -2450,16 +2474,20 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let one = Ec1::one();
+                let one = Ep::one();
                 let two = one.double();
                 let three = one + two;
+
+                let one = one.to_affine();
+                let two = two.to_affine();
+                let three = three.to_affine();
 
                 let (one_x, one_y) = one.get_xy().unwrap();
                 let (two_x, two_y) = two.get_xy().unwrap();
                 let (three_x, three_y) = three.get_xy().unwrap();
 
-                let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
-                let p2 = CurvePoint::<Ec1>::constant(two_x, two_y);
+                let p1 = CurvePoint::<EpAffine>::constant(one_x, one_y);
+                let p2 = CurvePoint::<EpAffine>::constant(two_x, two_y);
 
                 let p3a = p1.add_conditionally(
                     cs.namespace(|| "true ? 1 + 2"),
@@ -2503,16 +2531,20 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let one = Ec1::one();
+                let one = Ep::one();
                 let two = one.double();
                 let three = one + two;
+
+                let one = one.to_affine();
+                let two = two.to_affine();
+                let three = three.to_affine();
 
                 let (one_x, one_y) = one.get_xy().unwrap();
                 let (two_x, two_y) = two.get_xy().unwrap();
                 let (three_x, three_y) = three.get_xy().unwrap();
 
-                let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
-                let p2 = CurvePoint::<Ec1>::constant(two_x, two_y);
+                let p1 = CurvePoint::<EpAffine>::constant(one_x, one_y);
+                let p2 = CurvePoint::<EpAffine>::constant(two_x, two_y);
 
                 let p3a = p1.add_conditionally_incomplete(
                     cs.namespace(|| "true ? 1 + 2"),
@@ -2556,13 +2588,16 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let two = Ec1::one().double();
+                let two = Ep::one().double();
                 let four = two.double();
+
+                let two = two.to_affine();
+                let four = four.to_affine();
 
                 let (two_x, two_y) = two.get_xy().unwrap();
                 let (four_x, four_y) = four.get_xy().unwrap();
 
-                let p = CurvePoint::<Ec1>::constant(two_x, two_y);
+                let p = CurvePoint::<EpAffine>::constant(two_x, two_y);
 
                 let p_dbl = p.double(cs.namespace(|| "[2] 2"))?;
                 let (p_dbl_x, p_dbl_y) = p_dbl.get_xy();
@@ -2591,7 +2626,7 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let p = CurvePoint::<Ec1>::identity();
+                let p = CurvePoint::<EpAffine>::identity();
 
                 let p_dbl = p.double(cs.namespace(|| "[2] 0"))?;
                 let (p_dbl_x, p_dbl_y) = p_dbl.get_xy();
@@ -2620,16 +2655,20 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let one = Ec1::one();
+                let one = Ep::one();
                 let two = one.double();
                 let five = two.double() + one;
+
+                let one = one.to_affine();
+                let two = two.to_affine();
+                let five = five.to_affine();
 
                 let (one_x, one_y) = one.get_xy().unwrap();
                 let (two_x, two_y) = two.get_xy().unwrap();
                 let (five_x, five_y) = five.get_xy().unwrap();
 
-                let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
-                let p2 = CurvePoint::<Ec1>::constant(two_x, two_y);
+                let p1 = CurvePoint::<EpAffine>::constant(one_x, one_y);
+                let p2 = CurvePoint::<EpAffine>::constant(two_x, two_y);
 
                 let p5 = p2.double_and_add_incomplete(cs.namespace(|| "[2] 2 + 1"), &p1)?;
 
@@ -2659,7 +2698,7 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let p = CurvePoint::<Ec1>::identity();
+                let p = CurvePoint::<EpAffine>::identity();
 
                 let p_res = p.double_and_add_incomplete(cs.namespace(|| "[2] 0 + 0"), &p)?;
 
@@ -2689,13 +2728,16 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let one = Ec1::one();
+                let one = Ep::one();
                 let five = one.double().double() + one;
+
+                let one = one.to_affine();
+                let five = five.to_affine();
 
                 let (one_x, one_y) = one.get_xy().unwrap();
                 let (five_x, five_y) = five.get_xy().unwrap();
 
-                let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
+                let p1 = CurvePoint::<EpAffine>::constant(one_x, one_y);
 
                 let scalar5 = [
                     AllocatedBit::alloc(cs.namespace(|| "5 bit 0"), || Ok(true))?,
@@ -2733,15 +2775,18 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let one = Ec1::one();
+                let one = Ep::one();
                 let five = one.double().double() + one;
+
+                let one = one.to_affine();
+                let five = five.to_affine();
 
                 let (one_x, one_y) = one.get_xy().unwrap();
                 let (five_x, five_y) = five.get_xy().unwrap();
                 println!("five.x = {:?}", five_x);
                 println!("five.y = {:?}", five_y);
 
-                let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
+                let p1 = CurvePoint::<EpAffine>::constant(one_x, one_y);
 
                 let scalar5 = [
                     AllocatedBit::alloc(cs.namespace(|| "5 bit 0"), || Ok(true))?,
@@ -2780,7 +2825,7 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let p = CurvePoint::<Ec1>::identity();
+                let p = CurvePoint::<EpAffine>::identity();
 
                 let scalar5 = [
                     AllocatedBit::alloc(cs.namespace(|| "5 bit 0"), || Ok(true))?,
@@ -2815,13 +2860,15 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let one = Ec1::one();
+                let one = EpAffine::one();
                 let invfive = one * Fq::from(5).invert().unwrap();
+
+                let invfive = invfive.to_affine();
 
                 let (one_x, one_y) = one.get_xy().unwrap();
                 let (invfive_x, invfive_y) = invfive.get_xy().unwrap();
 
-                let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
+                let p1 = CurvePoint::<EpAffine>::constant(one_x, one_y);
 
                 let scalar5 = [
                     AllocatedBit::alloc(cs.namespace(|| "5 bit 0"), || Ok(true))?,
@@ -2859,13 +2906,15 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let one = Ec1::one();
+                let one = EpAffine::one();
                 let invfive = one * Fq::from(5).invert().unwrap();
+
+                let invfive = invfive.to_affine();
 
                 let (one_x, one_y) = one.get_xy().unwrap();
                 let (invfive_x, invfive_y) = invfive.get_xy().unwrap();
 
-                let p1 = CurvePoint::<Ec1>::constant(one_x, one_y);
+                let p1 = CurvePoint::<EpAffine>::constant(one_x, one_y);
 
                 let scalar5 = [
                     AllocatedBit::alloc(cs.namespace(|| "5 bit 0"), || Ok(true))?,
@@ -2900,11 +2949,10 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let p = CurvePoint::<Ec1>::witness(&mut cs, || Ok(Ec1::one()))?;
+                let p = CurvePoint::<EpAffine>::witness(&mut cs, || Ok(EpAffine::one()))?;
 
-                let mut scalar5 = vec![
-                    AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(true))?; 128
-                ];
+                let mut scalar5 =
+                    vec![AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(true))?; 128];
                 scalar5[1] = AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(false))?;
                 scalar5[2] = AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(false))?;
                 scalar5[3] = AllocatedBit::alloc(cs.namespace(|| "bit"), || Ok(false))?;
@@ -2936,7 +2984,7 @@ mod test {
                 &self,
                 mut cs: &mut CS,
             ) -> Result<(), SynthesisError> {
-                let p = CurvePoint::<Ec1>::identity();
+                let p = CurvePoint::<EpAffine>::identity();
 
                 let scalar5 = [
                     AllocatedBit::alloc(cs.namespace(|| "5 bit 0"), || Ok(true))?,

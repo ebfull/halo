@@ -616,34 +616,3 @@ macro_rules! impl_binops_multiplicative {
         }
     };
 }
-
-// TODO: This should be upstreamed to subtle.
-// See https://github.com/dalek-cryptography/subtle/pull/48
-pub trait CtOptionExt1<T> {
-    /// Calls f() and either returns self if it contains a value,
-    /// or returns the output of f() otherwise.
-    fn or_else<F: FnOnce() -> subtle::CtOption<T>>(self, f: F) -> subtle::CtOption<T>;
-}
-
-pub trait CtOptionExt2<T> {
-    fn to_option(self) -> Option<T>;
-}
-
-impl<T: subtle::ConditionallySelectable> CtOptionExt1<T> for subtle::CtOption<T> {
-    fn or_else<F: FnOnce() -> subtle::CtOption<T>>(self, f: F) -> subtle::CtOption<T> {
-        let is_none = self.is_none();
-        let f = f();
-
-        subtle::ConditionallySelectable::conditional_select(&self, &f, is_none)
-    }
-}
-
-impl<T> CtOptionExt2<T> for subtle::CtOption<T> {
-    fn to_option(self) -> Option<T> {
-        if bool::from(self.is_none()) {
-            None
-        } else {
-            Some(self.unwrap())
-        }
-    }
-}

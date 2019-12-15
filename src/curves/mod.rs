@@ -132,6 +132,14 @@ pub trait CurveAffine:
     /// Converts this element into its projective form.
     fn to_projective(&self) -> Self::Projective;
 
+    /// Gets the (x, y) coordinates of this point, if it is not at
+    /// infinity.
+    fn get_xy(&self) -> Option<(Self::Base, Self::Base)>;
+
+    /// Obtains a point given (x, y), failing if it is not on the
+    /// curve.
+    fn from_xy(x: Self::Base, y: Self::Base) -> CtOption<Self>;
+
     /// Returns whether or not this element is on the curve; should
     /// always be true unless an "unchecked" API was used.
     fn is_on_curve(&self) -> Choice;
@@ -750,14 +758,27 @@ macro_rules! new_curve_impl {
                 }
             }
 
+            fn get_xy(&self) -> Option<(Self::Base, Self::Base)> {
+                if self.is_zero().into() {
+                    None
+                } else {
+                    Some((self.x, self.y))
+                }
+            }
+
+            fn from_xy(x: Self::Base, y: Self::Base) -> CtOption<Self> {
+                let p = $name_affine {
+                    x, y, infinity: 0u8.into()
+                };
+                CtOption::new(p, p.is_on_curve())
+            }
+
             fn from_bytes(bytes: &[u8; 32]) -> CtOption<Self> {
                 let mut tmp = *bytes;
                 let ysign = Choice::from(tmp[31] >> 7);
                 tmp[31] &= 0b0111_1111;
 
                 $base::from_bytes(&tmp).and_then(|x| {
-                    use crate::util::CtOptionExt1;
-
                     CtOption::new(Self::zero(), x.is_zero() & (!ysign)).or_else(|| {
                         let x3 = x.square() * x;
                         (x3 + $name::curve_constant_b()).sqrt().and_then(|y| {
@@ -799,8 +820,6 @@ macro_rules! new_curve_impl {
 
                 $base::from_bytes(&xbytes).and_then(|x| {
                     $base::from_bytes(&ybytes).and_then(|y| {
-                        use crate::util::CtOptionExt1;
-
                         CtOption::new(Self::zero(), x.is_zero() & y.is_zero()).or_else(|| {
                             let on_curve =
                                 (x * x.square() + $name::curve_constant_b()).ct_eq(&y.square());

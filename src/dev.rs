@@ -7,8 +7,8 @@ use crate::{
     },
     curves::Curve,
     fields::Field,
-    proofs::{Deferred, Leftovers, Params},
-    recursion::{RecursiveProof, VerificationCircuit},
+    //proofs::{Deferred, Leftovers, Params},
+    //recursion::{RecursiveProof, VerificationCircuit},
     synthesis::{Backend, SynthesisDriver},
 };
 use std::collections::BTreeMap;
@@ -287,7 +287,7 @@ pub fn is_satisfied<F: Field, C: Circuit<F>, S: SynthesisDriver>(
 
     Ok(true)
 }
-
+/*
 /// Checks if the recursive circuit produces a satisfying assignment for the
 /// constraint system, given the previous proof and new payload.
 pub fn recursive_is_satisfied<
@@ -754,3 +754,4 @@ where
 
     constraint_count::<_, _, S>(&circuit)
 }
+*/
