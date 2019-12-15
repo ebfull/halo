@@ -1,6 +1,6 @@
-#[cfg(test)]
-#[macro_use]
-extern crate hex_literal;
+// #[cfg(test)]
+// #[macro_use]
+// extern crate hex_literal;
 
 #[macro_use]
 mod util;
@@ -8,23 +8,11 @@ mod util;
 mod curves;
 mod fields;
 mod newproofs;
-
-mod circuits;
-// mod curves;
-pub mod dev;
-// mod fields;
-mod gadgets;
-// mod proofs;
-// mod recursion;
+mod newcircuits;
 pub mod rescue;
-mod synthesis;
 
-pub use circuits::*;
+pub use util::*;
 pub use curves::*;
 pub use fields::*;
-pub use gadgets::*;
 pub use newproofs::*;
-// pub use proofs::*;
-// pub use recursion::*;
-pub use synthesis::*;
-pub use util::*;
+pub use newcircuits::*;

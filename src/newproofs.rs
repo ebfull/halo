@@ -1,4 +1,5 @@
 use super::{Challenge, Curve, CurveAffine, Field};
+use super::rescue::Rescue;
 
 pub struct Proof<C: CurveAffine> {
     // These are the commitments sent after K = Commit(k(Y)) has been computed
@@ -76,4 +77,23 @@ pub struct Amortized<C: CurveAffine> {
     pub s_new_commitment: C,
     pub y_new: Challenge,
     pub challenges_new_sq_packed: Vec<Challenge>, // length is k
+}
+
+fn append_point<C: CurveAffine>(transcript: &mut Rescue<C::Base>, p: &C) {
+    let xy = p.get_xy();
+    if bool::from(xy.is_some()) {
+        let (x, y) = xy.unwrap();
+        transcript.absorb(x);
+        transcript.absorb(y);
+    } else {
+        transcript.absorb(C::Base::zero());
+        transcript.absorb(C::Base::zero());
+    }
+}
+
+fn get_challenge<F1: Field, F2: Field>(transcript: &mut Rescue<F1>) -> F2 {
+    let challenge = transcript.squeeze();
+    let challenge = challenge.get_lower_128();
+
+    F2::from_u128(challenge)
 }
