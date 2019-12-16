@@ -194,6 +194,8 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
 
     // TODO, better API than this
     assert!(assignment.n < params.n);
+    println!("prover: n = {}", assignment.n);
+    println!("prover: q = {}", assignment.q);
     assert!(assignment.q < params.d);
 
     assignment.a.resize(params.n, C::Scalar::zero());
@@ -1060,6 +1062,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
 
     let mut transcript = Rescue::<C::Base>::new();
 
+    use std::time::Instant;
+    let start = Instant::now();
     // k(Y)
     let mut ky = vec![];
     ky.push(C::Scalar::zero());
@@ -1075,6 +1079,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let k_commitment = params.add_randomness(&k_commitment, C::Scalar::one());
     append_point(&mut transcript, &k_commitment);
 
+    println!("verifier, K commitment added to transcript, elapsed {:?}", start.elapsed());
+
     append_point(&mut transcript, &proof.r_commitment);
     let y_cur = crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
     append_point(&mut transcript, &proof.s_cur_commitment);
@@ -1085,6 +1091,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let y_new_packed = get_challenge(&mut transcript);
     let y_new = crate::util::get_challenge_scalar::<C::Scalar>(y_new_packed);
     append_point(&mut transcript, &proof.s_new_commitment);
+
+    println!("verifier, S_new commitment added to transcript, elapsed {:?}", start.elapsed());
 
     let mut dual_transcript = Rescue::<C::Scalar>::new();
     for o in &proof.k_openings {
@@ -1099,6 +1107,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
 
     dual_transcript.absorb(proof.t_positive_opening);
     dual_transcript.absorb(proof.t_negative_opening);
+
+    println!("verifier, first round of openings done, elapsed {:?}", start.elapsed());
 
     // Is the constraint system satisfied
     {
@@ -1145,6 +1155,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
         }
     }
 
+    println!("verifier, constraint system satisfied, elapsed {:?}", start.elapsed());
+
     let hash_1 = dual_transcript.squeeze();
     let hash_1 = C::Base::from_bytes(&hash_1.to_bytes()).unwrap(); // TODO: lazy; this can fail (low probability)
     transcript.absorb(hash_1);
@@ -1157,6 +1169,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let p_commitment = p_commitment * z1 + &proof.t_negative_commitment.to_projective();
     let p_commitment = p_commitment * z1 + &proof.s_new_commitment.to_projective();
     let p_commitment = p_commitment * z1 + &old_amortized.g_new_commitment.to_projective();
+
+    println!("verifier, P computed, elapsed {:?}", start.elapsed());
 
     let mut dual_transcript = Rescue::<C::Scalar>::new();
     for o in proof.p_openings.iter() {
@@ -1176,6 +1190,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let q_commitment = q_commitment * z2 + &k_commitment.to_projective();
     let q_commitment = q_commitment * z2 + &proof.c_commitment.to_projective();
 
+    println!("verifier, Q computed, elapsed {:?}", start.elapsed());
+
     append_point::<C>(&mut transcript, &proof.h_commitment);
 
     // Obtain the challenge z_3
@@ -1193,6 +1209,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
 
     let f_commitment = q_commitment;
     let f_commitment = f_commitment * z4 + &proof.h_commitment.to_projective();
+
+    println!("verifier, F computed, elapsed {:?}", start.elapsed());
 
     // Compute expected opening of F
     let f_opening = {
@@ -1272,6 +1290,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
         (proof.q_opening * &z4) + &((proof.q_opening - &t) * &denom.invert().unwrap())
     };
 
+    println!("verifier, f computed, elapsed {:?}", start.elapsed());
+
     let mut acc = f_commitment;
 
     let mut challenges_new_sq_packed = vec![];
@@ -1293,13 +1313,18 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
 
     let acc = params.add_value(&acc.to_affine(), f_opening);
 
+    println!("verifier, acc computed, elapsed {:?}", start.elapsed());
+
     let mut challenges_inv = challenges_new.clone();
     let allinv_new = C::Scalar::batch_invert(&mut challenges_inv);
 
     let b = crate::util::compute_b(z3, &challenges_new, &challenges_inv);
-    let expected_g = crate::util::compute_g(&params.generators, &challenges_new_sq, allinv_new);
 
-    assert_eq!(expected_g.to_affine(), proof.g_new_commitment);
+    #[cfg(feature = "sanity-checks")]
+    {
+        let expected_g = crate::util::compute_g(&params.generators, &challenges_new_sq, allinv_new);
+        assert_eq!(expected_g.to_affine(), proof.g_new_commitment);
+    }
 
     append_point(&mut transcript, &proof.delta);
     append_point(&mut transcript, &proof.beta);
@@ -1315,6 +1340,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let rhs = rhs + &proof.g_new_commitment.to_projective();
     let rhs = rhs * proof.r1;
     let rhs = rhs + &(params.h * proof.r2);
+
+    println!("verifier, schnorr verification done, elapsed {:?}", start.elapsed());
 
     if lhs != rhs {
         return Err(SynthesisError::Violation);
@@ -1582,6 +1609,7 @@ mod test {
 
     struct CubingCircuit<F: Field> {
         x: Option<F>,
+        num_cubes: usize
     }
 
     impl<F: Field> Circuit<F> for CubingCircuit<F> {
@@ -1614,6 +1642,34 @@ mod test {
 
             cs.enforce_zero(LinearCombination::from(x3) - c);
 
+            for _ in 0..self.num_cubes {
+                let mut x2value = None;
+                let (x, _, x2) = cs.multiply(|| {
+                    let x = self.x.ok_or(SynthesisError::AssignmentMissing)?;
+                    let x2 = x.square();
+
+                    x2value = Some(x2);
+
+                    Ok((x, x, x2))
+                })?;
+                let mut x3value = None;
+                let (a, b, c) = cs.multiply(|| {
+                    let x = self.x.ok_or(SynthesisError::AssignmentMissing)?;
+                    let x2 = x2value.ok_or(SynthesisError::AssignmentMissing)?;
+                    //let x3 = -(x * x2);
+                    let x3 = x * x2;
+
+                    x3value = Some(x3);
+
+                    Ok((x, x2, x3))
+                })?;
+
+                cs.enforce_zero(LinearCombination::from(x) - a);
+                cs.enforce_zero(LinearCombination::from(x2) - b);
+
+                cs.enforce_zero(LinearCombination::from(x3) - c);
+            }
+
             Ok(())
         }
     }
@@ -1623,21 +1679,65 @@ mod test {
         let ep_params = Params::<EpAffine>::new(4);
         let eq_params = Params::<EqAffine>::new(4);
 
-        let verifier_circuit_a: CubingCircuit<Fq> = CubingCircuit { x: None };
-        let verifier_circuit_b: CubingCircuit<Fp> = CubingCircuit { x: None };
+        let verifier_circuit_a: CubingCircuit<Fq> = CubingCircuit { x: None, num_cubes: 0 };
+        let verifier_circuit_b: CubingCircuit<Fp> = CubingCircuit { x: None, num_cubes: 0 };
 
         let a = Amortized::<EpAffine>::new(&ep_params, &verifier_circuit_a);
         let b = Amortized::<EqAffine>::new(&eq_params, &verifier_circuit_b);
     }
+
+    /*
+    #[test]
+    fn test_big() {
+        use std::time::Instant;
+
+        println!("creating params");
+        let params = Params::<EpAffine>::new(19);
+        assert_eq!(params.n, 1 << 17);
+
+        const NUM_CUBES: usize = 55000;
+
+        let mut prover_circuit: CubingCircuit<Fq> = CubingCircuit {
+            x: Some(Fq::from(10)),
+            num_cubes: NUM_CUBES,
+        };
+        let verifier_circuit: CubingCircuit<Fq> = CubingCircuit { x: None, num_cubes: NUM_CUBES };
+
+        println!("creating dummy amortized");
+        let dummy_amortized = Amortized::new(&params, &verifier_circuit).unwrap();
+
+        println!("creating proof");
+        // proving time..
+        let start = Instant::now();
+        let proof = create_proof(&params, &prover_circuit, &dummy_amortized).unwrap();
+        let elapsed = start.elapsed();
+
+        println!("verifying proof");
+        let start_verify = Instant::now();
+        let new_amortized = verify_proof(
+            &params,
+            &proof,
+            &dummy_amortized,
+            &verifier_circuit,
+            &[Fq::from(1000)],
+        )
+        .unwrap();
+        let elapsed_verify_basic = start_verify.elapsed();
+        new_amortized.verify(&params, &verifier_circuit).unwrap();
+        let elapsed_verify = start_verify.elapsed();
+
+        panic!("proving time {:?}, verifying time {:?}, basic verify {:?}", elapsed, elapsed_verify, elapsed_verify_basic);
+    }
+    */
 
     #[test]
     fn my_test_circuit() {
         let params = Params::<EpAffine>::new(4);
 
         let mut prover_circuit: CubingCircuit<Fq> = CubingCircuit {
-            x: Some(Fq::from(10)),
+            x: Some(Fq::from(10)), num_cubes: 0
         };
-        let verifier_circuit: CubingCircuit<Fq> = CubingCircuit { x: None };
+        let verifier_circuit: CubingCircuit<Fq> = CubingCircuit { x: None, num_cubes: 0 };
 
         // // phony deferred should be valid
         // let a = Deferred::<<Ec1 as Curve>::Scalar>::dummy(params.k);
