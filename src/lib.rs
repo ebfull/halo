@@ -2,17 +2,17 @@
 // #[macro_use]
 // extern crate hex_literal;
 
+#![type_length_limit="2360122"]
+
 #[macro_use]
-mod util;
+pub mod util;
 
 mod curves;
 mod fields;
-mod newproofs;
-mod newcircuits;
+pub mod newcircuits;
+pub mod newproofs;
+pub mod pedersen;
 pub mod rescue;
 
-pub use util::*;
 pub use curves::*;
 pub use fields::*;
-pub use newproofs::*;
-pub use newcircuits::*;

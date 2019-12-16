@@ -1,6 +1,6 @@
 use crate::Field;
-use std::ops::{Add, Sub, Mul, Neg};
 use std::marker::PhantomData;
+use std::ops::{Add, Mul, Neg, Sub};
 
 #[derive(Copy, Clone, Debug)]
 pub enum Variable {
@@ -30,38 +30,24 @@ pub trait ConstraintSystem<FF: Field> {
     /// determine the assignment of the variable. The given `annotation` function is invoked
     /// in testing contexts in order to derive a unique name for this variable in the current
     /// namespace.
-    fn alloc<F, A, AR>(&mut self, annotation: A, value: F) -> Result<Variable, SynthesisError>
+    fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
     where
-        F: FnOnce() -> Result<FF, SynthesisError>,
-        A: FnOnce() -> AR,
-        AR: Into<String>;
+        F: FnOnce() -> Result<FF, SynthesisError>;
 
     /// Allocate a public variable in the constraint system. The provided function is used to
     /// determine the assignment of the variable.
-    fn alloc_input<F, A, AR>(
-        &mut self,
-        annotation: A,
-        value: F,
-    ) -> Result<Variable, SynthesisError>
+    fn alloc_input<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
     where
-        F: FnOnce() -> Result<FF, SynthesisError>,
-        A: FnOnce() -> AR,
-        AR: Into<String>;
+        F: FnOnce() -> Result<FF, SynthesisError>;
 
     /// Create a linear constraint from the provided LinearCombination.
     fn enforce_zero(&mut self, lc: LinearCombination<FF>);
 
     /// Create a multiplication gate. The provided function is used to determine the
     /// assignments.
-    fn multiply<F, A, AR>(
-        &mut self,
-        annotation: A,
-        values: F,
-    ) -> Result<(Variable, Variable, Variable), SynthesisError>
+    fn multiply<F>(&mut self, values: F) -> Result<(Variable, Variable, Variable), SynthesisError>
     where
-        F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
-        A: FnOnce() -> AR,
-        AR: Into<String>;
+        F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -292,16 +278,9 @@ pub trait Backend<FF: Field> {
     /// variable allocation, and None if it is being used as a constraint.
     ///
     /// Might error if this backend expects to know it.
-    fn set_var<F, A, AR>(
-        &mut self,
-        _annotation: Option<A>,
-        _var: Variable,
-        _value: F,
-    ) -> Result<(), SynthesisError>
+    fn set_var<F>(&mut self, _var: Variable, _value: F) -> Result<(), SynthesisError>
     where
         F: FnOnce() -> Result<FF, SynthesisError>,
-        A: FnOnce() -> AR,
-        AR: Into<String>,
     {
         Ok(())
     }
@@ -310,18 +289,10 @@ pub trait Backend<FF: Field> {
     ///
     /// `allocation` will be Some if this multiplication gate is being used as a
     /// constraint, and None if it is being used for variable allocation.
-    fn new_multiplication_gate<A, AR>(&mut self, _annotation: Option<A>)
-    where
-        A: FnOnce() -> AR,
-        AR: Into<String>,
-    {
-    }
+    fn new_multiplication_gate(&mut self) {}
 
     /// Create a new linear constraint, returning a cached index.
-    fn new_linear_constraint<A, AR>(&mut self, annotation: A) -> Self::LinearConstraintIndex
-    where
-        A: FnOnce() -> AR,
-        AR: Into<String>;
+    fn new_linear_constraint(&mut self) -> Self::LinearConstraintIndex;
 
     /// Insert a term into a linear constraint.
     fn insert_coefficient(
@@ -369,15 +340,9 @@ impl SynthesisDriver for Basic {
         impl<FF: Field, B: Backend<FF>> ConstraintSystem<FF> for Synthesizer<FF, B> {
             const ONE: Variable = Variable::A(1);
 
-            fn alloc<F, A, AR>(
-                &mut self,
-                annotation: A,
-                value: F,
-            ) -> Result<Variable, SynthesisError>
+            fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
             where
                 F: FnOnce() -> Result<FF, SynthesisError>,
-                A: FnOnce() -> AR,
-                AR: Into<String>,
             {
                 match self.current_variable.take() {
                     Some(index) => {
@@ -389,7 +354,7 @@ impl SynthesisDriver for Basic {
 
                         let value_a = self.backend.get_var(var_a);
 
-                        self.backend.set_var(Some(annotation), var_b, || {
+                        self.backend.set_var(var_b, || {
                             let value_b = value()?;
                             product = Some(value_a.ok_or(SynthesisError::AssignmentMissing)?);
                             product.as_mut().map(|product| {
@@ -399,9 +364,8 @@ impl SynthesisDriver for Basic {
                             Ok(value_b)
                         })?;
 
-                        self.backend.set_var::<_, A, AR>(None, var_c, || {
-                            product.ok_or(SynthesisError::AssignmentMissing)
-                        })?;
+                        self.backend
+                            .set_var(var_c, || product.ok_or(SynthesisError::AssignmentMissing))?;
 
                         self.current_variable = None;
 
@@ -410,11 +374,11 @@ impl SynthesisDriver for Basic {
                     None => {
                         self.n += 1;
                         let index = self.n;
-                        self.backend.new_multiplication_gate::<A, AR>(None);
+                        self.backend.new_multiplication_gate();
 
                         let var_a = Variable::A(index);
 
-                        self.backend.set_var(Some(annotation), var_a, value)?;
+                        self.backend.set_var(var_a, value)?;
 
                         self.current_variable = Some(index);
 
@@ -423,18 +387,12 @@ impl SynthesisDriver for Basic {
                 }
             }
 
-            fn alloc_input<F, A, AR>(
-                &mut self,
-                annotation: A,
-                value: F,
-            ) -> Result<Variable, SynthesisError>
+            fn alloc_input<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
             where
                 F: FnOnce() -> Result<FF, SynthesisError>,
-                A: FnOnce() -> AR,
-                AR: Into<String>,
             {
                 let value = value();
-                let input_var = self.alloc(annotation, || value)?;
+                let input_var = self.alloc(|| value)?;
 
                 self.enforce_zero(LinearCombination::zero() + input_var);
                 self.backend.new_k_power(self.q, value.ok())?;
@@ -445,26 +403,23 @@ impl SynthesisDriver for Basic {
             fn enforce_zero(&mut self, lc: LinearCombination<FF>) {
                 self.q += 1;
                 // TODO: Don't create a new linear constraint if lc is empty
-                let y = self.backend.new_linear_constraint(|| "TODO_LINEAR");
+                let y = self.backend.new_linear_constraint();
 
                 for (var, coeff) in lc.as_ref() {
                     self.backend.insert_coefficient(*var, *coeff, &y);
                 }
             }
 
-            fn multiply<F, A, AR>(
+            fn multiply<F>(
                 &mut self,
-                annotation: A,
                 values: F,
             ) -> Result<(Variable, Variable, Variable), SynthesisError>
             where
                 F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
-                A: FnOnce() -> AR,
-                AR: Into<String>,
             {
                 self.n += 1;
                 let index = self.n;
-                self.backend.new_multiplication_gate(Some(annotation));
+                self.backend.new_multiplication_gate();
 
                 let a = Variable::A(index);
                 let b = Variable::B(index);
@@ -473,7 +428,7 @@ impl SynthesisDriver for Basic {
                 let mut b_val = None;
                 let mut c_val = None;
 
-                self.backend.set_var::<_, A, AR>(None, a, || {
+                self.backend.set_var(a, || {
                     let (a, b, c) = values()?;
 
                     b_val = Some(b);
@@ -482,13 +437,11 @@ impl SynthesisDriver for Basic {
                     Ok(a)
                 })?;
 
-                self.backend.set_var::<_, A, AR>(None, b, || {
-                    b_val.ok_or(SynthesisError::AssignmentMissing)
-                })?;
+                self.backend
+                    .set_var(b, || b_val.ok_or(SynthesisError::AssignmentMissing))?;
 
-                self.backend.set_var::<_, A, AR>(None, c, || {
-                    c_val.ok_or(SynthesisError::AssignmentMissing)
-                })?;
+                self.backend
+                    .set_var(c, || c_val.ok_or(SynthesisError::AssignmentMissing))?;
 
                 Ok((a, b, c))
             }
@@ -503,7 +456,7 @@ impl SynthesisDriver for Basic {
         };
 
         let one = tmp
-            .alloc_input(|| "one", || Ok(F::one()))
+            .alloc_input(|| Ok(F::one()))
             .expect("should have no issues");
 
         match (one, <Synthesizer<F, B> as ConstraintSystem<F>>::ONE) {
@@ -567,21 +520,13 @@ impl<F: Field> SxEval<F> {
 impl<'a, F: Field> Backend<F> for &'a mut SxEval<F> {
     type LinearConstraintIndex = F;
 
-    fn new_multiplication_gate<A, AR>(&mut self, _annotation: Option<A>)
-    where
-        A: FnOnce() -> AR,
-        AR: Into<String>,
-    {
+    fn new_multiplication_gate(&mut self) {
         self.u.push(F::zero());
         self.v.push(F::zero());
         self.w.push(F::zero());
     }
 
-    fn new_linear_constraint<A, AR>(&mut self, _annotation: A) -> F
-    where
-        A: FnOnce() -> AR,
-        AR: Into<String>,
-    {
+    fn new_linear_constraint(&mut self) -> F {
         self.cur_y.mul_assign(&self.y);
         self.cur_y
     }
@@ -604,7 +549,7 @@ impl<'a, F: Field> Backend<F> for &'a mut SxEval<F> {
 }
 
 /*
-s(X, Y) =   \sum\limits_{i=1}^N \sum\limits_{q=1}^Q Y^{q} u_{i,q} x^{-i}
+s(x, Y) =   \sum\limits_{i=1}^N \sum\limits_{q=1}^Q Y^{q} u_{i,q} x^{-i}
           + \sum\limits_{i=1}^N \sum\limits_{q=1}^Q Y^{q} v_{i,q} x^{i}
           + \sum\limits_{i=1}^N \sum\limits_{q=1}^Q Y^{q} w_{i,q} x^{i+N}
 */
@@ -620,13 +565,6 @@ pub struct SyEval<F: Field> {
 
     // Coefficients of s(x, Y)
     poly: Vec<F>,
-    /*
-        // coeffs for y^1, ..., y^{N+Q}
-        positive_coeffs: Vec<E::Fr>,
-
-        // coeffs for y^{-1}, y^{-2}, ..., y^{-N}
-        negative_coeffs: Vec<E::Fr>,
-    */
 }
 
 impl<F: Field> SyEval<F> {
@@ -671,11 +609,7 @@ impl<F: Field> SyEval<F> {
 impl<'a, F: Field> Backend<F> for &'a mut SyEval<F> {
     type LinearConstraintIndex = usize;
 
-    fn new_linear_constraint<A, AR>(&mut self, _annotation: A) -> Self::LinearConstraintIndex
-    where
-        A: FnOnce() -> AR,
-        AR: Into<String>,
-    {
+    fn new_linear_constraint(&mut self) -> Self::LinearConstraintIndex {
         let index = self.poly.len();
         self.poly.push(F::zero());
         index

@@ -133,7 +133,7 @@ pub trait CurveAffine:
     fn to_projective(&self) -> Self::Projective;
 
     /// Gets the (x, y) coordinates of this point, if it is not at
-    /// infinity.
+    /// infinity. Should be CtOption?
     fn get_xy(&self) -> Option<(Self::Base, Self::Base)>;
 
     /// Obtains a point given (x, y), failing if it is not on the

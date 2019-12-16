@@ -16,15 +16,15 @@ subtle = "2.2.1"
 num_cpus = "*"
 crossbeam-utils = "*"
 
-[dependencies.rand_core]
-version = "0.5"
-features = ["std"]
+[dependencies.rand]
+version = "0.7"
+features = ["std", "small_rng"]
 
-[dev-dependencies]
-hex-literal = "0.1"
-rand_xorshift = "0.2"
-sha2 = "0.8"
-uint = "0.8"
+# [dev-dependencies]
+# hex-literal = "0.1"
+# rand_xorshift = "0.2"
+# sha2 = "0.8"
+# uint = "0.8"
 
-[features]
-gadget-traces = ["backtrace"]
+# [features]
+# gadget-traces = ["backtrace"]

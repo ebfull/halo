@@ -2,6 +2,49 @@ use crate::{Curve, CurveAffine, Field};
 use crossbeam_utils::thread;
 use num_cpus;
 
+/// Divides this polynomial by (X - b)
+pub fn divide_root<F: Field, I: IntoIterator<Item = F>>(a: I, mut b: F) -> impl Iterator<Item=F> + ExactSizeIterator
+where
+    I::IntoIter: ExactSizeIterator,
+{
+    b = -b;
+    let a = a.into_iter();
+
+    let len = a.len() - 1;
+
+    let mut tmp = F::zero();
+    a.take(len).map(move |mut lead_coeff| {
+        lead_coeff.sub_assign(&tmp);
+        let tmp2 = lead_coeff;
+        tmp = lead_coeff;
+        tmp.mul_assign(&b);
+        tmp2
+    })
+}
+
+/// Divides polynomial `a` in `X` by `X - b` with
+/// no remainder.
+pub fn kate_divison<'a, F: Field, I: IntoIterator<Item = &'a F>>(a: I, mut b: F) -> Vec<F>
+where
+    I::IntoIter: DoubleEndedIterator + ExactSizeIterator,
+{
+    b = -b;
+    let a = a.into_iter();
+
+    let mut q = vec![F::zero(); a.len() - 1];
+
+    let mut tmp = F::zero();
+    for (q, r) in q.iter_mut().rev().zip(a.rev()) {
+        let mut lead_coeff = *r;
+        lead_coeff.sub_assign(&tmp);
+        *q = lead_coeff;
+        tmp = lead_coeff;
+        tmp.mul_assign(&b);
+    }
+
+    q
+}
+
 pub fn parallel_generator_collapse<C: CurveAffine>(
     g: &mut [C],
     challenge: C::Scalar,
@@ -342,20 +385,22 @@ fn test_fft() {
     assert_eq!(valid_product, naive_product);
 }
 
-pub struct Challenge(pub(crate) Vec<bool>);
+#[derive(Copy, Clone)]
+pub struct Challenge(pub(crate) u128);
 
 pub fn get_challenge_scalar<F: Field>(challenge: Challenge) -> F {
     let mut acc = (F::ZETA + F::one()).double();
 
-    assert!(challenge.0.len() % 2 == 0);
-    for x in challenge.0.chunks(2) {
-        if let &[should_negate, should_endo] = x {
-            let q = if should_negate { -F::one() } else { F::one() };
-            let q = if should_endo { q * F::ZETA } else { q };
-            acc = acc + q + acc;
-        } else {
-            unreachable!()
-        }
+    // i = 63
+    // i * 2 = 126
+    // i * 2 + 1 = 127
+    for i in (0..64).rev() {
+        let should_negate = ((challenge.0 >> ((i << 1) + 1)) & 1) == 1;
+        let should_endo = ((challenge.0 >> (i << 1)) & 1) == 1;
+
+        let q = if should_negate { -F::one() } else { F::one() };
+        let q = if should_endo { q * F::ZETA } else { q };
+        acc = acc + q + acc;
     }
 
     acc
