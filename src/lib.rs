@@ -2,7 +2,7 @@
 // #[macro_use]
 // extern crate hex_literal;
 
-#![type_length_limit="2360122"]
+#![type_length_limit = "2360122"]
 
 #[macro_use]
 pub mod util;

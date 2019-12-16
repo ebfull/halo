@@ -3,7 +3,10 @@ use crossbeam_utils::thread;
 use num_cpus;
 
 /// Divides this polynomial by (X - b)
-pub fn divide_root<F: Field, I: IntoIterator<Item = F>>(a: I, mut b: F) -> impl Iterator<Item=F> + ExactSizeIterator
+pub fn divide_root<F: Field, I: IntoIterator<Item = F>>(
+    a: I,
+    mut b: F,
+) -> impl Iterator<Item = F> + ExactSizeIterator
 where
     I::IntoIter: ExactSizeIterator,
 {

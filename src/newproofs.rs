@@ -81,11 +81,6 @@ pub struct Deferred<F: Field> {
     pub p_openings: [F; 4],
     // The prover opens q(X) at a random point.
     pub q_opening: F,
-    // During the inner product the prover will supply these scalars
-    pub polynomial_opening: Vec<(F, F)>,
-    // At the end of the argument, the prover supplies a scalar `a`
-    // and a group element g_new_commitment
-    pub a: F,
     // Old challenges, needed to compute g_old(x)
     pub challenges_old_sq_packed: Vec<Challenge>, // length is k
     // New challenges, needed to compute b
@@ -212,16 +207,15 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let sx_old = params.compute_sx(circuit, y_old)?;
 
     // Get S_old
+    #[cfg(feature = "sanity-checks")]
     let s_old_commitment = old_amortized.s_new_commitment;
 
     // Sanity check
+    #[cfg(feature = "sanity-checks")]
     {
         let expected = params.commit(&sx_old, false);
         let expected = params.add_randomness(&expected, C::Scalar::one());
-        assert_eq!(
-            s_old_commitment.to_projective(),
-            expected.to_projective()
-        );
+        assert_eq!(s_old_commitment.to_projective(), expected.to_projective());
     }
 
     // Compute the coefficients for G_old
@@ -239,6 +233,7 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let gx_old = crate::util::compute_s(&challenges_old_sq, allinv_old);
 
     // Get G_old
+    #[cfg(feature = "sanity-checks")]
     let g_old_commitment = old_amortized.g_new_commitment;
 
     // Compute k(Y)
@@ -318,10 +313,15 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
 
     let mut tx = crate::util::multiply_polynomials(rx.clone(), r_primex);
     assert_eq!(tx.len(), 7 * params.n + 1);
-    
+
     // Sanity check
-    assert_eq!(tx[4 * params.n], params.compute_opening(&ky, y_cur, false) * &y_cur.pow(&[params.n as u64, 0, 0, 0]));
-    
+    #[cfg(feature = "sanity-checks")]
+    {
+        assert_eq!(
+            tx[4 * params.n],
+            params.compute_opening(&ky, y_cur, false) * &y_cur.pow(&[params.n as u64, 0, 0, 0])
+        );
+    }
     tx[4 * params.n] = C::Scalar::zero(); // -k(y)
 
     // Commit to t^+(X, y)
@@ -424,6 +424,7 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     dual_transcript.absorb(t_negative_opening);
 
     // Sanity check; is the constraint system satisfied
+    #[cfg(feature = "sanity-checks")]
     {
         let xinv = x.invert().unwrap();
         let yinv = y_cur.invert().unwrap();
@@ -509,7 +510,7 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     mul_px(&mut px, &z1);
     add_to_px(&mut px, &gx_old);
     drop(gx_old);
-    
+
     let p_randomness = C::Scalar::one();
     let p_randomness = p_randomness * &z1 + &C::Scalar::one();
     let p_randomness = p_randomness * &z1 + &r_t_positive;
@@ -518,6 +519,7 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let p_randomness = p_randomness * &z1;
 
     // Sanity check
+    #[cfg(feature = "sanity-checks")]
     {
         // Is the commitment what we expect?
         let p_commitment = s_old_commitment.to_projective();
@@ -530,10 +532,7 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
         let expected = params.commit(&px, false);
         let expected = params.add_randomness(&expected, p_randomness);
 
-        assert_eq!(
-            p_commitment,
-            expected.to_projective()
-        );
+        assert_eq!(p_commitment, expected.to_projective());
     }
 
     let px_expected_opening_at_x =
@@ -545,7 +544,13 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
             + &crate::util::compute_b(x, &challenges_old, &challenges_old_inv);
 
     // Sanity check; does it open to the correct value at x?
-    assert_eq!(params.compute_opening(&px, x, false), px_expected_opening_at_x);
+    #[cfg(feature = "sanity-checks")]
+    {
+        assert_eq!(
+            params.compute_opening(&px, x, false),
+            px_expected_opening_at_x
+        );
+    }
 
     // p(x * y_cur), p(y_old), p(y_cur), p(y_new)
     let p_openings: [C::Scalar; 4] = [
@@ -585,26 +590,30 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     drop(sy);
 
     // Sanity check, is q(X) correct?
-    assert_eq!(
-        params.compute_opening(&qx, x, false),
-        ((r_openings[0] * &z2 + &px_expected_opening_at_x) * &z2 + &k_openings[0]) * &z2 + &c_openings[0]
-    );
-    assert_eq!(
-        params.compute_opening(&qx, xy_cur, false),
-        ((r_openings[1] * &z2 + &p_openings[0]) * &z2 + &k_openings[1]) * &z2 + &c_openings[1]
-    );
-    assert_eq!(
-        params.compute_opening(&qx, y_old, false),
-        ((r_openings[2] * &z2 + &p_openings[1]) * &z2 + &k_openings[2]) * &z2 + &c_openings[2]
-    );
-    assert_eq!(
-        params.compute_opening(&qx, y_cur, false),
-        ((r_openings[3] * &z2 + &p_openings[2]) * &z2 + &k_openings[3]) * &z2 + &c_openings[3]
-    );
-    assert_eq!(
-        params.compute_opening(&qx, y_new, false),
-        ((r_openings[4] * &z2 + &p_openings[3]) * &z2 + &k_openings[4]) * &z2 + &c_openings[4]
-    );
+    #[cfg(feature = "sanity-checks")]
+    {
+        assert_eq!(
+            params.compute_opening(&qx, x, false),
+            ((r_openings[0] * &z2 + &px_expected_opening_at_x) * &z2 + &k_openings[0]) * &z2
+                + &c_openings[0]
+        );
+        assert_eq!(
+            params.compute_opening(&qx, xy_cur, false),
+            ((r_openings[1] * &z2 + &p_openings[0]) * &z2 + &k_openings[1]) * &z2 + &c_openings[1]
+        );
+        assert_eq!(
+            params.compute_opening(&qx, y_old, false),
+            ((r_openings[2] * &z2 + &p_openings[1]) * &z2 + &k_openings[2]) * &z2 + &c_openings[2]
+        );
+        assert_eq!(
+            params.compute_opening(&qx, y_cur, false),
+            ((r_openings[3] * &z2 + &p_openings[2]) * &z2 + &k_openings[3]) * &z2 + &c_openings[3]
+        );
+        assert_eq!(
+            params.compute_opening(&qx, y_new, false),
+            ((r_openings[4] * &z2 + &p_openings[3]) * &z2 + &k_openings[4]) * &z2 + &c_openings[4]
+        );
+    }
 
     // Construct t(X)
     let mut tx = vec![C::Scalar::zero(); 5];
@@ -618,12 +627,27 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
         }
 
         let value = match j {
-            0 => ((r_openings[0] * &z2 + &px_expected_opening_at_x) * &z2 + &k_openings[0]) * &z2 + &c_openings[0],
-            1 => ((r_openings[1] * &z2 + &p_openings[0]) * &z2 + &k_openings[1]) * &z2 + &c_openings[1],
-            2 => ((r_openings[2] * &z2 + &p_openings[1]) * &z2 + &k_openings[2]) * &z2 + &c_openings[2],
-            3 => ((r_openings[3] * &z2 + &p_openings[2]) * &z2 + &k_openings[3]) * &z2 + &c_openings[3],
-            4 => ((r_openings[4] * &z2 + &p_openings[3]) * &z2 + &k_openings[4]) * &z2 + &c_openings[4],
-            _ => unreachable!()
+            0 => {
+                ((r_openings[0] * &z2 + &px_expected_opening_at_x) * &z2 + &k_openings[0]) * &z2
+                    + &c_openings[0]
+            }
+            1 => {
+                ((r_openings[1] * &z2 + &p_openings[0]) * &z2 + &k_openings[1]) * &z2
+                    + &c_openings[1]
+            }
+            2 => {
+                ((r_openings[2] * &z2 + &p_openings[1]) * &z2 + &k_openings[2]) * &z2
+                    + &c_openings[2]
+            }
+            3 => {
+                ((r_openings[3] * &z2 + &p_openings[2]) * &z2 + &k_openings[3]) * &z2
+                    + &c_openings[3]
+            }
+            4 => {
+                ((r_openings[4] * &z2 + &p_openings[3]) * &z2 + &k_openings[4]) * &z2
+                    + &c_openings[4]
+            }
+            _ => unreachable!(),
         };
         for coeff in poly.iter_mut() {
             *coeff = *coeff * &value;
@@ -632,26 +656,29 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     }
 
     // Sanity check, is t(X) correct?
-    assert_eq!(
-        params.compute_opening(&tx, x, false),
-        params.compute_opening(&qx, x, false)
-    );
-    assert_eq!(
-        params.compute_opening(&tx, xy_cur, false),
-        params.compute_opening(&qx, xy_cur, false)
-    );
-    assert_eq!(
-        params.compute_opening(&tx, y_old, false),
-        params.compute_opening(&qx, y_old, false)
-    );
-    assert_eq!(
-        params.compute_opening(&tx, y_cur, false),
-        params.compute_opening(&qx, y_cur, false)
-    );
-    assert_eq!(
-        params.compute_opening(&tx, y_new, false),
-        params.compute_opening(&qx, y_new, false)
-    );
+    #[cfg(feature = "sanity-checks")]
+    {
+        assert_eq!(
+            params.compute_opening(&tx, x, false),
+            params.compute_opening(&qx, x, false)
+        );
+        assert_eq!(
+            params.compute_opening(&tx, xy_cur, false),
+            params.compute_opening(&qx, xy_cur, false)
+        );
+        assert_eq!(
+            params.compute_opening(&tx, y_old, false),
+            params.compute_opening(&qx, y_old, false)
+        );
+        assert_eq!(
+            params.compute_opening(&tx, y_cur, false),
+            params.compute_opening(&qx, y_cur, false)
+        );
+        assert_eq!(
+            params.compute_opening(&tx, y_new, false),
+            params.compute_opening(&qx, y_new, false)
+        );
+    }
 
     // Compute h(X)
     let mut hx = qx.clone();
@@ -665,17 +692,22 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     hx.reverse();
 
     // Sanity check, did we do it correctly?
+    #[cfg(feature = "sanity-checks")]
     {
         let arbitrary_point = C::Scalar::from_u64(12182812);
         let q = params.compute_opening(&qx, arbitrary_point, false);
         let h = params.compute_opening(&hx, arbitrary_point, false);
         let t = params.compute_opening(&tx, arbitrary_point, false);
 
-        let denom = (arbitrary_point - &x) * &(arbitrary_point - &xy_cur) * &(arbitrary_point - &y_old) * &(arbitrary_point - &y_cur) * &(arbitrary_point - &y_new);
+        let denom = (arbitrary_point - &x)
+            * &(arbitrary_point - &xy_cur)
+            * &(arbitrary_point - &y_old)
+            * &(arbitrary_point - &y_cur)
+            * &(arbitrary_point - &y_new);
 
         assert_eq!(h * (&denom) + &t, q);
     }
-    
+
     // Commit to h(X)
     let h_commitment = params.commit(&hx, false);
     let h_commitment = params.add_randomness(&h_commitment, r_h);
@@ -703,13 +735,6 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let mut fx = qx;
     mul_px(&mut fx, &z4);
     add_to_px(&mut fx, &hx);
-    
-    // The verifier computes the expected opening of f
-    let f_opening = {
-        let denom = (z3 - &x) * &(z3 - &xy_cur) * &(z3 - &y_old) * &(z3 - &y_cur) * &(z3 - &y_new);
-        let t = params.compute_opening(&tx, z3, false);
-        (q_opening * &z4) + &((q_opening - &t) * &denom.invert().unwrap())
-    };
 
     let f_randomness = r_r;
     let f_randomness = f_randomness * &z2 + &p_randomness;
@@ -717,14 +742,18 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let f_randomness = f_randomness * &z2 + &C::Scalar::one();
     let f_randomness = f_randomness * &z4 + &r_h;
 
-    // Sanity check; is the verifier gonna be happy?
+    #[cfg(feature = "sanity-checks")]
+    let f_opening = {
+        let denom = (z3 - &x) * &(z3 - &xy_cur) * &(z3 - &y_old) * &(z3 - &y_cur) * &(z3 - &y_new);
+        let t = params.compute_opening(&tx, z3, false);
+        (q_opening * &z4) + &((q_opening - &t) * &denom.invert().unwrap())
+    };
+
+    #[cfg(feature = "sanity-checks")]
     {
         let f = params.compute_opening(&fx, z3, false);
 
-        assert_eq!(
-            f,
-            f_opening
-        );
+        assert_eq!(f, f_opening);
 
         // Is the commitment what we expect?
         let p_commitment = s_old_commitment;
@@ -738,17 +767,14 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
         let q_commitment = q_commitment * z2 + &p_commitment;
         let q_commitment = q_commitment * z2 + &k_commitment.to_projective();
         let q_commitment = q_commitment * z2 + &c_commitment.to_projective();
-        
+
         let f_commitment = q_commitment;
         let f_commitment = f_commitment * z4 + &h_commitment.to_projective();
 
         let expected = params.commit(&fx, false);
         let expected = params.add_randomness(&expected, f_randomness);
 
-        assert_eq!(
-            f_commitment,
-            expected.to_projective()
-        );
+        assert_eq!(f_commitment, expected.to_projective());
     }
 
     // Great, we're ready to do it! Here it goes.
@@ -796,8 +822,9 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
                 let mut transcript = transcript.clone();
                 append_point(&mut transcript, &l);
                 append_point(&mut transcript, &r);
-                
-                let challenge_sq = crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
+
+                let challenge_sq =
+                    crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
                 let challenge = challenge_sq.sqrt();
                 if challenge.is_some().into() {
                     break challenge.unwrap();
@@ -810,24 +837,21 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
                 }
             };
 
-            // Sanity check
+            #[cfg(feature = "sanity-checks")]
             {
                 let expected = crate::util::multiexp(&a[0..half], &generators[half..]).to_affine();
                 let value_l = crate::util::compute_inner_product(&a[0..half], &b[half..]);
                 let expected = params.add_value(&expected, value_l);
                 let expected = params.add_randomness(&expected, l_randomness);
-                assert_eq!(
-                    l, expected
-                );
+                assert_eq!(l, expected);
             }
+            #[cfg(feature = "sanity-checks")]
             {
                 let expected = crate::util::multiexp(&a[half..], &generators[0..half]).to_affine();
                 let value_r = crate::util::compute_inner_product(&a[half..], &b[0..half]);
                 let expected = params.add_value(&expected, value_r);
                 let expected = params.add_randomness(&expected, r_randomness);
-                assert_eq!(
-                    r, expected
-                );
+                assert_eq!(r, expected);
             }
 
             append_point(&mut transcript, &l);
@@ -867,12 +891,13 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let a = a[0];
     assert_eq!(b.len(), 1);
     let b = b[0];
-    // Sanity check
-    assert_eq!(crate::util::compute_b(z3, &challenges, &challenges_inv), b);
     assert_eq!(generators.len(), 1);
     let g = generators[0];
-    // Sanity check
+
+    #[cfg(feature = "sanity-checks")]
     {
+        assert_eq!(crate::util::compute_b(z3, &challenges, &challenges_inv), b);
+
         let mut tmp = challenges.clone();
         let allinv = C::Scalar::batch_invert(&mut tmp);
         assert_eq!(
@@ -881,7 +906,7 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
         );
     }
 
-    // Sanity check
+    #[cfg(feature = "sanity-checks")]
     {
         assert_eq!(rounds.len(), challenges_sq.len());
         assert_eq!(rounds.len(), challenges_sq_inv.len());
@@ -896,12 +921,16 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
         let q_commitment = q_commitment * z2 + &p_commitment;
         let q_commitment = q_commitment * z2 + &k_commitment.to_projective();
         let q_commitment = q_commitment * z2 + &c_commitment.to_projective();
-        
+
         let f_commitment = q_commitment;
         let f_commitment = f_commitment * z4 + &h_commitment.to_projective();
 
         let mut lhs = f_commitment;
-        for ((&(l, r), challenge_sq), challenge_sq_inv) in rounds.iter().zip(challenges_sq.iter()).zip(challenges_sq_inv.iter()) {
+        for ((&(l, r), challenge_sq), challenge_sq_inv) in rounds
+            .iter()
+            .zip(challenges_sq.iter())
+            .zip(challenges_sq_inv.iter())
+        {
             lhs = lhs + &(l * *challenge_sq);
             lhs = lhs + &(r * *challenge_sq_inv);
         }
@@ -938,6 +967,7 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let r2 = b * &(c * &randomness + &r_beta) + &r_delta;
 
     // Sanity check
+    #[cfg(feature = "sanity-checks")]
     {
         let p_commitment = s_old_commitment;
         let p_commitment = p_commitment * z1 + &s_cur_commitment.to_projective();
@@ -950,12 +980,16 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
         let q_commitment = q_commitment * z2 + &p_commitment;
         let q_commitment = q_commitment * z2 + &k_commitment.to_projective();
         let q_commitment = q_commitment * z2 + &c_commitment.to_projective();
-        
+
         let f_commitment = q_commitment;
         let f_commitment = f_commitment * z4 + &h_commitment.to_projective();
 
         let mut acc = f_commitment;
-        for ((&(l, r), challenge_sq), challenge_sq_inv) in rounds.iter().zip(challenges_sq.iter()).zip(challenges_sq_inv.iter()) {
+        for ((&(l, r), challenge_sq), challenge_sq_inv) in rounds
+            .iter()
+            .zip(challenges_sq.iter())
+            .zip(challenges_sq_inv.iter())
+        {
             acc = acc + &(l * *challenge_sq);
             acc = acc + &(r * *challenge_sq_inv);
         }
@@ -1015,10 +1049,7 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
             Ok(())
         }
 
-        fn new_linear_constraint(
-            &mut self,
-        ) -> Self::LinearConstraintIndex
-        {
+        fn new_linear_constraint(&mut self) -> Self::LinearConstraintIndex {
             ()
         }
     }
@@ -1068,7 +1099,7 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     dual_transcript.absorb(proof.t_positive_opening);
     dual_transcript.absorb(proof.t_negative_opening);
 
-    // Sanity check; is the constraint system satisfied
+    // Is the constraint system satisfied
     {
         let xinv = x.invert().unwrap();
         let yinv = y_cur.invert().unwrap();
@@ -1108,7 +1139,9 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
         let ky = proof.k_openings[3] * &yn;
         let lhs = lhs - &ky;
 
-        assert_eq!(lhs, rhs);
+        if lhs != rhs {
+            return Ok(false);
+        }
     }
 
     let hash_1 = dual_transcript.squeeze();
@@ -1141,7 +1174,7 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let q_commitment = q_commitment * z2 + &p_commitment;
     let q_commitment = q_commitment * z2 + &k_commitment.to_projective();
     let q_commitment = q_commitment * z2 + &proof.c_commitment.to_projective();
-    
+
     append_point::<C>(&mut transcript, &proof.h_commitment);
 
     // Obtain the challenge z_3
@@ -1178,8 +1211,10 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
         let mut challenges_old_inv = challenges_old.clone();
         Field::batch_invert(&mut challenges_old_inv);
 
-        let px_expected_opening_at_x =
-        ((((proof.c_openings[2] * &z1 + &proof.c_openings[3]) * &z1 + &proof.t_positive_opening) * &z1
+        let px_expected_opening_at_x = ((((proof.c_openings[2] * &z1 + &proof.c_openings[3])
+            * &z1
+            + &proof.t_positive_opening)
+            * &z1
             + &proof.t_negative_opening)
             * &z1
             + &proof.c_openings[4])
@@ -1197,12 +1232,37 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
                 }
             }
             let value = match j {
-                0 => ((proof.r_openings[0] * &z2 + &px_expected_opening_at_x) * &z2 + &proof.k_openings[0]) * &z2 + &proof.c_openings[0],
-                1 => ((proof.r_openings[1] * &z2 + &proof.p_openings[0]) * &z2 + &proof. k_openings[1]) * &z2 + &proof.c_openings[1],
-                2 => ((proof.r_openings[2] * &z2 + &proof.p_openings[1]) * &z2 + &proof. k_openings[2]) * &z2 + &proof.c_openings[2],
-                3 => ((proof.r_openings[3] * &z2 + &proof.p_openings[2]) * &z2 + &proof. k_openings[3]) * &z2 + &proof.c_openings[3],
-                4 => ((proof.r_openings[4] * &z2 + &proof.p_openings[3]) * &z2 + &proof. k_openings[4]) * &z2 + &proof.c_openings[4],
-                _ => unreachable!()
+                0 => {
+                    ((proof.r_openings[0] * &z2 + &px_expected_opening_at_x) * &z2
+                        + &proof.k_openings[0])
+                        * &z2
+                        + &proof.c_openings[0]
+                }
+                1 => {
+                    ((proof.r_openings[1] * &z2 + &proof.p_openings[0]) * &z2
+                        + &proof.k_openings[1])
+                        * &z2
+                        + &proof.c_openings[1]
+                }
+                2 => {
+                    ((proof.r_openings[2] * &z2 + &proof.p_openings[1]) * &z2
+                        + &proof.k_openings[2])
+                        * &z2
+                        + &proof.c_openings[2]
+                }
+                3 => {
+                    ((proof.r_openings[3] * &z2 + &proof.p_openings[2]) * &z2
+                        + &proof.k_openings[3])
+                        * &z2
+                        + &proof.c_openings[3]
+                }
+                4 => {
+                    ((proof.r_openings[4] * &z2 + &proof.p_openings[3]) * &z2
+                        + &proof.k_openings[4])
+                        * &z2
+                        + &proof.c_openings[4]
+                }
+                _ => unreachable!(),
             };
             t += &(value * &(basis_num * &(basis_den.invert().unwrap())));
         }
@@ -1219,7 +1279,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     for &(l, r) in &proof.polynomial_opening {
         append_point(&mut transcript, &l);
         append_point(&mut transcript, &r);
-        let challenge_sq = crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
+        let challenge_sq =
+            crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
         let challenge_sq_inv = challenge_sq.invert().unwrap(); // TODO?
         acc = acc + &(l * challenge_sq) + &(r * challenge_sq_inv);
 
@@ -1256,7 +1317,10 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
 }
 
 impl<C: CurveAffine> Amortized<C> {
-    pub fn new<CS: Circuit<C::Scalar>>(params: &Params<C>, circuit: &CS) -> Result<Self, SynthesisError> {
+    pub fn new<CS: Circuit<C::Scalar>>(
+        params: &Params<C>,
+        circuit: &CS,
+    ) -> Result<Self, SynthesisError> {
         let y_new = Challenge(0);
         let y_new_scalar: C::Scalar = crate::util::get_challenge_scalar(y_new);
         //let s_new_commitment = params.commit(&[], false, C::Scalar::one());
@@ -1365,40 +1429,23 @@ impl<C: CurveAffine> Params<C> {
         }
     }
 
-    pub fn add_randomness(
-        &self,
-        to: &C,
-        r: C::Scalar,
-    ) -> C
-    {
+    pub fn add_randomness(&self, to: &C, r: C::Scalar) -> C {
         ((self.h * r) + &to.to_projective()).to_affine()
     }
 
-    pub fn add_value(
-        &self,
-        to: &C,
-        value: C::Scalar,
-    ) -> C
-    {
+    pub fn add_value(&self, to: &C, value: C::Scalar) -> C {
         ((self.g * value) + &to.to_projective()).to_affine()
     }
 
-    pub fn commit(
-        &self,
-        v: &[C::Scalar],
-        right_edge: bool,
-    ) -> C {
+    pub fn commit(&self, v: &[C::Scalar], right_edge: bool) -> C {
         // TODO: could let caller convert to affine
 
         assert!(self.generators.len() >= v.len());
-        let mut tmp = if right_edge {
+        let tmp = if right_edge {
             crate::util::multiexp(&v, &self.generators[(self.generators.len() - v.len())..])
         } else {
             crate::util::multiexp(&v, &self.generators[0..v.len()])
         };
-
-        // TODO: could fold this into multiexp
-        // tmp = tmp + &(self.g * randomness);
 
         tmp.to_affine()
     }
@@ -1483,10 +1530,7 @@ mod test {
     }
 
     impl<F: Field> Circuit<F> for CubingCircuit<F> {
-        fn synthesize<CS: ConstraintSystem<F>>(
-            &self,
-            cs: &mut CS,
-        ) -> Result<(), SynthesisError> {
+        fn synthesize<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
             let mut x2value = None;
             let (x, _, x2) = cs.multiply(|| {
                 let x = self.x.ok_or(SynthesisError::AssignmentMissing)?;
@@ -1554,16 +1598,15 @@ mod test {
 
         // create proof
         let proof = create_proof(&params, &prover_circuit, &dummy_amortized).unwrap();
-        
-        assert!(
-            verify_proof(
-                &params,
-                &proof,
-                &dummy_amortized,
-                &verifier_circuit,
-                &[Fq::from(1000)]
-            ).unwrap()
-        );
+
+        assert!(verify_proof(
+            &params,
+            &proof,
+            &dummy_amortized,
+            &verifier_circuit,
+            &[Fq::from(1000)]
+        )
+        .unwrap());
         /*
         assert!(prover_new_leftovers
             .verify::<_, Basic>(&params, &verifier_circuit)
