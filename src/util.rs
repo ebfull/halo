@@ -141,12 +141,45 @@ pub fn multiexp<C: CurveAffine>(coeffs: &[C::Scalar], bases: &[C]) -> C::Project
                             *acc = acc.double();
                         }
 
-                        let mut buckets = vec![C::Projective::zero(); (1 << c) - 1];
+                        #[derive(Clone, Copy)]
+                        enum Bucket<C: CurveAffine> {
+                            None,
+                            Affine(C),
+                            Projective(C::Projective)
+                        }
+
+                        impl<C: CurveAffine> Bucket<C> {
+                            fn add_assign(&mut self, other: &C) {
+                                *self = match *self {
+                                    Bucket::None => Bucket::Affine(*other),
+                                    Bucket::Affine(a) => Bucket::Projective(a + *other),
+                                    Bucket::Projective(mut a) => {
+                                        a += *other;
+                                        Bucket::Projective(a)
+                                    }
+                                }
+                            }
+
+                            fn add(self, mut other: C::Projective) -> C::Projective {
+                                match self {
+                                    Bucket::None => other,
+                                    Bucket::Affine(a) => {
+                                        other += a;
+                                        other
+                                    },
+                                    Bucket::Projective(a) => {
+                                        other + &a
+                                    }
+                                }
+                            }
+                        }
+
+                        let mut buckets: Vec<Bucket<C>> = vec![Bucket::None; (1 << c) - 1];
 
                         for (coeff, base) in coeffs.iter().zip(bases.iter()) {
                             let coeff = get_at(current_segment, c, coeff);
                             if coeff != 0 {
-                                buckets[coeff - 1] += *base;
+                                buckets[coeff - 1].add_assign(base);
                             }
                         }
 
@@ -156,7 +189,7 @@ pub fn multiexp<C: CurveAffine>(coeffs: &[C::Scalar], bases: &[C]) -> C::Project
                         //                    ((a) + b) + c
                         let mut running_sum = C::Projective::zero();
                         for exp in buckets.into_iter().rev() {
-                            running_sum = running_sum + &exp;
+                            running_sum = exp.add(running_sum);
                             *acc = *acc + &running_sum;
                         }
                     }
