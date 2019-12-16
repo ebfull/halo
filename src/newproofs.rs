@@ -58,14 +58,14 @@ pub struct Proof<C: CurveAffine> {
 
 pub struct Deferred<F: Field> {
     // Points, needed to compute expected values
-    pub y_old: F,
-    pub y_cur: F,
-    pub y_new: F,
-    pub x: F,
-    pub z1: F,
-    pub z2: F,
-    pub z3: F,
-    pub z4: F,
+    pub y_old_packed: Challenge,
+    pub y_cur_packed: Challenge,
+    pub y_new_packed: Challenge,
+    pub x_packed: Challenge,
+    pub z1_packed: Challenge,
+    pub z2_packed: Challenge,
+    pub z3_packed: Challenge,
+    pub z4_packed: Challenge,
 
     // k(x), k(x * y_cur), k(y_old), k(y_cur), k(y_new)
     pub k_openings: [F; 5],
@@ -90,7 +90,7 @@ pub struct Deferred<F: Field> {
 pub struct Amortized<C: CurveAffine> {
     pub g_new_commitment: C,
     pub s_new_commitment: C,
-    pub y_new: Challenge,
+    pub y_new_packed: Challenge,
     pub challenges_new_sq_packed: Vec<Challenge>, // length is k
 }
 
@@ -203,7 +203,7 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let mut transcript = Rescue::<C::Base>::new();
 
     // Compute s(X, y_old)
-    let y_old = crate::util::get_challenge_scalar(old_amortized.y_new);
+    let y_old = crate::util::get_challenge_scalar(old_amortized.y_new_packed);
     let sx_old = params.compute_sx(circuit, y_old)?;
 
     // Get S_old
@@ -1032,7 +1032,7 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     old_amortized: &Amortized<C>,
     circuit: &CS,
     inputs: &[C::Scalar],
-) -> Result<bool, SynthesisError> {
+) -> Result<Amortized<C>, SynthesisError> {
     struct InputMap {
         inputs: Vec<usize>,
     }
@@ -1082,7 +1082,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     append_point(&mut transcript, &proof.t_negative_commitment);
     let x = crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
     append_point(&mut transcript, &proof.c_commitment);
-    let y_new = crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
+    let y_new_packed = get_challenge(&mut transcript);
+    let y_new = crate::util::get_challenge_scalar::<C::Scalar>(y_new_packed);
     append_point(&mut transcript, &proof.s_new_commitment);
 
     let mut dual_transcript = Rescue::<C::Scalar>::new();
@@ -1140,7 +1141,7 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
         let lhs = lhs - &ky;
 
         if lhs != rhs {
-            return Ok(false);
+            return Err(SynthesisError::Violation);
         }
     }
 
@@ -1196,7 +1197,7 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     // Compute expected opening of F
     let f_opening = {
         let xy_cur = x * &y_cur;
-        let y_old = crate::util::get_challenge_scalar::<C::Scalar>(old_amortized.y_new);
+        let y_old = crate::util::get_challenge_scalar::<C::Scalar>(old_amortized.y_new_packed);
         let denom = (z3 - &x) * &(z3 - &xy_cur) * &(z3 - &y_old) * &(z3 - &y_cur) * &(z3 - &y_new);
 
         let challenges_old_sq: Vec<C::Scalar> = old_amortized
@@ -1273,28 +1274,30 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
 
     let mut acc = f_commitment;
 
-    let mut challenges_sq = vec![];
-    let mut challenges = vec![];
+    let mut challenges_new_sq_packed = vec![];
+    let mut challenges_new_sq = vec![];
+    let mut challenges_new = vec![];
 
     for &(l, r) in &proof.polynomial_opening {
         append_point(&mut transcript, &l);
         append_point(&mut transcript, &r);
-        let challenge_sq =
-            crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
+        let challenge_sq_packed = get_challenge(&mut transcript);
+        let challenge_sq = crate::util::get_challenge_scalar::<C::Scalar>(challenge_sq_packed);
         let challenge_sq_inv = challenge_sq.invert().unwrap(); // TODO?
         acc = acc + &(l * challenge_sq) + &(r * challenge_sq_inv);
 
-        challenges.push(challenge_sq.sqrt().unwrap());
-        challenges_sq.push(challenge_sq);
+        challenges_new.push(challenge_sq.sqrt().unwrap());
+        challenges_new_sq.push(challenge_sq);
+        challenges_new_sq_packed.push(challenge_sq_packed);
     }
 
     let acc = params.add_value(&acc.to_affine(), f_opening);
 
-    let mut challenges_inv = challenges.clone();
-    let allinv = C::Scalar::batch_invert(&mut challenges_inv);
+    let mut challenges_inv = challenges_new.clone();
+    let allinv_new = C::Scalar::batch_invert(&mut challenges_inv);
 
-    let b = crate::util::compute_b(z3, &challenges, &challenges_inv);
-    let expected_g = crate::util::compute_g(&params.generators, &challenges_sq, allinv);
+    let b = crate::util::compute_b(z3, &challenges_new, &challenges_inv);
+    let expected_g = crate::util::compute_g(&params.generators, &challenges_new_sq, allinv_new);
 
     assert_eq!(expected_g.to_affine(), proof.g_new_commitment);
 
@@ -1313,7 +1316,16 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let rhs = rhs * proof.r1;
     let rhs = rhs + &(params.h * proof.r2);
 
-    Ok(lhs == rhs)
+    if lhs != rhs {
+        return Err(SynthesisError::Violation);
+    }
+
+    Ok(Amortized {
+        g_new_commitment: proof.g_new_commitment,
+        s_new_commitment: proof.s_new_commitment,
+        y_new_packed,
+        challenges_new_sq_packed,
+    })
 }
 
 impl<C: CurveAffine> Amortized<C> {
@@ -1321,10 +1333,10 @@ impl<C: CurveAffine> Amortized<C> {
         params: &Params<C>,
         circuit: &CS,
     ) -> Result<Self, SynthesisError> {
-        let y_new = Challenge(0);
-        let y_new_scalar: C::Scalar = crate::util::get_challenge_scalar(y_new);
+        let y_new_packed = Challenge(0);
+        let y_new: C::Scalar = crate::util::get_challenge_scalar(y_new_packed);
         //let s_new_commitment = params.commit(&[], false, C::Scalar::one());
-        let sx_new = params.compute_sx(circuit, y_new_scalar)?;
+        let sx_new = params.compute_sx(circuit, y_new)?;
         let s_new_commitment = params.commit(&sx_new, false);
         let s_new_commitment = params.add_randomness(&s_new_commitment, C::Scalar::one());
         let challenges_new_sq_packed = vec![Challenge(MAGIC); params.k];
@@ -1346,9 +1358,52 @@ impl<C: CurveAffine> Amortized<C> {
         Ok(Amortized {
             g_new_commitment,
             s_new_commitment,
-            y_new,
+            y_new_packed,
             challenges_new_sq_packed,
         })
+    }
+
+    pub fn verify<CS: Circuit<C::Scalar>>(
+        &self,
+        params: &Params<C>,
+        circuit: &CS,
+    ) -> Result<(), SynthesisError> {
+        let challenges_new_sq: Vec<C::Scalar> = self
+            .challenges_new_sq_packed
+            .iter()
+            .map(|v| crate::util::get_challenge_scalar(*v))
+            .collect();
+        let challenges_new: Vec<C::Scalar> = challenges_new_sq
+            .iter()
+            .map(|v| v.sqrt().unwrap()) // TODO
+            .collect();
+        let mut challenges_new_inv = challenges_new.clone();
+        let allinv = C::Scalar::batch_invert(&mut challenges_new_inv);
+        let mut v = crate::util::compute_s(&challenges_new_sq, allinv);
+
+        println!("ok");
+
+        let y_new: C::Scalar = crate::util::get_challenge_scalar(self.y_new_packed);
+
+        let sx_new = params.compute_sx(circuit, y_new)?;
+
+        // TODO: randomness
+        let r = C::Scalar::from_u64(128718271827);
+        for (a, b) in v.iter_mut().zip(sx_new.into_iter()) {
+            *a = *a + &(b * &r);
+        }
+
+        let lhs = params.commit(&v, false);
+        let lhs = params.add_randomness(&lhs, r);
+
+        let rhs = self.s_new_commitment * r;
+        let rhs = rhs + &self.g_new_commitment.to_projective();
+
+        if lhs.to_projective() == rhs {
+            Ok(())
+        } else {
+            Err(SynthesisError::Violation)
+        }
     }
 }
 
@@ -1592,21 +1647,23 @@ mod test {
 
         // bootstrap the cycle with phony inputs
         let dummy_amortized = Amortized::new(&params, &verifier_circuit).unwrap();
-        // assert!(dummy_leftovers
-        //     .verify::<_, Basic>(&params, &verifier_circuit)
-        //     .unwrap());
+
+        dummy_amortized.verify(&params, &verifier_circuit).unwrap();
 
         // create proof
         let proof = create_proof(&params, &prover_circuit, &dummy_amortized).unwrap();
 
-        assert!(verify_proof(
+        let new_amortized = verify_proof(
             &params,
             &proof,
             &dummy_amortized,
             &verifier_circuit,
-            &[Fq::from(1000)]
+            &[Fq::from(1000)],
         )
-        .unwrap());
+        .unwrap();
+
+        new_amortized.verify(&params, &verifier_circuit).unwrap();
+
         /*
         assert!(prover_new_leftovers
             .verify::<_, Basic>(&params, &verifier_circuit)
