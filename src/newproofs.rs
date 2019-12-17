@@ -72,7 +72,7 @@ pub struct Deferred<F: Field> {
     // r(x, 1), r(x, y_cur), r(y_old, 1), r(y_cur, 1), r(y_new, 1)
     pub r_openings: [F; 5],
     // s(x, x), s(x, x * y_cur), s(x, y_old), s(x, y_cur), s(x, y_new)
-    pub s_openings: [F; 5],
+    pub c_openings: [F; 5],
     // t+(x, 1)
     pub t_positive_opening: F,
     // t-(x, 1)
@@ -88,33 +88,35 @@ pub struct Deferred<F: Field> {
 }
 
 impl<F: Field> Deferred<F> {
-    fn public_input_string(&self) -> Vec<u8> {
+    pub fn public_input_string(&self) -> Vec<u8> {
         use byteorder::{ByteOrder, LittleEndian};
 
-        // TODO?
         let k = self.challenges_old_sq_packed.len();
 
-        let mut res = vec![0u8; 32 * k + 288];
+        let mut res = vec![0u8; 16 * k + 272];
 
         {
             LittleEndian::write_u128(&mut res[16 * 0..][0..16], self.y_old_packed.0);
             LittleEndian::write_u128(&mut res[16 * 1..][0..16], self.y_cur_packed.0);
-            LittleEndian::write_u128(&mut res[16 * 2..][0..16], self.y_new_packed.0);
-            LittleEndian::write_u128(&mut res[16 * 3..][0..16], self.x_packed.0);
-            LittleEndian::write_u128(&mut res[16 * 4..][0..16], self.z1_packed.0);
-            LittleEndian::write_u128(&mut res[16 * 5..][0..16], self.z2_packed.0);
-            LittleEndian::write_u128(&mut res[16 * 6..][0..16], self.z3_packed.0);
-            LittleEndian::write_u128(&mut res[16 * 7..][0..16], self.z4_packed.0);
+            // We borrow y_new from Amortized
+            // LittleEndian::write_u128(&mut res[16 * 2..][0..16], self.y_new_packed.0);
+            LittleEndian::write_u128(&mut res[16 * 2..][0..16], self.x_packed.0);
+            LittleEndian::write_u128(&mut res[16 * 3..][0..16], self.z1_packed.0);
+            LittleEndian::write_u128(&mut res[16 * 4..][0..16], self.z2_packed.0);
+            LittleEndian::write_u128(&mut res[16 * 5..][0..16], self.z3_packed.0);
+            LittleEndian::write_u128(&mut res[16 * 6..][0..16], self.z4_packed.0);
         }
 
         {
-            let res = &mut res[16 * 8..];
+            let res = &mut res[16 * 7..];
 
             for (i, challenge) in self.challenges_old_sq_packed.iter().enumerate() {
                 LittleEndian::write_u128(&mut res[16 * i..][0..16], challenge.0);
             }
         }
 
+        /*
+        // We borrow this from Amortized in the circuit.
         {
             let res = &mut res[16 * k..];
 
@@ -122,6 +124,7 @@ impl<F: Field> Deferred<F> {
                 LittleEndian::write_u128(&mut res[16 * i..][0..16], challenge.0);
             }
         }
+        */
 
         {
             let res = &mut res[16 * k..];
@@ -143,23 +146,136 @@ impl<F: Field> Deferred<F> {
     }
 
     fn compute_b(&self) -> F {
-        unimplemented!()
+        let challenges_new_sq: Vec<F> = self
+            .challenges_new_sq_packed
+            .iter()
+            .map(|v| crate::util::get_challenge_scalar(*v))
+            .collect();
+        let challenges_new: Vec<F> = challenges_new_sq
+            .iter()
+            .map(|a| a.sqrt().unwrap())
+            .collect();
+        let mut challenges_new_inv = challenges_new.clone();
+        Field::batch_invert(&mut challenges_new_inv);
+
+        let z3 = crate::util::get_challenge_scalar(self.z3_packed);
+
+        crate::util::compute_b(z3, &challenges_new, &challenges_new_inv)
     }
 
     fn compute_hash1(&self) -> F {
-        unimplemented!()
+        let mut dual_transcript = Rescue::<F>::new();
+        for o in &self.k_openings {
+            dual_transcript.absorb(*o);
+        }
+        for o in &self.r_openings {
+            dual_transcript.absorb(*o);
+        }
+        for o in &self.c_openings {
+            dual_transcript.absorb(*o);
+        }
+
+        dual_transcript.absorb(self.t_positive_opening);
+        dual_transcript.absorb(self.t_negative_opening);
+
+        dual_transcript.squeeze()
     }
 
     fn compute_hash2(&self) -> F {
-        unimplemented!()
+        let mut dual_transcript = Rescue::<F>::new();
+        for o in self.p_openings.iter() {
+            dual_transcript.absorb(*o);
+        }
+
+        dual_transcript.squeeze()
     }
 
     fn compute_hash3(&self) -> F {
-        unimplemented!()
+        let mut dual_transcript = Rescue::<F>::new();
+        dual_transcript.absorb(self.q_opening);
+
+        dual_transcript.squeeze()
     }
 
     fn compute_f_opening(&self) -> F {
-        unimplemented!()
+        let x: F = crate::util::get_challenge_scalar(self.x_packed);
+        let y_old: F = crate::util::get_challenge_scalar(self.y_old_packed);
+        let y_cur: F = crate::util::get_challenge_scalar(self.y_cur_packed);
+        let y_new: F = crate::util::get_challenge_scalar(self.y_new_packed);
+        let xy_cur: F = x * y_cur;
+        let z1: F = crate::util::get_challenge_scalar(self.z1_packed);
+        let z2: F = crate::util::get_challenge_scalar(self.z2_packed);
+        let z3: F = crate::util::get_challenge_scalar(self.z3_packed);
+        let z4: F = crate::util::get_challenge_scalar(self.z4_packed);
+
+        let b = {
+            let challenges_old_sq: Vec<F> = self
+                .challenges_old_sq_packed
+                .iter()
+                .map(|v| crate::util::get_challenge_scalar(*v))
+                .collect();
+            let challenges_old: Vec<F> = challenges_old_sq
+                .iter()
+                .map(|a| a.sqrt().unwrap())
+                .collect();
+            let mut challenges_old_inv = challenges_old.clone();
+            Field::batch_invert(&mut challenges_old_inv);
+
+            let x = crate::util::get_challenge_scalar(self.x_packed);
+
+            crate::util::compute_b(x, &challenges_old, &challenges_old_inv)
+        };
+
+        let p_opening = self.c_openings[2];
+        let p_opening = p_opening * z1 + self.c_openings[3];
+        let p_opening = p_opening * z1 + self.t_positive_opening;
+        let p_opening = p_opening * z1 + self.t_negative_opening;
+        let p_opening = p_opening * z1 + self.c_openings[4];
+        let p_opening = p_opening * z1 + b;
+
+        let mut t = F::zero();
+        for (j, p) in [x, xy_cur, y_old, y_cur, y_new].iter().enumerate() {
+            let mut basis_num = F::one();
+            let mut basis_den = F::one();
+            for (m, q) in [x, xy_cur, y_old, y_cur, y_new].iter().enumerate() {
+                if j != m {
+                    basis_num = basis_num * (z3 - q);
+                    basis_den = basis_den * (*p - q);
+                }
+            }
+            let value = match j {
+                0 => {
+                    ((self.r_openings[0] * &z2 + &p_opening) * &z2 + &self.k_openings[0]) * &z2
+                        + &self.c_openings[0]
+                }
+                1 => {
+                    ((self.r_openings[1] * &z2 + &self.p_openings[0]) * &z2 + &self.k_openings[1])
+                        * &z2
+                        + &self.c_openings[1]
+                }
+                2 => {
+                    ((self.r_openings[2] * &z2 + &self.p_openings[1]) * &z2 + &self.k_openings[2])
+                        * &z2
+                        + &self.c_openings[2]
+                }
+                3 => {
+                    ((self.r_openings[3] * &z2 + &self.p_openings[2]) * &z2 + &self.k_openings[3])
+                        * &z2
+                        + &self.c_openings[3]
+                }
+                4 => {
+                    ((self.r_openings[4] * &z2 + &self.p_openings[3]) * &z2 + &self.k_openings[4])
+                        * &z2
+                        + &self.c_openings[4]
+                }
+                _ => unreachable!(),
+            };
+            t += &(value * &(basis_num * &(basis_den.invert().unwrap())));
+        }
+
+        let denom = (z3 - x) * (z3 - xy_cur) * (z3 - y_old) * (z3 - y_cur) * (z3 - y_new);
+
+        (self.q_opening * &z4) + &((self.q_opening - &t) * &denom.invert().unwrap())
     }
 }
 
@@ -168,6 +284,42 @@ pub struct Amortized<C: CurveAffine> {
     pub s_new_commitment: C,
     pub y_new_packed: Challenge,
     pub challenges_new_sq_packed: Vec<Challenge>, // length is k
+}
+
+impl<C: CurveAffine> Amortized<C> {
+    pub fn public_input_string(&self) -> Vec<u8> {
+        use byteorder::{ByteOrder, LittleEndian};
+
+        let k = self.challenges_new_sq_packed.len();
+
+        let mut res = vec![0u8; 16 * k + 144];
+
+        {
+            let (x, y) = self.g_new_commitment.get_xy().unwrap(); // TODO?
+
+            res[32 * 0..][0..32].copy_from_slice(&x.to_bytes());
+            res[32 * 1..][0..32].copy_from_slice(&y.to_bytes());
+
+            let (x, y) = self.s_new_commitment.get_xy().unwrap(); // TODO?
+
+            res[32 * 2..][0..32].copy_from_slice(&x.to_bytes());
+            res[32 * 3..][0..32].copy_from_slice(&y.to_bytes());
+        }
+
+        {
+            let res = &mut res[32 * 4..];
+            LittleEndian::write_u128(&mut res[16 * 0..][0..16], self.y_new_packed.0);
+        }
+
+        {
+            let res = &mut res[16..];
+            for (i, challenge) in self.challenges_new_sq_packed.iter().enumerate() {
+                LittleEndian::write_u128(&mut res[16 * i..][0..16], challenge.0);
+            }
+        }
+
+        res
+    }
 }
 
 pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
@@ -1110,7 +1262,7 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     old_amortized: &Amortized<C>,
     circuit: &CS,
     inputs: &[C::Scalar],
-) -> Result<Amortized<C>, SynthesisError> {
+) -> Result<(Amortized<C>, Deferred<C::Scalar>), SynthesisError> {
     struct InputMap {
         inputs: Vec<usize>,
     }
@@ -1161,11 +1313,13 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     );
 
     append_point(&mut transcript, &proof.r_commitment);
-    let y_cur = crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
+    let y_cur_packed = get_challenge(&mut transcript);
+    let y_cur = crate::util::get_challenge_scalar::<C::Scalar>(y_cur_packed);
     append_point(&mut transcript, &proof.s_cur_commitment);
     append_point(&mut transcript, &proof.t_positive_commitment);
     append_point(&mut transcript, &proof.t_negative_commitment);
-    let x = crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
+    let x_packed = get_challenge(&mut transcript);
+    let x = crate::util::get_challenge_scalar::<C::Scalar>(x_packed);
     append_point(&mut transcript, &proof.c_commitment);
     let y_new_packed = get_challenge(&mut transcript);
     let y_new = crate::util::get_challenge_scalar::<C::Scalar>(y_new_packed);
@@ -1249,7 +1403,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let hash_1 = C::Base::from_bytes(&hash_1.to_bytes()).unwrap(); // TODO: lazy; this can fail (low probability)
     transcript.absorb(hash_1);
 
-    let z1 = crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
+    let z1_packed = get_challenge(&mut transcript);
+    let z1 = crate::util::get_challenge_scalar::<C::Scalar>(z1_packed);
 
     let p_commitment = old_amortized.s_new_commitment.to_projective();
     let p_commitment = p_commitment * z1 + &proof.s_cur_commitment.to_projective();
@@ -1271,7 +1426,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     transcript.absorb(hash_2);
 
     // Obtain the challenge z_2
-    let z2 = crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
+    let z2_packed = get_challenge(&mut transcript);
+    let z2 = crate::util::get_challenge_scalar::<C::Scalar>(z2_packed);
 
     let q_commitment = proof.r_commitment;
     let q_commitment = q_commitment * z2 + &p_commitment;
@@ -1283,7 +1439,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     append_point::<C>(&mut transcript, &proof.h_commitment);
 
     // Obtain the challenge z_3
-    let z3 = crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
+    let z3_packed = get_challenge(&mut transcript);
+    let z3 = crate::util::get_challenge_scalar::<C::Scalar>(z3_packed);
 
     let mut dual_transcript = Rescue::<C::Scalar>::new();
     dual_transcript.absorb(proof.q_opening);
@@ -1293,7 +1450,8 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     transcript.absorb(hash_3);
 
     // Obtain the challenge z_4
-    let z4 = crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
+    let z4_packed = get_challenge(&mut transcript);
+    let z4 = crate::util::get_challenge_scalar::<C::Scalar>(z4_packed);
 
     let f_commitment = q_commitment;
     let f_commitment = f_commitment * z4 + &proof.h_commitment.to_projective();
@@ -1438,12 +1596,45 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
         return Err(SynthesisError::Violation);
     }
 
-    Ok(Amortized {
-        g_new_commitment: proof.g_new_commitment,
-        s_new_commitment: proof.s_new_commitment,
+    let deferred = Deferred {
+        y_old_packed: old_amortized.y_new_packed,
+        y_cur_packed,
         y_new_packed,
-        challenges_new_sq_packed,
-    })
+        x_packed,
+        z1_packed,
+        z2_packed,
+        z3_packed,
+        z4_packed,
+
+        k_openings: proof.k_openings,
+        r_openings: proof.r_openings,
+        c_openings: proof.c_openings,
+        t_positive_opening: proof.t_positive_opening,
+        t_negative_opening: proof.t_negative_opening,
+        p_openings: proof.p_openings,
+        q_opening: proof.q_opening,
+        challenges_old_sq_packed: old_amortized.challenges_new_sq_packed.clone(),
+        challenges_new_sq_packed: challenges_new_sq_packed.clone(),
+    };
+
+    #[cfg(feature = "sanity-checks")]
+    {
+        assert_eq!(b, deferred.compute_b());
+        assert_eq!(hash_1.to_bytes(), deferred.compute_hash1().to_bytes());
+        assert_eq!(hash_2.to_bytes(), deferred.compute_hash2().to_bytes());
+        assert_eq!(hash_3.to_bytes(), deferred.compute_hash3().to_bytes());
+        assert_eq!(f_opening, deferred.compute_f_opening());
+    }
+
+    Ok((
+        Amortized {
+            g_new_commitment: proof.g_new_commitment,
+            s_new_commitment: proof.s_new_commitment,
+            y_new_packed,
+            challenges_new_sq_packed,
+        },
+        deferred,
+    ))
 }
 
 impl<C: CurveAffine> Amortized<C> {
@@ -1854,7 +2045,7 @@ mod test {
         // create proof
         let proof = create_proof(&params, &prover_circuit, &dummy_amortized).unwrap();
 
-        let new_amortized = verify_proof(
+        let (new_amortized, new_deferred) = verify_proof(
             &params,
             &proof,
             &dummy_amortized,

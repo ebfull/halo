@@ -6,7 +6,8 @@ pub fn pedersen_hash<C: CurveAffine>(bytes: &[u8], generators: &[C]) -> C {
     for (index, generator) in bytes
         .iter()
         .flat_map(|byte| {
-            Some(byte & 0b11).into_iter()
+            Some(byte & 0b11)
+                .into_iter()
                 .chain(Some((byte >> 2) & 0b11u8))
                 .chain(Some((byte >> 4) & 0b11u8))
                 .chain(Some((byte >> 6) & 0b11u8))
