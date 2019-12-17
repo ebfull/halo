@@ -1,6 +1,6 @@
 use super::{Curve, CurveAffine};
 
-pub fn pedersen_hash<C: CurveAffine>(bytes: &[u8], generators: &[C]) -> C {
+pub fn pedersen_hash<C: CurveAffine>(bytes: &[u8], generators: &[C]) -> C::Projective {
     let mut windows = [C::Projective::zero(); 4];
 
     for (index, generator) in bytes
@@ -39,5 +39,5 @@ pub fn pedersen_hash<C: CurveAffine>(bytes: &[u8], generators: &[C]) -> C {
         acc = acc + &val;
     }
 
-    acc.to_affine()
+    acc
 }

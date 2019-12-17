@@ -397,70 +397,43 @@ macro_rules! new_curve_impl {
             type Output = $name;
 
             fn add(self, rhs: &'a $name) -> $name {
-                // This Jacobian point addition technique is based on the implementation in libsecp256k1,
-                // which assumes that rhs has z=1. Let's address the case of zero z-coordinates generally.
+                if bool::from(self.is_zero()) {
+                    *rhs
+                } else if bool::from(rhs.is_zero()) {
+                    *self
+                } else {
+                    let z1z1 = self.z.square();
+                    let z2z2 = rhs.z.square();
+                    let u1 = self.x * z2z2;
+                    let u2 = rhs.x * z1z1;
+                    let s1 = self.y * z2z2 * rhs.z;
+                    let s2 = rhs.y * z1z1 * self.z;
 
-                // If self is the identity, return rhs. Otherwise, return self. The other cases will be
-                // predicated on neither self nor rhs being the identity.
-                let f1 = self.is_zero();
-                let res = $name::conditional_select(self, rhs, f1);
-                let f2 = rhs.is_zero();
+                    if u1 == u2 {
+                        if s1 == s2 {
+                            self.double()
+                        } else {
+                            $name::zero()
+                        }
+                    } else {
+                        let h = u2 - u1;
+                        let i = (h + h).square();
+                        let j = h * i;
+                        let r = s2 - s1;
+                        let r = r + r;
+                        let v = u1 * i;
+                        let x3 = r.square() - j - v - v;
+                        let s1 = s1 * j;
+                        let s1 = s1 + s1;
+                        let y3 = r * (v - x3) - s1;
+                        let z3 = (self.z + rhs.z).square() - z1z1 - z2z2;
+                        let z3 = z3 * h;
 
-                // If neither are the identity but x1 = x2 and y1 != y2, then return the identity
-                let z = rhs.z.square();
-                let u1 = self.x * z;
-                let z = z * rhs.z;
-                let s1 = self.y * z;
-                let z = self.z.square();
-                let u2 = rhs.x * z;
-                let z = z * self.z;
-                let s2 = rhs.y * z;
-                let f3 = u1.ct_eq(&u2) & (!s1.ct_eq(&s2));
-                let res = $name::conditional_select(&res, &$name::zero(), (!f1) & (!f2) & f3);
-
-                let t = u1 + u2;
-                let m = s1 + s2;
-                let rr = t.square();
-                let m_alt = -u2;
-                let tt = u1 * m_alt;
-                let rr = rr + tt;
-
-                // Correct for x1 != x2 but y1 = -y2, which can occur because p - 1 is divisible by 3.
-                // libsecp256k1 does this by substituting in an alternative (defined) expression for lambda.
-                let degenerate = m.is_zero() & rr.is_zero();
-                let rr_alt = s1 + s1;
-                let m_alt = m_alt + u1;
-                let rr_alt = $base::conditional_select(&rr_alt, &rr, !degenerate);
-                let m_alt = $base::conditional_select(&m_alt, &m, !degenerate);
-
-                let n = m_alt.square();
-                let q = n * t;
-
-                let n = n.square();
-                let n = $base::conditional_select(&n, &m, degenerate);
-                let t = rr_alt.square();
-                let z3 = m_alt * self.z * rhs.z; // We allow rhs.z != 1, so we must account for this.
-                let z3 = z3 + z3;
-                let q = -q;
-                let t = t + q;
-                let x3 = t;
-                let t = t + t;
-                let t = t + q;
-                let t = t * rr_alt;
-                let t = t + n;
-                let y3 = -t;
-                let x3 = x3 + x3;
-                let x3 = x3 + x3;
-                let y3 = y3 + y3;
-                let y3 = y3 + y3;
-
-                let tmp = $name {
-                    x: x3,
-                    y: y3,
-                    z: z3,
-                };
-
-                $name::conditional_select(&res, &tmp, (!f1) & (!f2) & (!f3))
+                        $name {
+                            x: x3, y: y3, z: z3
+                        }
+                    }
+                }
             }
         }
 
@@ -468,68 +441,41 @@ macro_rules! new_curve_impl {
             type Output = $name;
 
             fn add(self, rhs: &'a $name_affine) -> $name {
-                // This Jacobian point addition technique is based on the implementation in libsecp256k1,
-                // which assumes that rhs has z=1. Let's address the case of zero z-coordinates generally.
+                if bool::from(self.is_zero()) {
+                    rhs.to_projective()
+                } else if bool::from(rhs.is_zero()) {
+                    *self
+                } else {
+                    let z1z1 = self.z.square();
+                    let u2 = rhs.x * z1z1;
+                    let s2 = rhs.y * z1z1 * self.z;
 
-                // If self is the identity, return rhs. Otherwise, return self. The other cases will be
-                // predicated on neither self nor rhs being the identity.
-                let f1 = self.is_zero();
-                let res = $name::conditional_select(self, &$name::from(rhs), f1);
-                let f2 = rhs.is_zero();
+                    if self.x == u2 {
+                        if self.y == s2 {
+                            self.double()
+                        } else {
+                            $name::zero()
+                        }
+                    } else {
+                        let h = u2 - self.x;
+                        let hh = h.square();
+                        let i = hh + hh;
+                        let i = i + i;
+                        let j = h * i;
+                        let r = s2 - self.y;
+                        let r = r + r;
+                        let v = self.x * i;
+                        let x3 = r.square() - j - v - v;
+                        let j = self.y * j;
+                        let j = j + j;
+                        let y3 = r * (v - x3) - j;
+                        let z3 = (self.z + h).square() - z1z1 - hh;
 
-                // If neither are the identity but x1 = x2 and y1 != y2, then return the identity
-                let u1 = self.x;
-                let s1 = self.y;
-                let z = self.z.square();
-                let u2 = rhs.x * z;
-                let z = z * self.z;
-                let s2 = rhs.y * z;
-                let f3 = u1.ct_eq(&u2) & (!s1.ct_eq(&s2));
-                let res = $name::conditional_select(&res, &$name::zero(), (!f1) & (!f2) & f3);
-
-                let t = u1 + u2;
-                let m = s1 + s2;
-                let rr = t.square();
-                let m_alt = -u2;
-                let tt = u1 * m_alt;
-                let rr = rr + tt;
-
-                // Correct for x1 != x2 but y1 = -y2, which can occur because p - 1 is divisible by 3.
-                // libsecp256k1 does this by substituting in an alternative (defined) expression for lambda.
-                let degenerate = m.is_zero() & rr.is_zero();
-                let rr_alt = s1 + s1;
-                let m_alt = m_alt + u1;
-                let rr_alt = $base::conditional_select(&rr_alt, &rr, !degenerate);
-                let m_alt = $base::conditional_select(&m_alt, &m, !degenerate);
-
-                let n = m_alt.square();
-                let q = n * t;
-
-                let n = n.square();
-                let n = $base::conditional_select(&n, &m, degenerate);
-                let t = rr_alt.square();
-                let z3 = m_alt * self.z;
-                let z3 = z3 + z3;
-                let q = -q;
-                let t = t + q;
-                let x3 = t;
-                let t = t + t;
-                let t = t + q;
-                let t = t * rr_alt;
-                let t = t + n;
-                let y3 = -t;
-                let x3 = x3 + x3;
-                let x3 = x3 + x3;
-                let y3 = y3 + y3;
-                let y3 = y3 + y3;
-
-                let tmp = $name {
-                    x: x3,
-                    y: y3,
-                    z: z3,
-                };
-
-                $name::conditional_select(&res, &tmp, (!f1) & (!f2) & (!f3))
+                        $name {
+                            x: x3, y: y3, z: z3
+                        }
+                    }
+                }
             }
         }
 
@@ -609,62 +555,37 @@ macro_rules! new_curve_impl {
             type Output = $name;
 
             fn add(self, rhs: &'a $name_affine) -> $name {
-                // This Jacobian point addition technique is based on the implementation in libsecp256k1,
-                // which assumes that rhs has z=1. Let's address the case of zero z-coordinates generally.
+                if bool::from(self.is_zero()) {
+                    rhs.to_projective()
+                } else if bool::from(rhs.is_zero()) {
+                    self.to_projective()
+                } else {
+                    if self.x == rhs.x {
+                        if self.y == rhs.y {
+                            self.to_projective().double()
+                        } else {
+                            $name::zero()
+                        }
+                    } else {
+                        let h = rhs.x - self.x;
+                        let hh = h.square();
+                        let i = hh + hh;
+                        let i = i + i;
+                        let j = h * i;
+                        let r = rhs.y - self.y;
+                        let r = r + r;
+                        let v = self.x * i;
+                        let x3 = r.square() - j - v - v;
+                        let j = self.y * j;
+                        let j = j + j;
+                        let y3 = r * (v - x3) - j;
+                        let z3 = h + h;
 
-                // If self is the identity, return rhs. Otherwise, return self. The other cases will be
-                // predicated on neither self nor rhs being the identity.
-                let f1 = self.is_zero();
-                let res = $name::conditional_select(&self.to_projective(), &$name::from(rhs), f1);
-                let f2 = rhs.is_zero();
-
-                // If neither are the identity but x1 = x2 and y1 != y2, then return the identity
-                let f3 = self.x.ct_eq(&rhs.x) & (!self.y.ct_eq(&rhs.y));
-                let res = $name::conditional_select(&res, &$name::zero(), (!f1) & (!f2) & f3);
-
-                let t = self.x + rhs.x;
-                let m = self.y + rhs.y;
-                let rr = t.square();
-                let m_alt = -rhs.x;
-                let tt = self.x * m_alt;
-                let rr = rr + tt;
-
-                // Correct for x1 != x2 but y1 = -y2, which can occur because p - 1 is divisible by 3.
-                // libsecp256k1 does this by substituting in an alternative (defined) expression for lambda.
-                let degenerate = m.is_zero() & rr.is_zero();
-                let rr_alt = self.y + self.y;
-                let m_alt = m_alt + self.x;
-                let rr_alt = $base::conditional_select(&rr_alt, &rr, !degenerate);
-                let m_alt = $base::conditional_select(&m_alt, &m, !degenerate);
-
-                let n = m_alt.square();
-                let q = n * t;
-
-                let n = n.square();
-                let n = $base::conditional_select(&n, &m, degenerate);
-                let t = rr_alt.square();
-                let z3 = m_alt;
-                let z3 = z3 + z3;
-                let q = -q;
-                let t = t + q;
-                let x3 = t;
-                let t = t + t;
-                let t = t + q;
-                let t = t * rr_alt;
-                let t = t + n;
-                let y3 = -t;
-                let x3 = x3 + x3;
-                let x3 = x3 + x3;
-                let y3 = y3 + y3;
-                let y3 = y3 + y3;
-
-                let tmp = $name {
-                    x: x3,
-                    y: y3,
-                    z: z3,
-                };
-
-                $name::conditional_select(&res, &tmp, (!f1) & (!f2) & (!f3))
+                        $name {
+                            x: x3, y: y3, z: z3
+                        }
+                    }
+                }
             }
         }
 

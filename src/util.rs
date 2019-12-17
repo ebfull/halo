@@ -89,6 +89,94 @@ pub fn compute_inner_product<F: Field>(a: &[F], b: &[F]) -> F {
     acc
 }
 
+pub fn multiexp_serial<C: CurveAffine>(coeffs: &[C::Scalar], bases: &[C], acc: &mut C::Projective) {
+    let coeffs: Vec<[u8; 32]> = coeffs.iter().map(|a| a.to_bytes()).collect();
+
+    let c = if bases.len() < 32 {
+        3
+    } else {
+        (f64::from(bases.len() as u32)).ln().ceil() as usize
+    };
+
+    fn get_at(segment: usize, c: usize, bytes: &[u8; 32]) -> usize {
+        let skip_bits = segment * c;
+        let skip_bytes = skip_bits / 8;
+
+        if skip_bytes >= 32 {
+            return 0;
+        }
+
+        let mut v = [0; 8];
+        for (v, o) in v.iter_mut().zip(bytes[skip_bytes..].iter()) {
+            *v = *o;
+        }
+
+        let mut tmp = u64::from_le_bytes(v);
+        tmp >>= skip_bits - (skip_bytes * 8);
+        tmp = tmp % (1 << c);
+
+        tmp as usize
+    }
+
+    let segments = (256 / c) + 1;
+
+    for current_segment in (0..segments).rev() {
+        for _ in 0..c {
+            *acc = acc.double();
+        }
+
+        #[derive(Clone, Copy)]
+        enum Bucket<C: CurveAffine> {
+            None,
+            Affine(C),
+            Projective(C::Projective),
+        }
+
+        impl<C: CurveAffine> Bucket<C> {
+            fn add_assign(&mut self, other: &C) {
+                *self = match *self {
+                    Bucket::None => Bucket::Affine(*other),
+                    Bucket::Affine(a) => Bucket::Projective(a + *other),
+                    Bucket::Projective(mut a) => {
+                        a += *other;
+                        Bucket::Projective(a)
+                    }
+                }
+            }
+
+            fn add(self, mut other: C::Projective) -> C::Projective {
+                match self {
+                    Bucket::None => other,
+                    Bucket::Affine(a) => {
+                        other += a;
+                        other
+                    }
+                    Bucket::Projective(a) => other + &a,
+                }
+            }
+        }
+
+        let mut buckets: Vec<Bucket<C>> = vec![Bucket::None; (1 << c) - 1];
+
+        for (coeff, base) in coeffs.iter().zip(bases.iter()) {
+            let coeff = get_at(current_segment, c, coeff);
+            if coeff != 0 {
+                buckets[coeff - 1].add_assign(base);
+            }
+        }
+
+        // Summation by parts
+        // e.g. 3a + 2b + 1c = a +
+        //                    (a) + b +
+        //                    ((a) + b) + c
+        let mut running_sum = C::Projective::zero();
+        for exp in buckets.into_iter().rev() {
+            running_sum = exp.add(running_sum);
+            *acc = *acc + &running_sum;
+        }
+    }
+}
+
 pub fn multiexp<C: CurveAffine>(coeffs: &[C::Scalar], bases: &[C]) -> C::Projective {
     assert_eq!(coeffs.len(), bases.len());
 
@@ -106,91 +194,7 @@ pub fn multiexp<C: CurveAffine>(coeffs: &[C::Scalar], bases: &[C]) -> C::Project
                 .zip(results.iter_mut())
             {
                 scope.spawn(move |_| {
-                    let coeffs: Vec<[u8; 32]> = coeffs.iter().map(|a| a.to_bytes()).collect();
-
-                    let c = if bases.len() < 32 {
-                        3
-                    } else {
-                        (f64::from(bases.len() as u32)).ln().ceil() as usize
-                    };
-
-                    fn get_at(segment: usize, c: usize, bytes: &[u8; 32]) -> usize {
-                        let skip_bits = segment * c;
-                        let skip_bytes = skip_bits / 8;
-
-                        if skip_bytes >= 32 {
-                            return 0;
-                        }
-
-                        let mut v = [0; 8];
-                        for (v, o) in v.iter_mut().zip(bytes[skip_bytes..].iter()) {
-                            *v = *o;
-                        }
-
-                        let mut tmp = u64::from_le_bytes(v);
-                        tmp >>= skip_bits - (skip_bytes * 8);
-                        tmp = tmp % (1 << c);
-
-                        tmp as usize
-                    }
-
-                    let segments = (256 / c) + 1;
-
-                    for current_segment in (0..segments).rev() {
-                        for _ in 0..c {
-                            *acc = acc.double();
-                        }
-
-                        #[derive(Clone, Copy)]
-                        enum Bucket<C: CurveAffine> {
-                            None,
-                            Affine(C),
-                            Projective(C::Projective),
-                        }
-
-                        impl<C: CurveAffine> Bucket<C> {
-                            fn add_assign(&mut self, other: &C) {
-                                *self = match *self {
-                                    Bucket::None => Bucket::Affine(*other),
-                                    Bucket::Affine(a) => Bucket::Projective(a + *other),
-                                    Bucket::Projective(mut a) => {
-                                        a += *other;
-                                        Bucket::Projective(a)
-                                    }
-                                }
-                            }
-
-                            fn add(self, mut other: C::Projective) -> C::Projective {
-                                match self {
-                                    Bucket::None => other,
-                                    Bucket::Affine(a) => {
-                                        other += a;
-                                        other
-                                    }
-                                    Bucket::Projective(a) => other + &a,
-                                }
-                            }
-                        }
-
-                        let mut buckets: Vec<Bucket<C>> = vec![Bucket::None; (1 << c) - 1];
-
-                        for (coeff, base) in coeffs.iter().zip(bases.iter()) {
-                            let coeff = get_at(current_segment, c, coeff);
-                            if coeff != 0 {
-                                buckets[coeff - 1].add_assign(base);
-                            }
-                        }
-
-                        // Summation by parts
-                        // e.g. 3a + 2b + 1c = a +
-                        //                    (a) + b +
-                        //                    ((a) + b) + c
-                        let mut running_sum = C::Projective::zero();
-                        for exp in buckets.into_iter().rev() {
-                            running_sum = exp.add(running_sum);
-                            *acc = *acc + &running_sum;
-                        }
-                    }
+                    multiexp_serial(coeffs, bases, acc);
                 });
             }
         })

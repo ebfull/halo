@@ -1313,11 +1313,7 @@ pub fn verify_proof<'a, C: CurveAffine, CS: Circuit<C::Scalar>>(
             ()
         }
 
-        fn new_k_power(
-            &mut self,
-            index: usize,
-            _: Option<F>,
-        ) -> Result<(), SynthesisError> {
+        fn new_k_power(&mut self, index: usize, _: Option<F>) -> Result<(), SynthesisError> {
             self.inputs.push(index);
             Ok(())
         }
@@ -1434,13 +1430,6 @@ pub fn verify_proof_with_commitment<C: CurveAffine>(
     let z1_packed = get_challenge(&mut transcript);
     let z1 = crate::util::get_challenge_scalar::<C::Scalar>(z1_packed);
 
-    let p_commitment = old_amortized.s_new_commitment.to_projective();
-    let p_commitment = p_commitment * z1 + &proof.s_cur_commitment.to_projective();
-    let p_commitment = p_commitment * z1 + &proof.t_positive_commitment.to_projective();
-    let p_commitment = p_commitment * z1 + &proof.t_negative_commitment.to_projective();
-    let p_commitment = p_commitment * z1 + &proof.s_new_commitment.to_projective();
-    let p_commitment = p_commitment * z1 + &old_amortized.g_new_commitment.to_projective();
-
     let mut dual_transcript = Rescue::<C::Scalar>::new();
     for o in proof.p_openings.iter() {
         dual_transcript.absorb(*o);
@@ -1454,11 +1443,6 @@ pub fn verify_proof_with_commitment<C: CurveAffine>(
     // Obtain the challenge z_2
     let z2_packed = get_challenge(&mut transcript);
     let z2 = crate::util::get_challenge_scalar::<C::Scalar>(z2_packed);
-
-    let q_commitment = proof.r_commitment;
-    let q_commitment = q_commitment * z2 + &p_commitment;
-    let q_commitment = q_commitment * z2 + &k_commitment.to_projective();
-    let q_commitment = q_commitment * z2 + &proof.c_commitment.to_projective();
 
     append_point::<C>(&mut transcript, &proof.h_commitment);
 
@@ -1476,9 +1460,6 @@ pub fn verify_proof_with_commitment<C: CurveAffine>(
     // Obtain the challenge z_4
     let z4_packed = get_challenge(&mut transcript);
     let z4 = crate::util::get_challenge_scalar::<C::Scalar>(z4_packed);
-
-    let f_commitment = q_commitment;
-    let f_commitment = f_commitment * z4 + &proof.h_commitment.to_projective();
 
     // Compute expected opening of F
     let f_opening = {
@@ -1558,7 +1539,46 @@ pub fn verify_proof_with_commitment<C: CurveAffine>(
         (proof.q_opening * &z4) + &((proof.q_opening - &t) * &denom.invert().unwrap())
     };
 
-    let mut acc = f_commitment;
+    struct MultiScalar<C: CurveAffine> {
+        scalars: Vec<C::Scalar>,
+        bases: Vec<C>,
+    }
+
+    impl<C: CurveAffine> MultiScalar<C> {
+        fn add(&mut self, base: C, coeff: C::Scalar) {
+            self.scalars.push(coeff);
+            self.bases.push(base);
+        }
+
+        fn mul(&mut self, coeff: &C::Scalar) {
+            for v in self.scalars.iter_mut() {
+                *v *= coeff;
+            }
+        }
+    }
+
+    let mut multiexp = MultiScalar {
+        scalars: vec![],
+        bases: vec![],
+    };
+    multiexp.add(old_amortized.s_new_commitment, C::Scalar::one());
+    multiexp.mul(&z1);
+    multiexp.add(proof.s_cur_commitment, C::Scalar::one());
+    multiexp.mul(&z1);
+    multiexp.add(proof.t_positive_commitment, C::Scalar::one());
+    multiexp.mul(&z1);
+    multiexp.add(proof.t_negative_commitment, C::Scalar::one());
+    multiexp.mul(&z1);
+    multiexp.add(proof.s_new_commitment, C::Scalar::one());
+    multiexp.mul(&z1);
+    multiexp.add(old_amortized.g_new_commitment, C::Scalar::one());
+    multiexp.add(proof.r_commitment, z2);
+    multiexp.mul(&z2);
+    multiexp.add(k_commitment, C::Scalar::one());
+    multiexp.mul(&z2);
+    multiexp.add(proof.c_commitment, C::Scalar::one());
+    multiexp.mul(&z4);
+    multiexp.add(proof.h_commitment, C::Scalar::one());
 
     let mut challenges_new_sq_packed = vec![];
     let mut challenges_new_sq = vec![];
@@ -1569,18 +1589,31 @@ pub fn verify_proof_with_commitment<C: CurveAffine>(
         append_point(&mut transcript, &r);
         let challenge_sq_packed = get_challenge(&mut transcript);
         let challenge_sq = crate::util::get_challenge_scalar::<C::Scalar>(challenge_sq_packed);
-        let challenge_sq_inv = challenge_sq.invert().unwrap(); // TODO?
-        acc = acc + &(l * challenge_sq) + &(r * challenge_sq_inv);
 
-        challenges_new.push(challenge_sq.sqrt().unwrap());
+        challenges_new.push(challenge_sq.sqrt().unwrap()); // TODO
         challenges_new_sq.push(challenge_sq);
         challenges_new_sq_packed.push(challenge_sq_packed);
     }
 
-    let acc = params.add_value(&acc.to_affine(), f_opening);
-
     let mut challenges_inv = challenges_new.clone();
     let allinv_new = C::Scalar::batch_invert(&mut challenges_inv);
+
+    let mut challenges_new_sq_inv = challenges_inv.clone();
+    for c in &mut challenges_new_sq_inv {
+        *c = c.square();
+    }
+
+    for ((&(l, r), inv), sq) in proof
+        .polynomial_opening
+        .iter()
+        .zip(challenges_new_sq_inv.iter())
+        .zip(challenges_new_sq.iter())
+    {
+        multiexp.add(l, *sq);
+        multiexp.add(r, *inv);
+    }
+
+    multiexp.add(params.g, f_opening);
 
     let b = crate::util::compute_b(z3, &challenges_new, &challenges_inv);
 
@@ -1595,17 +1628,19 @@ pub fn verify_proof_with_commitment<C: CurveAffine>(
 
     let c = crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
 
-    let lhs = acc * c;
-    let lhs = lhs + &proof.beta.to_projective();
-    let lhs = lhs * b;
-    let lhs = lhs + &proof.delta.to_projective();
+    multiexp.mul(&c);
+    multiexp.add(proof.beta, C::Scalar::one());
+    multiexp.mul(&b);
+    multiexp.add(proof.delta, C::Scalar::one());
 
-    let rhs = params.g * b;
-    let rhs = rhs + &proof.g_new_commitment.to_projective();
-    let rhs = rhs * proof.r1;
-    let rhs = rhs + &(params.h * proof.r2);
+    multiexp.add(params.g, -(b * &proof.r1));
+    multiexp.add(proof.g_new_commitment, -proof.r1);
+    multiexp.add(params.h, -proof.r2);
 
-    if lhs != rhs {
+    let mut res = C::Projective::zero();
+    crate::util::multiexp_serial(&multiexp.scalars, &multiexp.bases, &mut res);
+
+    if !bool::from(res.is_zero()) {
         return Err(SynthesisError::Violation);
     }
 
@@ -1702,8 +1737,6 @@ impl<C: CurveAffine> Amortized<C> {
         let mut challenges_new_inv = challenges_new.clone();
         let allinv = C::Scalar::batch_invert(&mut challenges_new_inv);
         let mut v = crate::util::compute_s(&challenges_new_sq, allinv);
-
-        println!("ok");
 
         let y_new: C::Scalar = crate::util::get_challenge_scalar(self.y_new_packed);
 

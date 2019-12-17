@@ -11,8 +11,10 @@ mod curves;
 mod fields;
 pub mod newcircuits;
 pub mod newproofs;
+pub mod newrecursion;
 pub mod pedersen;
 pub mod rescue;
 
 pub use curves::*;
 pub use fields::*;
+pub use newrecursion::*;
