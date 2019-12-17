@@ -1477,7 +1477,9 @@ pub fn verify_proof_with_commitment<C: CurveAffine>(
             .map(|a| a.sqrt().unwrap())
             .collect();
         let mut challenges_old_inv = challenges_old.clone();
+        challenges_old_inv.push(denom);
         Field::batch_invert(&mut challenges_old_inv);
+        let denom = challenges_old_inv.pop();
 
         let px_expected_opening_at_x = ((((proof.c_openings[2] * &z1 + &proof.c_openings[3])
             * &z1
@@ -1490,6 +1492,8 @@ pub fn verify_proof_with_commitment<C: CurveAffine>(
             + &crate::util::compute_b(x, &challenges_old, &challenges_old_inv);
 
         let mut t = C::Scalar::zero();
+        let mut basis_num_v = Vec::with_capacity(5);
+        let mut basis_den_v = Vec::with_capacity(5);
         for (j, p) in [x, xy_cur, y_old, y_cur, y_new].iter().enumerate() {
             let mut basis_num = C::Scalar::one();
             let mut basis_den = C::Scalar::one();
@@ -1532,11 +1536,17 @@ pub fn verify_proof_with_commitment<C: CurveAffine>(
                 }
                 _ => unreachable!(),
             };
-            t += &(value * &(basis_num * &(basis_den.invert().unwrap())));
+            basis_num = basis_num * &value;
+
+            basis_num_v.push(basis_num);
+            basis_den_v.push(basis_den);
+        }
+        Field::batch_invert(&mut basis_den_v);
+        for (a, b) in basis_num_v.into_iter().zip(basis_den_v.into_iter()) {
+            t += &(a * &b);
         }
 
-        // let t = params.compute_opening(&tx, z3, false);
-        (proof.q_opening * &z4) + &((proof.q_opening - &t) * &denom.invert().unwrap())
+        (proof.q_opening * &z4) + &((proof.q_opening - &t) * &denom.unwrap())
     };
 
     struct MultiScalar<C: CurveAffine> {
