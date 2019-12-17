@@ -454,9 +454,9 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     Basic::synthesize(&mut assignment, circuit)?;
 
     // TODO, better API than this
-    assert!(assignment.n < params.n);
     println!("prover: n = {}", assignment.n);
     println!("prover: q = {}", assignment.q);
+    assert!(assignment.n < params.n);
     assert!(assignment.q < params.d);
 
     assignment.a.resize(params.n, C::Scalar::zero());

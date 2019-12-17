@@ -159,6 +159,8 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
         &self,
         cs: &mut CS,
     ) -> Result<(), SynthesisError> {
+        self.inner_circuit.synthesize(cs)?;
+
         Ok(())
     }
 }
@@ -171,15 +173,79 @@ fn recursion_threshold() {
     let e1params = Params::<EpAffine>::new(19);
     let e2params = Params::<EqAffine>::new(19);
 
-    struct CubingCircuit;
+    struct CubingCircuit {
+        x: Option<u64>,
+        num_cubes: usize,
+    }
 
     impl<F: Field> Circuit<F> for CubingCircuit {
-        fn synthesize<CS: ConstraintSystem<F>>(&self, _: &mut CS) -> Result<(), SynthesisError> {
+        fn synthesize<CS: ConstraintSystem<F>>(&self, cs: &mut CS) -> Result<(), SynthesisError> {
+            let initial_x = self.x.map(|x| F::from_u64(x as u64));
+
+            let mut x2value = None;
+            let (x, _, x2) = cs.multiply(|| {
+                let x = initial_x.ok_or(SynthesisError::AssignmentMissing)?;
+                let x2 = x.square();
+
+                x2value = Some(x2);
+
+                Ok((x, x, x2))
+            })?;
+            let mut x3value = None;
+            let (a, b, c) = cs.multiply(|| {
+                let x = initial_x.ok_or(SynthesisError::AssignmentMissing)?;
+                let x2 = x2value.ok_or(SynthesisError::AssignmentMissing)?;
+                //let x3 = -(x * x2);
+                let x3 = x * x2;
+
+                x3value = Some(x3);
+
+                Ok((x, x2, x3))
+            })?;
+
+            cs.enforce_zero(LinearCombination::from(x) - a);
+            cs.enforce_zero(LinearCombination::from(x2) - b);
+
+            let x3 = cs.alloc(|| x3value.ok_or(SynthesisError::AssignmentMissing))?;
+
+            cs.enforce_zero(LinearCombination::from(x3) - c);
+
+            for _ in 0..self.num_cubes {
+                let mut x2value = None;
+                let (x, _, x2) = cs.multiply(|| {
+                    let x = initial_x.ok_or(SynthesisError::AssignmentMissing)?;
+                    let x2 = x.square();
+
+                    x2value = Some(x2);
+
+                    Ok((x, x, x2))
+                })?;
+                let mut x3value = None;
+                let (a, b, c) = cs.multiply(|| {
+                    let x = initial_x.ok_or(SynthesisError::AssignmentMissing)?;
+                    let x2 = x2value.ok_or(SynthesisError::AssignmentMissing)?;
+                    //let x3 = -(x * x2);
+                    let x3 = x * x2;
+
+                    x3value = Some(x3);
+
+                    Ok((x, x2, x3))
+                })?;
+
+                cs.enforce_zero(LinearCombination::from(x) - a);
+                cs.enforce_zero(LinearCombination::from(x2) - b);
+                cs.enforce_zero(LinearCombination::from(x3) - c);
+            }
+
             Ok(())
         }
     }
 
-    let circuit = CubingCircuit;
+    let circuit = CubingCircuit {
+        x: Some(10),
+        num_cubes: 65000
+    };
+
 
     use std::time::Instant;
 
