@@ -88,6 +88,38 @@ pub struct Deferred<F: Field> {
 }
 
 impl<F: Field> Deferred<F> {
+    pub fn new(&self, k: usize) -> Self {
+        Deferred {
+            y_old_packed: Challenge(MAGIC),
+            y_cur_packed: Challenge(MAGIC),
+            y_new_packed: Challenge(MAGIC),
+            x_packed: Challenge(MAGIC),
+            z1_packed: Challenge(MAGIC),
+            z2_packed: Challenge(MAGIC),
+            z3_packed: Challenge(MAGIC),
+            z4_packed: Challenge(MAGIC),
+
+            // k(x), k(x * y_cur), k(y_old), k(y_cur), k(y_new)
+            k_openings: [F::zero(); 5],
+            // r(x, 1), r(x, y_cur), r(y_old, 1), r(y_cur, 1), r(y_new, 1)
+            r_openings: [F::zero(); 5],
+            // s(x, x), s(x, x * y_cur), s(x, y_old), s(x, y_cur), s(x, y_new)
+            c_openings: [F::zero(); 5],
+            // t+(x, 1)
+            t_positive_opening: F::zero(),
+            // t-(x, 1)
+            t_negative_opening: F::zero(),
+            // p(x * y_cur), p(y_old), p(y_cur), p(y_new)
+            p_openings: [F::zero(); 4],
+            // The prover opens q(X) at a random point.
+            q_opening: F::zero(),
+            // Old challenges, needed to compute g_old(x)
+            challenges_old_sq_packed: vec![Challenge(MAGIC); k], // length is k
+            // New challenges, needed to compute b
+            challenges_new_sq_packed: vec![Challenge(MAGIC); k], // length is k
+        }
+    }
+
     pub fn public_input_string(&self) -> Vec<u8> {
         use byteorder::{ByteOrder, LittleEndian};
 
@@ -476,7 +508,6 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
 
     // Commit to k(Y)
     let k_commitment = params.commit(&ky, false);
-    let k_commitment = params.add_randomness(&k_commitment, C::Scalar::one());
     append_point(&mut transcript, &k_commitment);
 
     // Compute r(X, Y)
@@ -968,7 +999,7 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
 
     let f_randomness = r_r;
     let f_randomness = f_randomness * &z2 + &p_randomness;
-    let f_randomness = f_randomness * &z2 + &C::Scalar::one();
+    let f_randomness = f_randomness * &z2;
     let f_randomness = f_randomness * &z2 + &C::Scalar::one();
     let f_randomness = f_randomness * &z4 + &r_h;
 
@@ -1256,55 +1287,71 @@ pub fn create_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     })
 }
 
-pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
+pub enum InputData<'a, C: CurveAffine> {
+    Scalars(&'a [C::Scalar]),
+    Commitment(C),
+}
+
+pub fn verify_proof<'a, C: CurveAffine, CS: Circuit<C::Scalar>>(
     params: &Params<C>,
     proof: &Proof<C>,
     old_amortized: &Amortized<C>,
     circuit: &CS,
-    inputs: &[C::Scalar],
+    inputs: InputData<'a, C>,
 ) -> Result<(Amortized<C>, Deferred<C::Scalar>), SynthesisError> {
-    struct InputMap {
-        inputs: Vec<usize>,
-    }
-
-    impl<'a, F: Field> Backend<F> for &'a mut InputMap {
-        type LinearConstraintIndex = ();
-
-        fn get_for_q(&self, _q: usize) -> Self::LinearConstraintIndex {
-            ()
-        }
-
-        fn new_k_power(&mut self, index: usize, _: Option<F>) -> Result<(), SynthesisError> {
-            self.inputs.push(index);
-            Ok(())
-        }
-
-        fn new_linear_constraint(&mut self) -> Self::LinearConstraintIndex {
-            ()
-        }
-    }
-
-    let mut inputmap = InputMap { inputs: vec![] };
-    Basic::synthesize(&mut inputmap, circuit)?;
-    assert_eq!(inputs.len(), inputmap.inputs.len() - 1);
-
-    let mut transcript = Rescue::<C::Base>::new();
-
     use std::time::Instant;
     let start = Instant::now();
-    // k(Y)
-    let mut ky = vec![];
-    ky.push(C::Scalar::zero());
-    for (index, value) in inputmap
-        .inputs
-        .iter()
-        .zip(Some(C::Scalar::one()).iter().chain(inputs.iter()))
-    {
-        ky.resize(index + 1, C::Scalar::zero());
-        ky[*index] = *value;
-    }
-    let k_commitment = params.commit(&ky, false);
-    let k_commitment = params.add_randomness(&k_commitment, C::Scalar::one());
+
+    let k_commitment = match inputs {
+        InputData::Scalars(inputs) => {
+            struct InputMap {
+                inputs: Vec<usize>,
+            }
+
+            impl<'a, F: Field> Backend<F> for &'a mut InputMap {
+                type LinearConstraintIndex = ();
+
+                fn get_for_q(&self, _q: usize) -> Self::LinearConstraintIndex {
+                    ()
+                }
+
+                fn new_k_power(
+                    &mut self,
+                    index: usize,
+                    _: Option<F>,
+                ) -> Result<(), SynthesisError> {
+                    self.inputs.push(index);
+                    Ok(())
+                }
+
+                fn new_linear_constraint(&mut self) -> Self::LinearConstraintIndex {
+                    ()
+                }
+            }
+
+            let mut inputmap = InputMap { inputs: vec![] };
+            Basic::synthesize(&mut inputmap, circuit)?;
+            assert_eq!(inputs.len(), inputmap.inputs.len() - 1);
+
+            // k(Y)
+            let mut ky = vec![];
+            ky.push(C::Scalar::zero());
+            for (index, value) in inputmap
+                .inputs
+                .iter()
+                .zip(Some(C::Scalar::one()).iter().chain(inputs.iter()))
+            {
+                ky.resize(index + 1, C::Scalar::zero());
+                ky[*index] = *value;
+            }
+            let k_commitment = params.commit(&ky, false);
+
+            k_commitment
+        }
+        InputData::Commitment(k_commitment) => k_commitment,
+    };
+
+    let mut transcript = Rescue::<C::Base>::new();
     append_point(&mut transcript, &k_commitment);
 
     println!(
@@ -1642,7 +1689,7 @@ impl<C: CurveAffine> Amortized<C> {
         params: &Params<C>,
         circuit: &CS,
     ) -> Result<Self, SynthesisError> {
-        let y_new_packed = Challenge(0);
+        let y_new_packed = Challenge(MAGIC);
         let y_new: C::Scalar = crate::util::get_challenge_scalar(y_new_packed);
         //let s_new_commitment = params.commit(&[], false, C::Scalar::one());
         let sx_new = params.compute_sx(circuit, y_new)?;
@@ -2050,7 +2097,7 @@ mod test {
             &proof,
             &dummy_amortized,
             &verifier_circuit,
-            &[Fq::from(1000)],
+            InputData::Scalars(&[Fq::from(1000)]),
         )
         .unwrap();
 
