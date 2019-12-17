@@ -87,6 +87,82 @@ pub struct Deferred<F: Field> {
     pub challenges_new_sq_packed: Vec<Challenge>, // length is k
 }
 
+impl<F: Field> Deferred<F> {
+    fn public_input_string(&self) -> Vec<u8> {
+        use byteorder::{ByteOrder, LittleEndian};
+
+        // TODO?
+        let k = self.challenges_old_sq_packed.len();
+
+        let mut res = vec![0u8; 32 * k + 288];
+
+        {
+            LittleEndian::write_u128(&mut res[16 * 0..][0..16], self.y_old_packed.0);
+            LittleEndian::write_u128(&mut res[16 * 1..][0..16], self.y_cur_packed.0);
+            LittleEndian::write_u128(&mut res[16 * 2..][0..16], self.y_new_packed.0);
+            LittleEndian::write_u128(&mut res[16 * 3..][0..16], self.x_packed.0);
+            LittleEndian::write_u128(&mut res[16 * 4..][0..16], self.z1_packed.0);
+            LittleEndian::write_u128(&mut res[16 * 5..][0..16], self.z2_packed.0);
+            LittleEndian::write_u128(&mut res[16 * 6..][0..16], self.z3_packed.0);
+            LittleEndian::write_u128(&mut res[16 * 7..][0..16], self.z4_packed.0);
+        }
+
+        {
+            let res = &mut res[16 * 8..];
+
+            for (i, challenge) in self.challenges_old_sq_packed.iter().enumerate() {
+                LittleEndian::write_u128(&mut res[16 * i..][0..16], challenge.0);
+            }
+        }
+
+        {
+            let res = &mut res[16 * k..];
+
+            for (i, challenge) in self.challenges_new_sq_packed.iter().enumerate() {
+                LittleEndian::write_u128(&mut res[16 * i..][0..16], challenge.0);
+            }
+        }
+
+        {
+            let res = &mut res[16 * k..];
+
+            let hash1 = self.compute_hash1();
+            let hash2 = self.compute_hash2();
+            let hash3 = self.compute_hash3();
+            let f_opening = self.compute_f_opening();
+            let b = self.compute_b();
+
+            res[32 * 0..][0..32].copy_from_slice(&hash1.to_bytes());
+            res[32 * 1..][0..32].copy_from_slice(&hash2.to_bytes());
+            res[32 * 2..][0..32].copy_from_slice(&hash3.to_bytes());
+            res[32 * 3..][0..32].copy_from_slice(&f_opening.to_bytes());
+            res[32 * 4..][0..32].copy_from_slice(&b.to_bytes());
+        }
+
+        res
+    }
+
+    fn compute_b(&self) -> F {
+        unimplemented!()
+    }
+
+    fn compute_hash1(&self) -> F {
+        unimplemented!()
+    }
+
+    fn compute_hash2(&self) -> F {
+        unimplemented!()
+    }
+
+    fn compute_hash3(&self) -> F {
+        unimplemented!()
+    }
+
+    fn compute_f_opening(&self) -> F {
+        unimplemented!()
+    }
+}
+
 pub struct Amortized<C: CurveAffine> {
     pub g_new_commitment: C,
     pub s_new_commitment: C,
@@ -1079,7 +1155,10 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let k_commitment = params.add_randomness(&k_commitment, C::Scalar::one());
     append_point(&mut transcript, &k_commitment);
 
-    println!("verifier, K commitment added to transcript, elapsed {:?}", start.elapsed());
+    println!(
+        "verifier, K commitment added to transcript, elapsed {:?}",
+        start.elapsed()
+    );
 
     append_point(&mut transcript, &proof.r_commitment);
     let y_cur = crate::util::get_challenge_scalar::<C::Scalar>(get_challenge(&mut transcript));
@@ -1092,7 +1171,10 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let y_new = crate::util::get_challenge_scalar::<C::Scalar>(y_new_packed);
     append_point(&mut transcript, &proof.s_new_commitment);
 
-    println!("verifier, S_new commitment added to transcript, elapsed {:?}", start.elapsed());
+    println!(
+        "verifier, S_new commitment added to transcript, elapsed {:?}",
+        start.elapsed()
+    );
 
     let mut dual_transcript = Rescue::<C::Scalar>::new();
     for o in &proof.k_openings {
@@ -1108,7 +1190,10 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     dual_transcript.absorb(proof.t_positive_opening);
     dual_transcript.absorb(proof.t_negative_opening);
 
-    println!("verifier, first round of openings done, elapsed {:?}", start.elapsed());
+    println!(
+        "verifier, first round of openings done, elapsed {:?}",
+        start.elapsed()
+    );
 
     // Is the constraint system satisfied
     {
@@ -1155,7 +1240,10 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
         }
     }
 
-    println!("verifier, constraint system satisfied, elapsed {:?}", start.elapsed());
+    println!(
+        "verifier, constraint system satisfied, elapsed {:?}",
+        start.elapsed()
+    );
 
     let hash_1 = dual_transcript.squeeze();
     let hash_1 = C::Base::from_bytes(&hash_1.to_bytes()).unwrap(); // TODO: lazy; this can fail (low probability)
@@ -1341,7 +1429,10 @@ pub fn verify_proof<C: CurveAffine, CS: Circuit<C::Scalar>>(
     let rhs = rhs * proof.r1;
     let rhs = rhs + &(params.h * proof.r2);
 
-    println!("verifier, schnorr verification done, elapsed {:?}", start.elapsed());
+    println!(
+        "verifier, schnorr verification done, elapsed {:?}",
+        start.elapsed()
+    );
 
     if lhs != rhs {
         return Err(SynthesisError::Violation);
@@ -1609,7 +1700,7 @@ mod test {
 
     struct CubingCircuit<F: Field> {
         x: Option<F>,
-        num_cubes: usize
+        num_cubes: usize,
     }
 
     impl<F: Field> Circuit<F> for CubingCircuit<F> {
@@ -1679,8 +1770,14 @@ mod test {
         let ep_params = Params::<EpAffine>::new(4);
         let eq_params = Params::<EqAffine>::new(4);
 
-        let verifier_circuit_a: CubingCircuit<Fq> = CubingCircuit { x: None, num_cubes: 0 };
-        let verifier_circuit_b: CubingCircuit<Fp> = CubingCircuit { x: None, num_cubes: 0 };
+        let verifier_circuit_a: CubingCircuit<Fq> = CubingCircuit {
+            x: None,
+            num_cubes: 0,
+        };
+        let verifier_circuit_b: CubingCircuit<Fp> = CubingCircuit {
+            x: None,
+            num_cubes: 0,
+        };
 
         let a = Amortized::<EpAffine>::new(&ep_params, &verifier_circuit_a);
         let b = Amortized::<EqAffine>::new(&eq_params, &verifier_circuit_b);
@@ -1735,9 +1832,13 @@ mod test {
         let params = Params::<EpAffine>::new(4);
 
         let mut prover_circuit: CubingCircuit<Fq> = CubingCircuit {
-            x: Some(Fq::from(10)), num_cubes: 0
+            x: Some(Fq::from(10)),
+            num_cubes: 0,
         };
-        let verifier_circuit: CubingCircuit<Fq> = CubingCircuit { x: None, num_cubes: 0 };
+        let verifier_circuit: CubingCircuit<Fq> = CubingCircuit {
+            x: None,
+            num_cubes: 0,
+        };
 
         // // phony deferred should be valid
         // let a = Deferred::<<Ec1 as Curve>::Scalar>::dummy(params.k);

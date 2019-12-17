@@ -145,7 +145,7 @@ pub fn multiexp<C: CurveAffine>(coeffs: &[C::Scalar], bases: &[C]) -> C::Project
                         enum Bucket<C: CurveAffine> {
                             None,
                             Affine(C),
-                            Projective(C::Projective)
+                            Projective(C::Projective),
                         }
 
                         impl<C: CurveAffine> Bucket<C> {
@@ -166,10 +166,8 @@ pub fn multiexp<C: CurveAffine>(coeffs: &[C::Scalar], bases: &[C]) -> C::Project
                                     Bucket::Affine(a) => {
                                         other += a;
                                         other
-                                    },
-                                    Bucket::Projective(a) => {
-                                        other + &a
                                     }
+                                    Bucket::Projective(a) => other + &a,
                                 }
                             }
                         }
