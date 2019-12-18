@@ -73,10 +73,7 @@ impl<'cs, FF: Field, CS: ConstraintSystem<FF>> ConstraintSystem<FF> for &'cs mut
         (**self).enforce_zero(lc)
     }
 
-    fn multiply<F>(
-        &mut self,
-        values: F,
-    ) -> Result<(Variable, Variable, Variable), SynthesisError>
+    fn multiply<F>(&mut self, values: F) -> Result<(Variable, Variable, Variable), SynthesisError>
     where
         F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
     {

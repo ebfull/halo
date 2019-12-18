@@ -17,6 +17,7 @@ pub struct Params<C: CurveAffine> {
     pub n: usize,
     pub k: usize,
     pub generators: Vec<C>,
+    pub pedersen_windows: Vec<[(C::Base, C::Base); 4]>,
 }
 
 pub struct Proof<C: CurveAffine> {
@@ -54,6 +55,37 @@ pub struct Proof<C: CurveAffine> {
     pub beta: C,
     pub r1: C::Scalar,
     pub r2: C::Scalar,
+}
+
+impl<C: CurveAffine> Proof<C> {
+    pub fn dummy(
+        params: &Params<C>,
+        amortized: &Amortized<C>,
+        deferred: &Deferred<C::Scalar>,
+    ) -> Self {
+        Proof {
+            r_commitment: params.h,
+            s_cur_commitment: params.h,
+            t_positive_commitment: params.h,
+            t_negative_commitment: params.h,
+            c_commitment: params.h,
+            s_new_commitment: amortized.s_new_commitment,
+            k_openings: deferred.k_openings,
+            r_openings: deferred.r_openings,
+            c_openings: deferred.c_openings,
+            t_positive_opening: deferred.t_positive_opening,
+            t_negative_opening: deferred.t_negative_opening,
+            p_openings: deferred.p_openings,
+            h_commitment: params.h,
+            q_opening: deferred.q_opening,
+            polynomial_opening: vec![(params.h, params.h); params.k],
+            g_new_commitment: amortized.g_new_commitment,
+            delta: params.h,
+            beta: params.h,
+            r1: Field::one(),
+            r2: Field::one(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1848,6 +1880,29 @@ impl<C: CurveAffine> Params<C> {
             }
         }
 
+        let mut pedersen_windows = vec![];
+        for g in &generators[2..15000] {
+            let a = g.to_projective(); // 1
+            let b = g.to_projective().double(); // 2
+            let c = a + &b; // 3
+            let d = b.double(); // 4
+            pedersen_windows.push(a);
+            pedersen_windows.push(b);
+            pedersen_windows.push(c);
+            pedersen_windows.push(d);
+        }
+        let mut pedersen_windows_affine = vec![C::zero(); pedersen_windows.len()];
+        C::Projective::batch_to_affine(&pedersen_windows, &mut pedersen_windows_affine);
+        let mut pedersen_windows = Vec::with_capacity(pedersen_windows.len());
+        for chunk in pedersen_windows_affine.chunks(4) {
+            pedersen_windows.push([
+                chunk[0].get_xy().unwrap(),
+                chunk[1].get_xy().unwrap(),
+                chunk[2].get_xy().unwrap(),
+                chunk[3].get_xy().unwrap(),
+            ]);
+        }
+
         Params {
             g,
             h,
@@ -1855,6 +1910,7 @@ impl<C: CurveAffine> Params<C> {
             d,
             n,
             generators,
+            pedersen_windows,
         }
     }
 

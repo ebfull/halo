@@ -5,11 +5,7 @@ pub fn pedersen_hash<C: CurveAffine>(bytes: &[u8], generators: &[C]) -> C::Proje
 
     for (index, generator) in bytes
         .iter()
-        .flat_map(|byte| {
-            Some(byte & 0b1111)
-                .into_iter()
-                .chain(Some(byte >> 4))
-        })
+        .flat_map(|byte| Some(byte & 0b1111).into_iter().chain(Some(byte >> 4)))
         .map(|a: u8| a as usize)
         .zip(generators.iter())
     {
@@ -22,7 +18,7 @@ pub fn pedersen_hash<C: CurveAffine>(bytes: &[u8], generators: &[C]) -> C::Proje
 
         // 2-bit lookup
         match i % 4 {
-            0b00 => {},
+            0b00 => {}
             0b01 => {
                 val = val.double();
             }
