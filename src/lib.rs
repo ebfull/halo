@@ -14,6 +14,7 @@ pub mod newproofs;
 pub mod newrecursion;
 pub mod pedersen;
 pub mod rescue;
+pub mod newgadgets;
 
 pub use curves::*;
 pub use fields::*;

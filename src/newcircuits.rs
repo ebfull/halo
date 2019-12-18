@@ -50,6 +50,40 @@ pub trait ConstraintSystem<FF: Field> {
         F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>;
 }
 
+/// Convenience implementation of ConstraintSystem<E> for mutable references to
+/// constraint systems.
+impl<'cs, FF: Field, CS: ConstraintSystem<FF>> ConstraintSystem<FF> for &'cs mut CS {
+    const ONE: Variable = CS::ONE;
+
+    fn alloc<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
+    where
+        F: FnOnce() -> Result<FF, SynthesisError>,
+    {
+        (**self).alloc(value)
+    }
+
+    fn alloc_input<F>(&mut self, value: F) -> Result<Variable, SynthesisError>
+    where
+        F: FnOnce() -> Result<FF, SynthesisError>,
+    {
+        (**self).alloc_input(value)
+    }
+
+    fn enforce_zero(&mut self, lc: LinearCombination<FF>) {
+        (**self).enforce_zero(lc)
+    }
+
+    fn multiply<F>(
+        &mut self,
+        values: F,
+    ) -> Result<(Variable, Variable, Variable), SynthesisError>
+    where
+        F: FnOnce() -> Result<(FF, FF, FF), SynthesisError>,
+    {
+        (**self).multiply(values)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Coeff<F: Field> {
     Zero,

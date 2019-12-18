@@ -56,6 +56,7 @@ pub struct Proof<C: CurveAffine> {
     pub r2: C::Scalar,
 }
 
+#[derive(Clone)]
 pub struct Deferred<F: Field> {
     // Points, needed to compute expected values
     pub y_old_packed: Challenge,
@@ -118,6 +119,10 @@ impl<F: Field> Deferred<F> {
             // New challenges, needed to compute b
             challenges_new_sq_packed: vec![Challenge(MAGIC); k], // length is k
         }
+    }
+
+    pub fn public_input_string_length(k: usize) -> usize {
+        16 * k + 272
     }
 
     pub fn public_input_string(&self) -> Vec<u8> {
@@ -320,12 +325,16 @@ pub struct Amortized<C: CurveAffine> {
 }
 
 impl<C: CurveAffine> Amortized<C> {
+    pub fn public_input_string_length(k: usize) -> usize {
+        16 * k + 144
+    }
+
     pub fn public_input_string(&self) -> Vec<u8> {
         use byteorder::{ByteOrder, LittleEndian};
 
         let k = self.challenges_new_sq_packed.len();
 
-        let mut res = vec![0u8; 16 * k + 144];
+        let mut res = vec![0u8; Self::public_input_string_length(k)];
 
         {
             let (x, y) = self.g_new_commitment.get_xy().unwrap(); // TODO?
