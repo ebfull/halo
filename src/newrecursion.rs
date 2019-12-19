@@ -1365,6 +1365,43 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
 
         let z4 = self.obtain_challenge(&mut cs, transcript)?;
 
+        // Perform the opening...
+        let mut new_challenges = vec![];
+
+        for i in 0..self.params.k {
+            let l = self.witness_point(&mut cs, || {
+                Ok(self.proof.as_ref().unwrap().proof.polynomial_opening[i]
+                    .0
+                    .get_xy()
+                    .unwrap())
+            })?;
+            let r = self.witness_point(&mut cs, || {
+                Ok(self.proof.as_ref().unwrap().proof.polynomial_opening[i]
+                    .1
+                    .get_xy()
+                    .unwrap())
+            })?;
+
+            self.append_point(&mut cs, transcript, &l)?;
+            self.append_point(&mut cs, transcript, &r)?;
+
+            let challenge = self.obtain_challenge(&mut cs, transcript)?;
+
+            new_challenges.push(challenge);
+        }
+
+        let delta = self.witness_point(&mut cs, || {
+            Ok(self.proof.as_ref().unwrap().proof.delta.get_xy().unwrap())
+        })?;
+        self.append_point(&mut cs, transcript, &delta)?;
+
+        let beta = self.witness_point(&mut cs, || {
+            Ok(self.proof.as_ref().unwrap().proof.beta.get_xy().unwrap())
+        })?;
+        self.append_point(&mut cs, transcript, &beta)?;
+
+        let c = self.obtain_challenge(&mut cs, transcript)?;
+
         // Check consistency of challenges
         self.equal_unless_base_case(&mut cs, base_case, &y_old, &y_old_expected)?;
         self.equal_unless_base_case(&mut cs, base_case, &y_cur, &y_cur_expected)?;
@@ -1377,7 +1414,9 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
         for (old, expected) in old_challenges.iter().zip(old_challenges_expected.iter()) {
             self.equal_unless_base_case(&mut cs, base_case, old, expected)?;
         }
-        // new_challenges_expected
+        for (new, expected) in new_challenges.iter().zip(new_challenges_expected.iter()) {
+            self.equal_unless_base_case(&mut cs, base_case, new, expected)?;
+        }
 
         Ok(())
     }
@@ -1427,6 +1466,23 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
         self.check_on_curve(&mut cs, &x, &y)?;
 
         Ok((x, y))
+    }
+
+    fn endo_multiply<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        p: &(Num<E1::Scalar>, Num<E1::Scalar>),
+    ) -> Result<(Num<E1::Scalar>, Num<E1::Scalar>), SynthesisError> {
+        unimplemented!()
+    }
+
+    fn add_incomplete<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        p: &(Num<E1::Scalar>, Num<E1::Scalar>),
+        q: &(Num<E1::Scalar>, Num<E1::Scalar>),
+    ) -> Result<(Num<E1::Scalar>, Num<E1::Scalar>), SynthesisError> {
+        unimplemented!()
     }
 
     fn check_on_curve<CS: ConstraintSystem<E1::Scalar>>(
