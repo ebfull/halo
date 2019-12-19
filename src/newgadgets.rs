@@ -260,7 +260,6 @@ impl AllocatedBit {
     }
 }
 
-/*
 pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
     mut cs: CS,
     num: &Num<F>,
@@ -284,10 +283,9 @@ pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
 
     let mut bools = vec![];
     for (i, value) in values.iter().enumerate() {
-        bools.push(AllocatedBit::alloc(
-            cs,
-            || value.ok_or(SynthesisError::AssignmentMissing),
-        )?);
+        bools.push(AllocatedBit::alloc(&mut cs, || {
+            value.ok_or(SynthesisError::AssignmentMissing)
+        })?);
     }
 
     // Check that it's equal.
@@ -302,7 +300,6 @@ pub fn unpack_fe<F: Field, CS: ConstraintSystem<F>>(
 
     Ok(bools)
 }
-*/
 
 /// This is a boolean value which may be either a constant or
 /// an interpretation of an `AllocatedBit`.

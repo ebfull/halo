@@ -1081,6 +1081,374 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
 
         Ok((x1, y1))
     }
+
+    fn num_equal_unless_base_case<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        base_case: &AllocatedBit,
+        lhs: &Combination<E1::Scalar>,
+        rhs: &Combination<E1::Scalar>,
+    ) -> Result<(), SynthesisError> {
+        let not_basecase = base_case.get_value().map(|v| (!v).into());
+
+        // lhs - rhs * (1 - base_case) = 0
+        // if base_case is true, then 1 - base_case will be zero
+        // if base_case is false, then lhs - rhs must be zero, and therefore they are equal
+        let (a, b, c) = cs.multiply(|| {
+            let lhs = lhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+            let rhs = rhs.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+            let not_basecase = not_basecase.ok_or(SynthesisError::AssignmentMissing)?;
+
+            Ok((lhs - &rhs, not_basecase, Field::zero()))
+        })?;
+        let lhs_lc = lhs.lc(&mut cs);
+        let rhs_lc = rhs.lc(&mut cs);
+        cs.enforce_zero(LinearCombination::from(a) - &lhs_lc + &rhs_lc);
+        cs.enforce_zero(LinearCombination::from(b) - CS::ONE + base_case.get_variable());
+        cs.enforce_zero(LinearCombination::from(c));
+
+        Ok(())
+    }
+
+    fn equal_unless_base_case<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        base_case: &AllocatedBit,
+        mut lhs: &[AllocatedBit],
+        mut rhs: &[AllocatedBit],
+    ) -> Result<(), SynthesisError> {
+        assert_eq!(lhs.len(), rhs.len());
+
+        let mut i = 0;
+        while lhs.len() > 0 {
+            i += 1;
+            let mut coeff = E1::Scalar::one();
+            let mut lhs_lc = Combination::zero();
+            let mut rhs_lc = Combination::zero();
+
+            let mut truncate_by = 0;
+            for (i, (lhs, rhs)) in lhs.iter().zip(rhs.iter()).take(250).enumerate() {
+                lhs_lc = lhs_lc
+                    + (
+                        Coeff::Full(coeff),
+                        Num::from(AllocatedNum::from(lhs.clone())),
+                    );
+                rhs_lc = rhs_lc
+                    + (
+                        Coeff::Full(coeff),
+                        Num::from(AllocatedNum::from(rhs.clone())),
+                    );
+
+                coeff = coeff + &coeff;
+                truncate_by = i + 1;
+            }
+
+            self.num_equal_unless_base_case(&mut cs, base_case, &lhs_lc, &rhs_lc)?;
+
+            lhs = &lhs[truncate_by..];
+            rhs = &rhs[truncate_by..];
+        }
+
+        Ok(())
+    }
+
+    fn check_proof<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        base_case: &AllocatedBit,
+        k_commitment: (Num<E1::Scalar>, Num<E1::Scalar>),
+        mut old_amortized: &[AllocatedBit],
+        mut new_amortized: &[AllocatedBit],
+        mut deferred: &[AllocatedBit],
+    ) -> Result<(), SynthesisError> {
+        // Parse old amortized
+
+        let y_old = &old_amortized[0..128];
+        old_amortized = &old_amortized[128..];
+
+        let mut old_challenges = vec![];
+        for _ in 0..self.params.k {
+            old_challenges.push(&old_amortized[0..128]);
+            old_amortized = &old_amortized[128..];
+        }
+
+        let g_old_x = self.get_scalar(&mut cs, &old_amortized[0..256])?;
+        old_amortized = &old_amortized[256..];
+        let g_old_y = self.get_scalar(&mut cs, &old_amortized[0..256])?;
+        old_amortized = &old_amortized[256..];
+
+        let g_old_commitment = (g_old_x, g_old_y);
+        self.check_on_curve(&mut cs, &g_old_commitment.0, &g_old_commitment.1)?;
+
+        let s_old_x = self.get_scalar(&mut cs, &old_amortized[0..256])?;
+        old_amortized = &old_amortized[256..];
+        let s_old_y = self.get_scalar(&mut cs, &old_amortized[0..256])?;
+        old_amortized = &old_amortized[256..];
+
+        let s_old_commitment = (s_old_x, s_old_y);
+        self.check_on_curve(&mut cs, &s_old_commitment.0, &s_old_commitment.1)?;
+
+        assert_eq!(old_amortized.len(), 0);
+
+        // Parse new amortized
+
+        let y_new_expected = &new_amortized[0..128];
+        new_amortized = &new_amortized[128..];
+
+        let mut new_challenges_expected = vec![];
+        for _ in 0..self.params.k {
+            new_challenges_expected.push(&new_amortized[0..128]);
+            new_amortized = &new_amortized[128..];
+        }
+
+        let g_new_x = self.get_scalar(&mut cs, &new_amortized[0..256])?;
+        new_amortized = &new_amortized[256..];
+        let g_new_y = self.get_scalar(&mut cs, &new_amortized[0..256])?;
+        new_amortized = &new_amortized[256..];
+
+        let g_new_commitment = (g_new_x, g_new_y);
+        self.check_on_curve(&mut cs, &g_new_commitment.0, &g_new_commitment.1)?;
+
+        let s_new_x = self.get_scalar(&mut cs, &new_amortized[0..256])?;
+        new_amortized = &new_amortized[256..];
+        let s_new_y = self.get_scalar(&mut cs, &new_amortized[0..256])?;
+        new_amortized = &new_amortized[256..];
+
+        let s_new_commitment = (s_new_x, s_new_y);
+        self.check_on_curve(&mut cs, &s_new_commitment.0, &s_new_commitment.1)?;
+
+        assert_eq!(new_amortized.len(), 0);
+
+        // Parse deferred
+
+        let y_old_expected = &deferred[0..128];
+        deferred = &deferred[128..];
+
+        let y_cur_expected = &deferred[0..128];
+        deferred = &deferred[128..];
+
+        let x_expected = &deferred[0..128];
+        deferred = &deferred[128..];
+
+        let z1_expected = &deferred[0..128];
+        deferred = &deferred[128..];
+
+        let z2_expected = &deferred[0..128];
+        deferred = &deferred[128..];
+
+        let z3_expected = &deferred[0..128];
+        deferred = &deferred[128..];
+
+        let z4_expected = &deferred[0..128];
+        deferred = &deferred[128..];
+
+        let mut old_challenges_expected = vec![];
+        for _ in 0..self.params.k {
+            old_challenges_expected.push(&deferred[0..128]);
+            deferred = &deferred[128..];
+        }
+
+        let hash1 = self.get_scalar(&mut cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+
+        let hash2 = self.get_scalar(&mut cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+
+        let hash3 = self.get_scalar(&mut cs, &deferred[0..256])?;
+        deferred = &deferred[256..];
+
+        let f_opening = &deferred[0..256];
+        deferred = &deferred[256..];
+
+        let b = &deferred[0..256];
+        deferred = &deferred[256..];
+
+        assert_eq!(deferred.len(), 0);
+
+        // Start the transcript...
+        let mut transcript = RescueGadget::new(&mut cs)?;
+        let transcript = &mut transcript;
+
+        self.append_point(&mut cs, transcript, &k_commitment)?;
+
+        let r_commitment = self.witness_point(&mut cs, || {
+            Ok(self
+                .proof
+                .as_ref()
+                .unwrap()
+                .proof
+                .r_commitment
+                .get_xy()
+                .unwrap())
+        })?;
+        self.append_point(&mut cs, transcript, &r_commitment)?;
+
+        let y_cur = self.obtain_challenge(&mut cs, transcript)?;
+
+        let s_cur_commitment = self.witness_point(&mut cs, || {
+            Ok(self
+                .proof
+                .as_ref()
+                .unwrap()
+                .proof
+                .s_cur_commitment
+                .get_xy()
+                .unwrap())
+        })?;
+        self.append_point(&mut cs, transcript, &s_cur_commitment)?;
+
+        let t_positive_commitment = self.witness_point(&mut cs, || {
+            Ok(self
+                .proof
+                .as_ref()
+                .unwrap()
+                .proof
+                .t_positive_commitment
+                .get_xy()
+                .unwrap())
+        })?;
+        self.append_point(&mut cs, transcript, &t_positive_commitment)?;
+
+        let t_negative_commitment = self.witness_point(&mut cs, || {
+            Ok(self
+                .proof
+                .as_ref()
+                .unwrap()
+                .proof
+                .t_negative_commitment
+                .get_xy()
+                .unwrap())
+        })?;
+        self.append_point(&mut cs, transcript, &t_negative_commitment)?;
+
+        let x = self.obtain_challenge(&mut cs, transcript)?;
+
+        let c_commitment = self.witness_point(&mut cs, || {
+            Ok(self
+                .proof
+                .as_ref()
+                .unwrap()
+                .proof
+                .c_commitment
+                .get_xy()
+                .unwrap())
+        })?;
+        self.append_point(&mut cs, transcript, &c_commitment)?;
+
+        let y_new = self.obtain_challenge(&mut cs, transcript)?;
+
+        self.append_point(&mut cs, transcript, &s_new_commitment)?;
+
+        transcript.absorb(&mut cs, hash1)?;
+
+        let z1 = self.obtain_challenge(&mut cs, transcript)?;
+
+        transcript.absorb(&mut cs, hash2)?;
+
+        let z2 = self.obtain_challenge(&mut cs, transcript)?;
+
+        let h_commitment = self.witness_point(&mut cs, || {
+            Ok(self
+                .proof
+                .as_ref()
+                .unwrap()
+                .proof
+                .h_commitment
+                .get_xy()
+                .unwrap())
+        })?;
+        self.append_point(&mut cs, transcript, &h_commitment)?;
+
+        let z3 = self.obtain_challenge(&mut cs, transcript)?;
+
+        transcript.absorb(&mut cs, hash3)?;
+
+        let z4 = self.obtain_challenge(&mut cs, transcript)?;
+
+        // Check consistency of challenges
+        self.equal_unless_base_case(&mut cs, base_case, &y_old, &y_old_expected)?;
+        self.equal_unless_base_case(&mut cs, base_case, &y_cur, &y_cur_expected)?;
+        self.equal_unless_base_case(&mut cs, base_case, &x, &x_expected)?;
+        self.equal_unless_base_case(&mut cs, base_case, &y_new, &y_new_expected)?;
+        self.equal_unless_base_case(&mut cs, base_case, &z1, &z1_expected)?;
+        self.equal_unless_base_case(&mut cs, base_case, &z2, &z2_expected)?;
+        self.equal_unless_base_case(&mut cs, base_case, &z3, &z3_expected)?;
+        self.equal_unless_base_case(&mut cs, base_case, &z4, &z4_expected)?;
+        for (old, expected) in old_challenges.iter().zip(old_challenges_expected.iter()) {
+            self.equal_unless_base_case(&mut cs, base_case, old, expected)?;
+        }
+        // new_challenges_expected
+
+        Ok(())
+    }
+
+    fn obtain_challenge<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        transcript: &mut RescueGadget<E1::Scalar>,
+    ) -> Result<Vec<AllocatedBit>, SynthesisError> {
+        let num = Num::from(transcript.squeeze(&mut cs)?);
+        let mut bits = unpack_fe(&mut cs, &num)?;
+        bits.truncate(128);
+        Ok(bits)
+    }
+
+    fn append_point<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        transcript: &mut RescueGadget<E1::Scalar>,
+        p: &(Num<E1::Scalar>, Num<E1::Scalar>),
+    ) -> Result<(), SynthesisError> {
+        transcript.absorb(&mut cs, p.0.clone())?;
+        transcript.absorb(&mut cs, p.1.clone())
+    }
+
+    fn witness_point<P, CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        p: P,
+    ) -> Result<(Num<E1::Scalar>, Num<E1::Scalar>), SynthesisError>
+    where
+        P: FnOnce() -> Result<(E1::Scalar, E1::Scalar), SynthesisError>,
+    {
+        let mut y = None;
+
+        let x = AllocatedNum::alloc(&mut cs, || {
+            let p = p()?;
+            y = Some(p.1);
+
+            Ok(p.0)
+        })?;
+        let x = Num::from(x);
+
+        let y = AllocatedNum::alloc(&mut cs, || Ok(y.unwrap()))?;
+        let y = Num::from(y);
+
+        self.check_on_curve(&mut cs, &x, &y)?;
+
+        Ok((x, y))
+    }
+
+    fn check_on_curve<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        x: &Num<E1::Scalar>,
+        y: &Num<E1::Scalar>,
+    ) -> Result<(), SynthesisError> {
+        // y^2 = x^3 + 5
+        let y2 = y.mul(&mut cs, y)?;
+        let x2 = x.mul(&mut cs, x)?;
+        let x3 = x.mul(&mut cs, &x2)?;
+
+        let lc = Combination::from(y2)
+            + (Coeff::NegativeOne, x3)
+            + (Coeff::One, Num::constant(-E1::Scalar::from_u64(5)));
+        let lc = lc.lc(&mut cs);
+
+        cs.enforce_zero(lc);
+
+        Ok(())
+    }
 }
 
 impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
@@ -1219,12 +1587,21 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
         )?;
 
         // Compute K commitment for inner proof
-        self.compute_k(
+        let k = self.compute_k(
             &mut *cs,
             inner_proof_local_amortized
                 .iter()
                 .chain(new_proof_local_amortized.iter())
                 .chain(inner_proof_remote_deferred.iter()),
+        )?;
+
+        self.check_proof(
+            &mut *cs,
+            &base_case,
+            k,
+            &inner_proof_local_amortized,
+            &new_proof_remote_amortized,
+            &new_proof_remote_deferred,
         )?;
 
         self.inner_circuit.synthesize(cs)
