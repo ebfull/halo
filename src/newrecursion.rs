@@ -706,6 +706,61 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
             .compute_b(&mut cs, x.clone(), &challenges_old, &challenges_old_inv)?
             .evaluate(&mut cs)?;
 
+        // TODO: compute hash1/hash2/hash3
+        let mut transcript = RescueGadget::new(&mut cs)?;
+        let transcript = &mut transcript;
+
+        for opening in k_openings.iter() {
+            transcript.absorb(&mut cs, opening.clone())?;
+        }
+
+        for opening in r_openings.iter() {
+            transcript.absorb(&mut cs, opening.clone())?;
+        }
+
+        for opening in c_openings.iter() {
+            transcript.absorb(&mut cs, opening.clone())?;
+        }
+
+        transcript.absorb(&mut cs, t_positive_opening)?;
+        transcript.absorb(&mut cs, t_negative_opening)?;
+
+        let hash1_expected = Num::from(transcript.squeeze(&mut cs)?);
+
+        {
+            let lhs = hash1.lc(&mut cs);
+            let rhs = hash1_expected.lc(&mut cs);
+            cs.enforce_zero(lhs - &rhs);
+        }
+
+        let mut transcript = RescueGadget::new(&mut cs)?;
+        let transcript = &mut transcript;
+
+        for opening in p_openings.iter() {
+            transcript.absorb(&mut cs, opening.clone())?;
+        }
+
+        let hash2_expected = Num::from(transcript.squeeze(&mut cs)?);
+
+        {
+            let lhs = hash2.lc(&mut cs);
+            let rhs = hash2_expected.lc(&mut cs);
+            cs.enforce_zero(lhs - &rhs);
+        }
+
+        let mut transcript = RescueGadget::new(&mut cs)?;
+        let transcript = &mut transcript;
+
+        transcript.absorb(&mut cs, q_opening.clone())?;
+
+        let hash3_expected = Num::from(transcript.squeeze(&mut cs)?);
+
+        {
+            let lhs = hash3.lc(&mut cs);
+            let rhs = hash3_expected.lc(&mut cs);
+            cs.enforce_zero(lhs - &rhs);
+        }
+
         // Check circuit
         let xinv = x.invert(&mut cs)?;
         let yinv = y_cur.invert(&mut cs)?;
@@ -882,8 +937,6 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
         let lhs = f_opening.lc(&mut cs);
         let rhs = f_opening_expected.lc(&mut cs);
         cs.enforce_zero(lhs - &rhs);
-
-        // TODO: compute hash1/hash2/hash3
 
         Ok(())
     }
