@@ -423,7 +423,7 @@ fn test_fft() {
     assert_eq!(valid_product, naive_product);
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Challenge(pub(crate) u128);
 
 pub fn get_challenge_scalar<F: Field>(challenge: Challenge) -> F {

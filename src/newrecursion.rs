@@ -203,6 +203,23 @@ where
     }
 }
 
+fn synth<F: Field, I>(window_size: usize, constants: I, assignment: &mut [F])
+where
+    I: IntoIterator<Item = F>,
+{
+    assert_eq!(assignment.len(), 1 << window_size);
+
+    for (i, constant) in constants.into_iter().enumerate() {
+        let cur = constant - assignment[i];
+        assignment[i] = cur;
+        for (j, eval) in assignment.iter_mut().enumerate().skip(i + 1) {
+            if j & i == i {
+                eval.add_assign(&cur);
+            }
+        }
+    }
+}
+
 impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1::Scalar>>
     VerificationCircuit<'a, E1, E2, Inner>
 {
@@ -334,14 +351,509 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
         Ok(())
     }
 
+    fn get_challenge_scalar<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        bits: &[AllocatedBit],
+    ) -> Result<Num<E1::Scalar>, SynthesisError> {
+        assert_eq!(bits.len(), 128);
+
+        let mut acc = Combination::from(Num::constant(
+            (E1::Scalar::ZETA + &E1::Scalar::one()).double(),
+        ));
+
+        let mut coeffs = [E1::Scalar::zero(); 4];
+        synth(
+            2,
+            vec![
+                E1::Scalar::one(),
+                -E1::Scalar::one(),
+                E1::Scalar::ZETA,
+                -E1::Scalar::ZETA,
+            ],
+            &mut coeffs,
+        );
+
+        // let mut real_challenge = E1::Scalar::zero();
+        // let mut coeff = E1::Scalar::one();
+        // for bit in bits.iter() {
+        //     if let Some(val) = bit.get_value() {
+        //         if val {
+        //             real_challenge = real_challenge + &coeff;
+        //         }
+        //     }
+        //     coeff = coeff.double();
+        // }
+
+        for i in (0..64).rev() {
+            let should_negate = bits[i * 2 + 1].clone();
+            let should_endo = bits[i * 2].clone();
+            let combined = AllocatedBit::and(&mut cs, &should_negate, &should_endo)?;
+
+            let lc = Combination::zero()
+                + (
+                    Coeff::Full(coeffs[0]),
+                    Num::from(AllocatedNum::one(&mut cs)),
+                )
+                + (
+                    Coeff::Full(coeffs[1]),
+                    Num::from(AllocatedNum::from(should_negate.clone())),
+                )
+                + (
+                    Coeff::Full(coeffs[2]),
+                    Num::from(AllocatedNum::from(should_endo.clone())),
+                )
+                + (
+                    Coeff::Full(coeffs[3]),
+                    Num::from(AllocatedNum::from(combined.clone())),
+                );
+
+            acc = acc.scale(E1::Scalar::from_u64(2));
+            acc = acc + lc;
+        }
+
+        let tmp = acc.evaluate(&mut cs)?;
+
+        // if let Some(val) = tmp.value() {
+        //     let challenge = crate::util::Challenge(real_challenge.get_lower_128());
+        //     assert_eq!(
+        //         crate::util::get_challenge_scalar::<E1::Scalar>(challenge),
+        //         val
+        //     );
+        //     assert_eq!(challenge.0, 0);
+        // }
+
+        Ok(tmp)
+    }
+
+    fn get_scalar<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        bits: &[AllocatedBit],
+    ) -> Result<Num<E1::Scalar>, SynthesisError> {
+        assert_eq!(bits.len(), 256);
+
+        let mut acc = Combination::zero();
+
+        let mut coeff = E1::Scalar::one();
+        for bit in bits.iter() {
+            acc = acc
+                + (
+                    Coeff::Full(coeff),
+                    Num::from(AllocatedNum::from(bit.clone())),
+                );
+            coeff = coeff.double();
+        }
+
+        acc.evaluate(&mut cs)
+    }
+
     fn check_deferred<CS: ConstraintSystem<E1::Scalar>>(
         &self,
-        cs: &mut CS,
-        deferred_bits: &[AllocatedBit],
+        mut cs: CS,
+        mut deferred_bits: &[AllocatedBit],
+        mut amortized_bits: &[AllocatedBit],
     ) -> Result<(), SynthesisError> {
-        // TODO
+        let y_old = self.get_challenge_scalar(&mut cs, &deferred_bits[0..128])?;
+        deferred_bits = &deferred_bits[128..];
+        let y_cur = self.get_challenge_scalar(&mut cs, &deferred_bits[0..128])?;
+        deferred_bits = &deferred_bits[128..];
+        let x = self.get_challenge_scalar(&mut cs, &deferred_bits[0..128])?;
+        deferred_bits = &deferred_bits[128..];
+        let z1 = self.get_challenge_scalar(&mut cs, &deferred_bits[0..128])?;
+        deferred_bits = &deferred_bits[128..];
+        let z2 = self.get_challenge_scalar(&mut cs, &deferred_bits[0..128])?;
+        deferred_bits = &deferred_bits[128..];
+        let z3 = self.get_challenge_scalar(&mut cs, &deferred_bits[0..128])?;
+        deferred_bits = &deferred_bits[128..];
+        let z4 = self.get_challenge_scalar(&mut cs, &deferred_bits[0..128])?;
+        deferred_bits = &deferred_bits[128..];
+
+        let mut challenges_old_sq = vec![];
+        for _ in 0..self.params.k {
+            challenges_old_sq.push(self.get_challenge_scalar(&mut cs, &deferred_bits[0..128])?);
+            deferred_bits = &deferred_bits[128..];
+        }
+
+        let hash1 = self.get_scalar(&mut cs, &deferred_bits[0..256])?;
+        deferred_bits = &deferred_bits[256..];
+        let hash2 = self.get_scalar(&mut cs, &deferred_bits[0..256])?;
+        deferred_bits = &deferred_bits[256..];
+        let hash3 = self.get_scalar(&mut cs, &deferred_bits[0..256])?;
+        deferred_bits = &deferred_bits[256..];
+        let f_opening = self.get_scalar(&mut cs, &deferred_bits[0..256])?;
+        deferred_bits = &deferred_bits[256..];
+        let b = self.get_scalar(&mut cs, &deferred_bits[0..256])?;
+        deferred_bits = &deferred_bits[256..];
+
+        assert_eq!(deferred_bits.len(), 0);
+
+        let y_new = self.get_challenge_scalar(&mut cs, &amortized_bits[0..128])?;
+        amortized_bits = &amortized_bits[128..];
+
+        let mut challenges_new_sq = vec![];
+        for _ in 0..self.params.k {
+            challenges_new_sq.push(self.get_challenge_scalar(&mut cs, &amortized_bits[0..128])?);
+            amortized_bits = &amortized_bits[128..];
+        }
+
+        assert_eq!(amortized_bits.len(), 8 * 32 * 2 * 2);
+
+        let mut challenges_old = vec![];
+        let mut challenges_old_inv = vec![];
+        for challenge_old_sq in challenges_old_sq {
+            let challenge_old = challenge_old_sq.sqrt(&mut cs)?;
+            let challenge_old_inv = challenge_old.invert(&mut cs)?;
+            challenges_old.push(challenge_old);
+            challenges_old_inv.push(challenge_old_inv);
+        }
+
+        let mut challenges_new = vec![];
+        let mut challenges_new_inv = vec![];
+        for challenge_new_sq in challenges_new_sq {
+            let challenge_new = challenge_new_sq.sqrt(&mut cs)?;
+            let challenge_new_inv = challenge_new.invert(&mut cs)?;
+            challenges_new.push(challenge_new);
+            challenges_new_inv.push(challenge_new_inv);
+        }
+
+        // Check b
+        {
+            let expected_b = self
+                .compute_b(&mut cs, z3.clone(), &challenges_new, &challenges_new_inv)?
+                .evaluate(&mut cs)?;
+
+            {
+                let lc1 = expected_b.lc(&mut cs);
+                let lc2 = b.lc(&mut cs);
+
+                cs.enforce_zero(lc1 - &lc2);
+            }
+        }
+
+        // Witness openings
+
+        let k_openings = [
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.k_openings[0])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.k_openings[1])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.k_openings[2])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.k_openings[3])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.k_openings[4])
+                    .unwrap())
+            })?,
+        ];
+
+        let r_openings = [
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.r_openings[0])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.r_openings[1])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.r_openings[2])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.r_openings[3])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.r_openings[4])
+                    .unwrap())
+            })?,
+        ];
+
+        let c_openings = [
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.c_openings[0])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.c_openings[1])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.c_openings[2])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.c_openings[3])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.c_openings[4])
+                    .unwrap())
+            })?,
+        ];
+
+        let t_positive_opening = Num::alloc(&mut cs, || {
+            Ok(self
+                .proof
+                .as_ref()
+                .map(|proof| proof.remote_deferred.t_positive_opening)
+                .unwrap())
+        })?;
+
+        let t_negative_opening = Num::alloc(&mut cs, || {
+            Ok(self
+                .proof
+                .as_ref()
+                .map(|proof| proof.remote_deferred.t_negative_opening)
+                .unwrap())
+        })?;
+
+        let p_openings = [
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.p_openings[0])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.p_openings[1])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.p_openings[2])
+                    .unwrap())
+            })?,
+            Num::alloc(&mut cs, || {
+                Ok(self
+                    .proof
+                    .as_ref()
+                    .map(|proof| proof.remote_deferred.p_openings[3])
+                    .unwrap())
+            })?,
+        ];
+
+        let q_opening = Num::alloc(&mut cs, || {
+            Ok(self
+                .proof
+                .as_ref()
+                .map(|proof| proof.remote_deferred.q_opening)
+                .unwrap())
+        })?;
+
+        let g_opening = self
+            .compute_b(&mut cs, x.clone(), &challenges_old, &challenges_old_inv)?
+            .evaluate(&mut cs)?;
+
+        // Check circuit
+        let xinv = x.invert(&mut cs)?;
+        let yinv = y_cur.invert(&mut cs)?;
+        let xyinv = xinv.mul(&mut cs, &yinv)?;
+        let xy = x.mul(&mut cs, &y_cur)?;
+        let x_invy = x.mul(&mut cs, &yinv)?;
+
+        let nk = self.params.k - 2;
+
+        let mut xinvn = xinv.clone();
+        for i in 0..nk {
+            xinvn = xinvn.mul(&mut cs, &xinvn)?;
+        }
+        // let xinvd = xinvn.square().square();
+        let mut xinvd = xinvn.clone();
+        for i in 0..2 {
+            xinvd = xinvd.mul(&mut cs, &xinvd)?;
+        }
+        // let yn = self.y_cur.pow(&[n as u64, 0, 0, 0]);
+        let mut yn = y_cur.clone();
+        for i in 0..nk {
+            yn = yn.mul(&mut cs, &yn)?;
+        }
+        // let xn = self.x.pow(&[n as u64, 0, 0, 0]);
+        let mut xn = x.clone();
+        for i in 0..nk {
+            xn = xn.mul(&mut cs, &xn)?;
+        }
+        // let xyinvn31 = xyinv.pow(&[(3 * n - 1) as u64, 0, 0, 0]);
+        let mut xyinvn31 = xyinv.clone();
+        for i in 0..nk {
+            xyinvn31 = xyinvn31.mul(&mut cs, &xyinvn31)?;
+        }
+        {
+            let tmp = xyinvn31.mul(&mut cs, &xyinvn31)?;
+            xyinvn31 = xyinvn31.mul(&mut cs, &tmp)?;
+        }
+        xyinvn31 = xyinvn31.mul(&mut cs, &xy)?;
+        // let xinvn31 = (xinvn.square() * &xinvn) * &self.x;
+        let xinvn31 = xinvn.mul(&mut cs, &xinvn)?;
+        let xinvn31 = xinvn31.mul(&mut cs, &xinvn)?;
+        let xinvn31 = xinvn31.mul(&mut cs, &x)?;
+
+        // println!("circuit xyinvn31: {:?}", xyinvn31);
+        // println!("circuit xinvn31: {:?}", xinvn31);
+
+        let rhs = t_positive_opening.mul(&mut cs, &x)?;
+        let tmp = t_negative_opening.mul(&mut cs, &xinvd)?;
+        let rhs = Combination::from(rhs) + tmp;
+
+        let lhs = c_openings[3].mul(&mut cs, &xinvn)?;
+        let lhs = lhs.mul(&mut cs, &yn)?;
+
+        // Computes x + x^2 + x^3 + ... + x^n
+        fn compute_thing<F: Field, CS: ConstraintSystem<F>>(
+            mut cs: CS,
+            x: Num<F>,
+            k: usize,
+        ) -> Result<Combination<F>, SynthesisError> {
+            let mut acc = Combination::from(x);
+            let mut cur = x.clone();
+            for _ in 0..k {
+                let tmp = acc.mul(&mut cs, &Combination::from(cur))?;
+                cur = cur.mul(&mut cs, &cur)?;
+
+                acc = acc + tmp;
+            }
+            Ok(acc)
+        }
+
+        let thing = compute_thing(&mut cs, xy, nk)?;
+        let thing = thing + compute_thing(&mut cs, x_invy, nk)?;
+        let thing = thing.mul(&mut cs, &Combination::from(xn))?;
+        /*
+        let lhs = lhs - &thing;
+        let lhs = lhs + &(self.rxy_opening * &xyinvn31);
+        let lhs = lhs * &(self.rx_opening * &xinvn31);
+        let ky = self.ky_opening * &yn;
+        let lhs = lhs - &ky;
+        */
+
+        let tmp = r_openings[1].mul(&mut cs, &xyinvn31)?;
+        let lhs = Combination::from(lhs);
+        let lhs = lhs + tmp;
+        let lhs = lhs - thing;
+        let tmp = r_openings[0].mul(&mut cs, &xinvn31)?;
+        let lhs = lhs.mul(&mut cs, &Combination::from(tmp))?;
+        let ky = k_openings[3].mul(&mut cs, &yn)?;
+        let lhs = Combination::from(lhs) + (Coeff::NegativeOne, ky);
+
+        let lhs = lhs.lc(&mut cs);
+        let rhs = rhs.lc(&mut cs);
+        cs.enforce_zero(lhs - &rhs);
+
+        // TODO: compute f_opening
+        // TODO: compute hash1/hash2/hash3
 
         Ok(())
+    }
+
+    fn compute_b<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        mut x: Num<E1::Scalar>,
+        challenges: &[Num<E1::Scalar>],
+        challenges_inv: &[Num<E1::Scalar>],
+    ) -> Result<Combination<E1::Scalar>, SynthesisError> {
+        let mut prod = Combination::zero() + (Coeff::One, Num::from(AllocatedNum::one(&mut cs)));
+        for (challenge, challenge_inv) in challenges.iter().rev().zip(challenges_inv.iter().rev()) {
+            let tmp = Combination::from(challenge.clone());
+            let tmp = tmp.mul(&mut cs, &Combination::from(x.clone()))?;
+            let tmp = Combination::from(tmp) + (Coeff::One, challenge_inv.clone());
+            prod = Combination::from(tmp.mul(&mut cs, &prod)?);
+            x = Num::from(Combination::from(x).square(&mut cs)?);
+        }
+        Ok(prod)
+        /*
+        assert!(!challenges.is_empty());
+        assert_eq!(challenges.len(), challenges_inv.len());
+        if challenges.len() == 1 {
+            let challenge_inv = challenges_inv.last().unwrap().clone();
+            let challenge = challenges.last().unwrap().clone();
+
+            let tmp = Combination::from(challenge);
+            let tmp = tmp.mul(&mut cs, &Combination::from(x.clone()))?;
+            let tmp = Combination::from(tmp) + (Coeff::One, challenge_inv);
+
+            Ok(tmp)
+        } else {
+            let challenge_inv = challenges_inv.last().unwrap().clone();
+            let challenge = challenges.last().unwrap().clone();
+
+            let tmp = Combination::from(challenge);
+            let tmp = tmp.mul(&mut cs, &Combination::from(x.clone()))?;
+            let tmp = Combination::from(tmp) + (Coeff::One, challenge_inv);
+
+            let x2 = Num::from(Combination::from(x.clone()).square(&mut cs)?);
+
+            let sub = self.compute_b(
+                &mut cs,
+                &x2,
+                &challenges[0..(challenges.len() - 1)],
+                &challenges_inv[0..(challenges.len() - 1)],
+            )?;
+
+            Ok(Combination::from(tmp.mul(&mut cs, &sub)?))
+        }
+        */
     }
 
     fn compute_k<'b, I, CS: ConstraintSystem<E1::Scalar>>(
@@ -352,23 +864,6 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
     where
         I: Iterator<Item = &'b AllocatedBit>,
     {
-        fn synth<F: Field, I>(window_size: usize, constants: I, assignment: &mut [F])
-        where
-            I: IntoIterator<Item = F>,
-        {
-            assert_eq!(assignment.len(), 1 << window_size);
-
-            for (i, constant) in constants.into_iter().enumerate() {
-                let cur = constant - assignment[i];
-                assignment[i] = cur;
-                for (j, eval) in assignment.iter_mut().enumerate().skip(i + 1) {
-                    if j & i == i {
-                        eval.add_assign(&cur);
-                    }
-                }
-            }
-        }
-
         let acc_point = self.params.generators[1].get_xy().unwrap();
 
         let mut x_coordinate_iter = self.params.pedersen_windows.iter();
@@ -582,7 +1077,11 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
             self.base_case.ok_or(SynthesisError::AssignmentMissing)
         })?;
 
-        self.check_deferred(&mut *cs, &inner_proof_remote_deferred)?;
+        self.check_deferred(
+            &mut *cs,
+            &inner_proof_remote_deferred,
+            &new_proof_local_amortized,
+        )?;
 
         // Compute K commitment for inner proof
         self.compute_k(

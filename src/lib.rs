@@ -3,6 +3,7 @@
 // extern crate hex_literal;
 
 #![type_length_limit = "2360122"]
+#![recursion_limit = "1024"]
 
 #[macro_use]
 pub mod util;

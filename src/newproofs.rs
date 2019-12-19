@@ -88,7 +88,7 @@ impl<C: CurveAffine> Proof<C> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Deferred<F: Field> {
     // Points, needed to compute expected values
     pub y_old_packed: Challenge,
@@ -165,50 +165,53 @@ impl<F: Field> Deferred<F> {
         let mut res = vec![0u8; 16 * k + 272];
 
         {
-            LittleEndian::write_u128(&mut res[16 * 0..][0..16], self.y_old_packed.0);
-            LittleEndian::write_u128(&mut res[16 * 1..][0..16], self.y_cur_packed.0);
-            // We borrow y_new from Amortized
-            // LittleEndian::write_u128(&mut res[16 * 2..][0..16], self.y_new_packed.0);
-            LittleEndian::write_u128(&mut res[16 * 2..][0..16], self.x_packed.0);
-            LittleEndian::write_u128(&mut res[16 * 3..][0..16], self.z1_packed.0);
-            LittleEndian::write_u128(&mut res[16 * 4..][0..16], self.z2_packed.0);
-            LittleEndian::write_u128(&mut res[16 * 5..][0..16], self.z3_packed.0);
-            LittleEndian::write_u128(&mut res[16 * 6..][0..16], self.z4_packed.0);
-        }
-
-        {
-            let res = &mut res[16 * 7..];
-
-            for (i, challenge) in self.challenges_old_sq_packed.iter().enumerate() {
-                LittleEndian::write_u128(&mut res[16 * i..][0..16], challenge.0);
+            let mut res = &mut res[..];
+            {
+                LittleEndian::write_u128(&mut res[16 * 0..][0..16], self.y_old_packed.0);
+                LittleEndian::write_u128(&mut res[16 * 1..][0..16], self.y_cur_packed.0);
+                // We borrow y_new from Amortized
+                // LittleEndian::write_u128(&mut res[16 * 2..][0..16], self.y_new_packed.0);
+                LittleEndian::write_u128(&mut res[16 * 2..][0..16], self.x_packed.0);
+                LittleEndian::write_u128(&mut res[16 * 3..][0..16], self.z1_packed.0);
+                LittleEndian::write_u128(&mut res[16 * 4..][0..16], self.z2_packed.0);
+                LittleEndian::write_u128(&mut res[16 * 5..][0..16], self.z3_packed.0);
+                LittleEndian::write_u128(&mut res[16 * 6..][0..16], self.z4_packed.0);
             }
-        }
 
-        /*
-        // We borrow this from Amortized in the circuit.
-        {
-            let res = &mut res[16 * k..];
+            {
+                res = &mut res[16 * 7..];
 
-            for (i, challenge) in self.challenges_new_sq_packed.iter().enumerate() {
-                LittleEndian::write_u128(&mut res[16 * i..][0..16], challenge.0);
+                for (i, challenge) in self.challenges_old_sq_packed.iter().enumerate() {
+                    LittleEndian::write_u128(&mut res[16 * i..][0..16], challenge.0);
+                }
             }
-        }
-        */
 
-        {
-            let res = &mut res[16 * k..];
+            /*
+            // We borrow this from Amortized in the circuit.
+            {
+                let res = &mut res[16 * k..];
 
-            let hash1 = self.compute_hash1();
-            let hash2 = self.compute_hash2();
-            let hash3 = self.compute_hash3();
-            let f_opening = self.compute_f_opening();
-            let b = self.compute_b();
+                for (i, challenge) in self.challenges_new_sq_packed.iter().enumerate() {
+                    LittleEndian::write_u128(&mut res[16 * i..][0..16], challenge.0);
+                }
+            }
+            */
 
-            res[32 * 0..][0..32].copy_from_slice(&hash1.to_bytes());
-            res[32 * 1..][0..32].copy_from_slice(&hash2.to_bytes());
-            res[32 * 2..][0..32].copy_from_slice(&hash3.to_bytes());
-            res[32 * 3..][0..32].copy_from_slice(&f_opening.to_bytes());
-            res[32 * 4..][0..32].copy_from_slice(&b.to_bytes());
+            {
+                res = &mut res[16 * k..];
+
+                let hash1 = self.compute_hash1();
+                let hash2 = self.compute_hash2();
+                let hash3 = self.compute_hash3();
+                let f_opening = self.compute_f_opening();
+                let b = self.compute_b();
+
+                res[32 * 0..][0..32].copy_from_slice(&hash1.to_bytes());
+                res[32 * 1..][0..32].copy_from_slice(&hash2.to_bytes());
+                res[32 * 2..][0..32].copy_from_slice(&hash3.to_bytes());
+                res[32 * 3..][0..32].copy_from_slice(&f_opening.to_bytes());
+                res[32 * 4..][0..32].copy_from_slice(&b.to_bytes());
+            }
         }
 
         res
@@ -350,10 +353,10 @@ impl<F: Field> Deferred<F> {
 
 #[derive(Clone)]
 pub struct Amortized<C: CurveAffine> {
-    pub g_new_commitment: C,
-    pub s_new_commitment: C,
     pub y_new_packed: Challenge,
     pub challenges_new_sq_packed: Vec<Challenge>, // length is k
+    pub g_new_commitment: C,
+    pub s_new_commitment: C,
 }
 
 impl<C: CurveAffine> Amortized<C> {
@@ -369,26 +372,30 @@ impl<C: CurveAffine> Amortized<C> {
         let mut res = vec![0u8; Self::public_input_string_length(k)];
 
         {
-            let (x, y) = self.g_new_commitment.get_xy().unwrap(); // TODO?
+            let mut res = &mut res[..];
 
-            res[32 * 0..][0..32].copy_from_slice(&x.to_bytes());
-            res[32 * 1..][0..32].copy_from_slice(&y.to_bytes());
+            {
+                LittleEndian::write_u128(&mut res[16 * 0..][0..16], self.y_new_packed.0);
+            }
 
-            let (x, y) = self.s_new_commitment.get_xy().unwrap(); // TODO?
+            {
+                res = &mut res[16..];
+                for (i, challenge) in self.challenges_new_sq_packed.iter().enumerate() {
+                    LittleEndian::write_u128(&mut res[16 * i..][0..16], challenge.0);
+                }
+            }
 
-            res[32 * 2..][0..32].copy_from_slice(&x.to_bytes());
-            res[32 * 3..][0..32].copy_from_slice(&y.to_bytes());
-        }
+            {
+                res = &mut res[16 * k..];
+                let (x, y) = self.g_new_commitment.get_xy().unwrap(); // TODO?
 
-        {
-            let res = &mut res[32 * 4..];
-            LittleEndian::write_u128(&mut res[16 * 0..][0..16], self.y_new_packed.0);
-        }
+                res[32 * 0..][0..32].copy_from_slice(&x.to_bytes());
+                res[32 * 1..][0..32].copy_from_slice(&y.to_bytes());
 
-        {
-            let res = &mut res[16..];
-            for (i, challenge) in self.challenges_new_sq_packed.iter().enumerate() {
-                LittleEndian::write_u128(&mut res[16 * i..][0..16], challenge.0);
+                let (x, y) = self.s_new_commitment.get_xy().unwrap(); // TODO?
+
+                res[32 * 2..][0..32].copy_from_slice(&x.to_bytes());
+                res[32 * 3..][0..32].copy_from_slice(&y.to_bytes());
             }
         }
 
@@ -1881,7 +1888,8 @@ impl<C: CurveAffine> Params<C> {
         }
 
         let mut pedersen_windows = vec![];
-        for g in &generators[2..15000] {
+        use std::cmp::min;
+        for g in &generators[2..min(15000, generators.len())] {
             let a = g.to_projective(); // 1
             let b = g.to_projective().double(); // 2
             let c = a + &b; // 3
@@ -2091,8 +2099,11 @@ mod test {
             num_cubes: 0,
         };
 
-        let a = Amortized::<EpAffine>::new(&ep_params, &verifier_circuit_a);
-        let b = Amortized::<EqAffine>::new(&eq_params, &verifier_circuit_b);
+        let a = Amortized::<EpAffine>::new(&ep_params, &verifier_circuit_a).unwrap();
+        let b = Amortized::<EqAffine>::new(&eq_params, &verifier_circuit_b).unwrap();
+
+        a.verify(&ep_params, &verifier_circuit_a).unwrap();
+        b.verify(&eq_params, &verifier_circuit_b).unwrap();
     }
 
     /*

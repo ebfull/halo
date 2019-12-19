@@ -792,11 +792,16 @@ impl<F: Field> AllocatedNum<F> {
         CS: ConstraintSystem<F>,
         FF: FnOnce() -> Result<F, SynthesisError>,
     {
-        let value = value();
-        let var = cs.alloc(|| value)?;
+        let mut final_value = None;
+
+        let var = cs.alloc(|| {
+            let value = value()?;
+            final_value = Some(value);
+            Ok(value)
+        })?;
 
         Ok(AllocatedNum {
-            value: value.ok(),
+            value: final_value,
             var,
         })
     }
@@ -806,11 +811,16 @@ impl<F: Field> AllocatedNum<F> {
         CS: ConstraintSystem<F>,
         FF: FnOnce() -> Result<F, SynthesisError>,
     {
-        let value = value();
-        let var = cs.alloc_input(|| value)?;
+        let mut final_value = None;
+
+        let var = cs.alloc_input(|| {
+            let value = value()?;
+            final_value = Some(value);
+            Ok(value)
+        })?;
 
         Ok(AllocatedNum {
-            value: value.ok(),
+            value: final_value,
             var,
         })
     }
@@ -1086,6 +1096,106 @@ impl<F: Field> Num<F> {
                 Num::Constant(v) => (*v, CS::ONE),
                 Num::Allocated(coeff, num) => (*coeff, num.var),
             }
+    }
+
+    pub fn alloc<CS, FF>(cs: CS, value: FF) -> Result<Self, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+        FF: FnOnce() -> Result<F, SynthesisError>,
+    {
+        Ok(AllocatedNum::alloc(cs, value)?.into())
+    }
+
+    pub fn mul<CS: ConstraintSystem<F>>(
+        &self,
+        mut cs: CS,
+        other: &Self,
+    ) -> Result<Self, SynthesisError> {
+        match (*self, *other) {
+            (Num::Constant(val), Num::Allocated(coeff, var))
+            | (Num::Allocated(coeff, var), Num::Constant(val)) => {
+                Ok(Num::Allocated(coeff * val, var))
+            }
+            (Num::Allocated(c1, v1), Num::Allocated(c2, v2)) => {
+                let mut outvalue = None;
+                let (a, b, c) = cs.multiply(|| {
+                    let left = c1.value() * v1.get_value().unwrap();
+                    let right = c2.value() * v2.get_value().unwrap();
+                    let out = left * right;
+                    outvalue = Some(out);
+
+                    Ok((left, right, out))
+                })?;
+
+                cs.enforce_zero(LinearCombination::zero() + (c1, v1.get_variable()) - a);
+                cs.enforce_zero(LinearCombination::zero() + (c2, v2.get_variable()) - b);
+
+                Ok(AllocatedNum {
+                    value: outvalue,
+                    var: c,
+                }
+                .into())
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn sqrt<CS>(&self, mut cs: CS) -> Result<Num<F>, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        match self {
+            Num::Constant(v) => Ok(Num::Constant(Coeff::Full(v.value().sqrt().unwrap()))), // TODO
+            Num::Allocated(_, _) => {
+                let mut sqrt_value = None;
+
+                let (sqrt_a, sqrt_b, square) = cs.multiply(|| {
+                    let square = self.value().unwrap();
+                    let sqrt = square.sqrt(); // TODO
+                    if bool::from(sqrt.is_none()) {
+                        panic!("nonsquare");
+                    }
+                    let sqrt = sqrt.unwrap();
+
+                    sqrt_value = Some(sqrt);
+
+                    Ok((sqrt, sqrt, square))
+                })?;
+
+                cs.enforce_zero(LinearCombination::from(sqrt_a) - sqrt_b);
+                let lc = self.lc(&mut cs);
+                cs.enforce_zero(lc - square);
+
+                Ok(AllocatedNum::from_raw_unchecked(sqrt_value, sqrt_a).into())
+            }
+        }
+    }
+
+    pub fn invert<CS>(&self, mut cs: CS) -> Result<Num<F>, SynthesisError>
+    where
+        CS: ConstraintSystem<F>,
+    {
+        match self {
+            Num::Constant(v) => Ok(Num::Constant(Coeff::Full(v.value().sqrt().unwrap()))), // TODO
+            Num::Allocated(_, _) => {
+                let mut inv_value = None;
+
+                let (inv_a, inv_b, one) = cs.multiply(|| {
+                    let value = self.value().unwrap();
+                    let inv = value.invert().unwrap(); // TODO
+
+                    inv_value = Some(inv);
+
+                    Ok((inv, value, F::one()))
+                })?;
+
+                cs.enforce_zero(LinearCombination::from(CS::ONE) - one);
+                let lc = self.lc(&mut cs);
+                cs.enforce_zero(lc - inv_b);
+
+                Ok(AllocatedNum::from_raw_unchecked(inv_value, inv_a).into())
+            }
+        }
     }
 }
 
