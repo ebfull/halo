@@ -710,7 +710,7 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
         let xinv = x.invert(&mut cs)?;
         let yinv = y_cur.invert(&mut cs)?;
         let xyinv = xinv.mul(&mut cs, &yinv)?;
-        let xy = x.mul(&mut cs, &y_cur)?;
+        let xy_cur = x.mul(&mut cs, &y_cur)?;
         let x_invy = x.mul(&mut cs, &yinv)?;
 
         let nk = self.params.k - 2;
@@ -743,7 +743,7 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
             let tmp = xyinvn31.mul(&mut cs, &xyinvn31)?;
             xyinvn31 = xyinvn31.mul(&mut cs, &tmp)?;
         }
-        xyinvn31 = xyinvn31.mul(&mut cs, &xy)?;
+        xyinvn31 = xyinvn31.mul(&mut cs, &xy_cur)?;
         // let xinvn31 = (xinvn.square() * &xinvn) * &self.x;
         let xinvn31 = xinvn.mul(&mut cs, &xinvn)?;
         let xinvn31 = xinvn31.mul(&mut cs, &xinvn)?;
@@ -776,7 +776,7 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
             Ok(acc)
         }
 
-        let thing = compute_thing(&mut cs, xy, nk)?;
+        let thing = compute_thing(&mut cs, xy_cur, nk)?;
         let thing = thing + compute_thing(&mut cs, x_invy, nk)?;
         let thing = thing.mul(&mut cs, &Combination::from(xn))?;
         /*
@@ -800,7 +800,89 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
         let rhs = rhs.lc(&mut cs);
         cs.enforce_zero(lhs - &rhs);
 
-        // TODO: compute f_opening
+        let p_opening = Combination::from(c_openings[2]);
+        let p_opening = Combination::from(p_opening.mul(&mut cs, &Combination::from(z1.clone()))?)
+            + (Coeff::One, c_openings[3]);
+        let p_opening = Combination::from(p_opening.mul(&mut cs, &Combination::from(z1.clone()))?)
+            + (Coeff::One, t_positive_opening);
+        let p_opening = Combination::from(p_opening.mul(&mut cs, &Combination::from(z1.clone()))?)
+            + (Coeff::One, t_negative_opening);
+        let p_opening = Combination::from(p_opening.mul(&mut cs, &Combination::from(z1.clone()))?)
+            + (Coeff::One, c_openings[4]);
+        let p_opening = Combination::from(p_opening.mul(&mut cs, &Combination::from(z1.clone()))?)
+            + (Coeff::One, g_opening);
+        let p_opening = Num::from(p_opening.evaluate(&mut cs)?);
+
+        let p_openings = [
+            p_opening,
+            p_openings[0].clone(),
+            p_openings[1].clone(),
+            p_openings[2].clone(),
+            p_openings[3].clone(),
+        ];
+
+        let mut t = Combination::zero();
+        for (j, p) in [&x, &xy_cur, &y_old, &y_cur, &y_new].iter().enumerate() {
+            let mut basis_num = AllocatedNum::one(&mut cs);
+            let mut basis_den = AllocatedNum::one(&mut cs);
+
+            for (m, q) in [&x, &xy_cur, &y_old, &y_cur, &y_new].iter().enumerate() {
+                if j != m {
+                    basis_num = Combination::from(basis_num).mul(
+                        &mut cs,
+                        &(Combination::from(z3) + (Coeff::NegativeOne, (*q).clone())),
+                    )?;
+                    basis_den = Combination::from(basis_den).mul(
+                        &mut cs,
+                        &(Combination::from((*p).clone()) + (Coeff::NegativeOne, (*q).clone())),
+                    )?;
+                }
+            }
+
+            let value = r_openings[j].mul(&mut cs, &z2)?;
+            let value = Combination::from(value) + (Coeff::One, p_openings[j]);
+            let value = value.mul(&mut cs, &Combination::from(z2))?;
+            let value = Combination::from(value) + (Coeff::One, k_openings[j]);
+            let value = value.mul(&mut cs, &Combination::from(z2))?;
+            let value = Combination::from(value) + (Coeff::One, c_openings[j]);
+
+            let basis_den = basis_den.invert(&mut cs)?;
+            let basis = basis_num.mul(&mut cs, &basis_den)?;
+            let product = value.mul(&mut cs, &Combination::from(basis))?;
+            t = t + (Coeff::One, product);
+        }
+        let t = t.evaluate(&mut cs)?;
+
+        let denom =
+            Combination::zero() + (Coeff::One, z3.clone()) + (Coeff::NegativeOne, x.clone());
+        let denom = Combination::from(denom.mul(
+            &mut cs,
+            &(Combination::zero()
+                + (Coeff::One, z3.clone())
+                + (Coeff::NegativeOne, xy_cur.clone())),
+        )?);
+        let denom = Combination::from(denom.mul(
+            &mut cs,
+            &(Combination::zero() + (Coeff::One, z3.clone()) + (Coeff::NegativeOne, y_old.clone())),
+        )?);
+        let denom = Combination::from(denom.mul(
+            &mut cs,
+            &(Combination::zero() + (Coeff::One, z3.clone()) + (Coeff::NegativeOne, y_cur.clone())),
+        )?);
+        let denom = Combination::from(denom.mul(
+            &mut cs,
+            &(Combination::zero() + (Coeff::One, z3.clone()) + (Coeff::NegativeOne, y_new.clone())),
+        )?);
+        let denom = Combination::from(denom.evaluate(&mut cs)?.invert(&mut cs)?);
+
+        let f_opening_expected = q_opening.mul(&mut cs, &z4.clone())?;
+        let f_opening_expected = Combination::from(f_opening_expected)
+            + ((Combination::from(q_opening) + (Coeff::NegativeOne, t)).mul(&mut cs, &denom)?);
+
+        let lhs = f_opening.lc(&mut cs);
+        let rhs = f_opening_expected.lc(&mut cs);
+        cs.enforce_zero(lhs - &rhs);
+
         // TODO: compute hash1/hash2/hash3
 
         Ok(())
