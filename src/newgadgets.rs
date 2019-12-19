@@ -1532,7 +1532,7 @@ fn rescue_f<F: Field, CS: ConstraintSystem<F>>(
             for (coeff, entry) in mds_row.iter().zip(mid.iter()) {
                 sum = sum + (Coeff::Full(*coeff), *entry);
             }
-            *next_entry = sum + *key;
+            *next_entry = Combination::from((sum + *key).evaluate(&mut cs)?);
         }
     }
 
