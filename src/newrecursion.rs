@@ -1368,6 +1368,30 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
         // Perform the opening...
         let mut new_challenges = vec![];
 
+        let p_commitment = s_old_commitment;
+        let p_commitment = self.endo_multiply(&mut cs, &p_commitment, &z1)?;
+        let p_commitment = self.add_incomplete(&mut cs, &p_commitment, &s_cur_commitment)?;
+        let p_commitment = self.endo_multiply(&mut cs, &p_commitment, &z1)?;
+        let p_commitment = self.add_incomplete(&mut cs, &p_commitment, &t_positive_commitment)?;
+        let p_commitment = self.endo_multiply(&mut cs, &p_commitment, &z1)?;
+        let p_commitment = self.add_incomplete(&mut cs, &p_commitment, &t_negative_commitment)?;
+        let p_commitment = self.endo_multiply(&mut cs, &p_commitment, &z1)?;
+        let p_commitment = self.add_incomplete(&mut cs, &p_commitment, &s_new_commitment)?;
+        let p_commitment = self.endo_multiply(&mut cs, &p_commitment, &z1)?;
+        let p_commitment = self.add_incomplete(&mut cs, &p_commitment, &g_old_commitment)?;
+
+        let q_commitment = r_commitment;
+        let q_commitment = self.endo_multiply(&mut cs, &q_commitment, &z2)?;
+        let q_commitment = self.add_incomplete(&mut cs, &q_commitment, &p_commitment)?;
+        let q_commitment = self.endo_multiply(&mut cs, &q_commitment, &z2)?;
+        let q_commitment = self.add_incomplete(&mut cs, &q_commitment, &k_commitment)?;
+        let q_commitment = self.endo_multiply(&mut cs, &q_commitment, &z2)?;
+        let q_commitment = self.add_incomplete(&mut cs, &q_commitment, &c_commitment)?;
+
+        let f_commitment = q_commitment;
+        let f_commitment = self.endo_multiply(&mut cs, &f_commitment, &z4)?;
+        let mut f_commitment = self.add_incomplete(&mut cs, &f_commitment, &h_commitment)?;
+
         for i in 0..self.params.k {
             let l = self.witness_point(&mut cs, || {
                 Ok(self.proof.as_ref().unwrap().proof.polynomial_opening[i]
@@ -1385,9 +1409,14 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
             self.append_point(&mut cs, transcript, &l)?;
             self.append_point(&mut cs, transcript, &r)?;
 
-            let challenge = self.obtain_challenge(&mut cs, transcript)?;
+            let challenge_sq = self.obtain_challenge(&mut cs, transcript)?;
 
-            new_challenges.push(challenge);
+            let l = self.endo_multiply(&mut cs, &l, &challenge_sq)?;
+            f_commitment = self.add_incomplete(&mut cs, &f_commitment, &l)?;
+            let r = self.endo_multiply_inv(&mut cs, &r, &challenge_sq)?;
+            f_commitment = self.add_incomplete(&mut cs, &f_commitment, &r)?;
+
+            new_challenges.push(challenge_sq);
         }
 
         let delta = self.witness_point(&mut cs, || {
@@ -1401,6 +1430,80 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
         self.append_point(&mut cs, transcript, &beta)?;
 
         let c = self.obtain_challenge(&mut cs, transcript)?;
+
+        // Compute
+        let g = {
+            let g = self.params.g.get_xy().unwrap();
+            (Num::constant(g.0), Num::constant(g.1))
+        };
+        let h = {
+            let g = self.params.h.get_xy().unwrap();
+            (Num::constant(g.0), Num::constant(g.1))
+        };
+
+        let tmp = self.mul_point(&mut cs, &g, &f_opening)?;
+        let f_commitment = self.add_incomplete(&mut cs, &f_commitment, &tmp)?;
+        let f_commitment = self.endo_multiply(&mut cs, &f_commitment, &c)?;
+        let f_commitment = self.add_incomplete(&mut cs, &f_commitment, &beta)?;
+        let f_commitment = self.mul_point(&mut cs, &f_commitment, &b)?;
+        let f_commitment = self.add_incomplete(&mut cs, &f_commitment, &delta)?;
+
+        let z = self.mul_point(&mut cs, &g, &b)?;
+        let z = self.add_incomplete(&mut cs, &z, &g_new_commitment)?;
+
+        // Witness r1 and r2 from the proof
+        let r1 = {
+            let bytes = self
+                .proof
+                .as_ref()
+                .map(|proof| proof.proof.r1.to_bytes())
+                .unwrap_or([0u8; 32]);
+
+            let mut r1 = Vec::with_capacity(bytes.len() * 8);
+            for byte in &bytes[..] {
+                for i in 0..8 {
+                    let bit_value = ((byte >> i) & 1u8) == 1u8;
+                    r1.push(AllocatedBit::alloc(&mut cs, || Ok(bit_value))?);
+                }
+            }
+
+            r1
+        };
+
+        let r2 = {
+            let bytes = self
+                .proof
+                .as_ref()
+                .map(|proof| proof.proof.r2.to_bytes())
+                .unwrap_or([0u8; 32]);
+
+            let mut r2 = Vec::with_capacity(bytes.len() * 8);
+            for byte in &bytes[..] {
+                for i in 0..8 {
+                    let bit_value = ((byte >> i) & 1u8) == 1u8;
+                    r2.push(AllocatedBit::alloc(&mut cs, || Ok(bit_value))?);
+                }
+            }
+
+            r2
+        };
+
+        let z = self.mul_point(&mut cs, &z, &r1)?;
+        let tmp = self.mul_point(&mut cs, &h, &r2)?;
+        let z = self.add_incomplete(&mut cs, &tmp, &z)?;
+
+        self.num_equal_unless_base_case(
+            &mut cs,
+            base_case,
+            &Combination::from(z.0),
+            &Combination::from(f_commitment.0),
+        )?;
+        self.num_equal_unless_base_case(
+            &mut cs,
+            base_case,
+            &Combination::from(z.1),
+            &Combination::from(f_commitment.1),
+        )?;
 
         // Check consistency of challenges
         self.equal_unless_base_case(&mut cs, base_case, &y_old, &y_old_expected)?;
@@ -1442,6 +1545,73 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
         transcript.absorb(&mut cs, p.1.clone())
     }
 
+    fn mul_point<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        p: &(Num<E1::Scalar>, Num<E1::Scalar>),
+        bits: &[AllocatedBit],
+    ) -> Result<(Num<E1::Scalar>, Num<E1::Scalar>), SynthesisError> {
+        assert_eq!(bits.len(), 256);
+
+        let mut scalar = E2::Scalar::zero();
+        let mut coeff = E2::Scalar::one();
+        for bit in bits.iter() {
+            if let Some(true) = bit.get_value() {
+                scalar += &coeff;
+            }
+            coeff = coeff + &coeff;
+        }
+
+        let mut doublings = vec![];
+        let mut cur = *p;
+        for _ in 0..256 {
+            doublings.push(cur);
+            cur = self.double(&mut cs, &cur)?;
+        }
+
+        let mut subtract_at_end = cur.clone();
+        subtract_at_end.1 = subtract_at_end.1.scale(-E1::Scalar::one());
+
+        // Starting with cur, add each doubling and conditionally select
+        let one = AllocatedNum::one(&mut cs);
+        for (bit, doubling) in bits.iter().rev().zip(doublings.into_iter().rev()) {
+            let tmp = self.add_incomplete(&mut cs, &cur, &doubling)?;
+            // Conditionally select; lazy!
+            let added_x = Combination::from(tmp.0)
+                .mul(&mut cs, &Combination::from(AllocatedNum::from(bit.clone())))?;
+            let added_y = Combination::from(tmp.1)
+                .mul(&mut cs, &Combination::from(AllocatedNum::from(bit.clone())))?;
+            let same_x = Combination::from(cur.0).mul(
+                &mut cs,
+                &(Combination::from(one.clone())
+                    + (Coeff::NegativeOne, AllocatedNum::from(bit.clone()))),
+            )?;
+            let same_y = Combination::from(cur.1).mul(
+                &mut cs,
+                &(Combination::from(one.clone())
+                    + (Coeff::NegativeOne, AllocatedNum::from(bit.clone()))),
+            )?;
+            let x = (Combination::from(added_x) + same_x).evaluate(&mut cs)?;
+            let y = (Combination::from(added_y) + same_y).evaluate(&mut cs)?;
+            cur = (x, y);
+        }
+
+        // Subtract
+        let result = self.add_incomplete(&mut cs, &cur, &subtract_at_end)?;
+
+        // let result = self.witness_point(&mut cs, || {
+        //     let px = p.0.value().unwrap();
+        //     let py = p.1.value().unwrap();
+        //     let p = E2::from_xy(px, py).unwrap();
+        //     let q = (p * scalar).to_affine();
+        //     let q = q.get_xy().unwrap();
+
+        //     Ok(q)
+        // })?;
+
+        Ok(result)
+    }
+
     fn witness_point<P, CS: ConstraintSystem<E1::Scalar>>(
         &self,
         mut cs: CS,
@@ -1468,21 +1638,224 @@ impl<'a, E1: CurveAffine, E2: CurveAffine<Base = E1::Scalar>, Inner: Circuit<E1:
         Ok((x, y))
     }
 
+    fn double_and_add<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        p: &(Num<E1::Scalar>, Num<E1::Scalar>),
+        q: &(Combination<E1::Scalar>, Combination<E1::Scalar>),
+    ) -> Result<(Num<E1::Scalar>, Num<E1::Scalar>), SynthesisError> {
+        // lambda_1 = (y_q - y_p)/(x_q - x_p)
+        // x_r = lambda_1^2 - x_p - x_q
+        // lambda_2 = 2 y_p /(x_p - x_r) - lambda_1
+        // x_s = lambda_2^2 - x_r - x_p
+        // y_s = lambda_2 (x_p - x_s) - y_p
+
+        let lambda_1 = (q.1.clone() + (Coeff::NegativeOne, p.1))
+            .div(&mut cs, &(q.0.clone() + (Coeff::NegativeOne, p.0)))?;
+        let x_r = Combination::from(Combination::from(Num::from(lambda_1)).square(&mut cs)?)
+            + (Coeff::NegativeOne, p.0)
+            + q.0.clone().scale(-E1::Scalar::one());
+        let lambda_2 = Combination::zero() + (Coeff::Full(E1::Scalar::from_u64(2)), p.1);
+        let lambda_2 = lambda_2.div(
+            &mut cs,
+            &(Combination::from(p.0) + x_r.clone().scale(-E1::Scalar::one())),
+        )?;
+        let lambda_2 = Combination::from(lambda_2) - lambda_1;
+
+        let x_s = AllocatedNum::alloc(&mut cs, || {
+            let lambda_2_squared_value = lambda_2.get_value().unwrap().square();
+            let x_r_value = x_r.get_value().unwrap();
+            let x_p_value = p.0.value().unwrap();
+
+            Ok(lambda_2_squared_value - &x_r_value - &x_p_value)
+        })?;
+
+        {
+            let (a, b, c) = cs.multiply(|| {
+                let lambda_2_value = lambda_2.get_value().unwrap();
+                let lambda_2_squared = lambda_2_value.square();
+
+                Ok((lambda_2_value, lambda_2_value, lambda_2_squared))
+            })?;
+            let lambda_2 = lambda_2.lc(&mut cs);
+            cs.enforce_zero(LinearCombination::from(a) - &lambda_2);
+            cs.enforce_zero(LinearCombination::from(b) - &lambda_2);
+            let x_r = x_r.lc(&mut cs);
+            let x_s = x_s.lc();
+            let x_p = p.0.lc(&mut cs);
+            cs.enforce_zero(LinearCombination::from(c) - &x_r - &x_s - &x_p);
+        }
+
+        let y_s = AllocatedNum::alloc(&mut cs, || {
+            let lambda_2_value = lambda_2.get_value().unwrap();
+            let x_p_value = p.0.value().unwrap();
+            let x_s_value = x_s.get_value().unwrap();
+            let y_p_value = p.1.value().unwrap();
+
+            Ok(lambda_2_value * &(x_p_value - &x_s_value) - &y_p_value)
+        })?;
+
+        {
+            let (a, b, c) = cs.multiply(|| {
+                let lambda_2_value = lambda_2.get_value().unwrap();
+                let x_p_value = p.0.value().unwrap();
+                let x_s_value = x_s.get_value().unwrap();
+                let y_p_value = p.1.value().unwrap();
+                let y_s_value = y_s.get_value().unwrap();
+
+                Ok((
+                    lambda_2_value,
+                    x_p_value - &x_s_value,
+                    y_p_value + &y_s_value,
+                ))
+            })?;
+            let lambda_2 = lambda_2.lc(&mut cs);
+            cs.enforce_zero(LinearCombination::from(a) - &lambda_2);
+            let y_s = y_s.lc();
+            let x_s = x_s.lc();
+            let x_p = p.0.lc(&mut cs);
+            let y_p = p.1.lc(&mut cs);
+            cs.enforce_zero(LinearCombination::from(b) + &x_s - &x_p);
+            cs.enforce_zero(LinearCombination::from(c) - &y_s - &y_p);
+        }
+
+        Ok((Num::from(x_s), Num::from(y_s)))
+    }
+
+    fn endo_multiply_inv<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        p: &(Num<E1::Scalar>, Num<E1::Scalar>),
+        bits: &[AllocatedBit],
+    ) -> Result<(Num<E1::Scalar>, Num<E1::Scalar>), SynthesisError> {
+        // Let's compute the challenge
+        let mut challenge = 0u128;
+        let mut coeff = 1;
+        for bit in bits.iter() {
+            if let Some(true) = bit.get_value() {
+                challenge += coeff;
+            }
+            coeff += coeff;
+        }
+        // Let's compute the scalar
+        let scalar: E2::Scalar =
+            crate::util::get_challenge_scalar(crate::util::Challenge(challenge));
+        let scalar = scalar.invert().unwrap();
+        // Let's compute the point
+        let mut point = None;
+        if let Some(x) = p.0.value() {
+            if let Some(y) = p.1.value() {
+                let inv = E2::from_xy(x, y).unwrap();
+                let inv = inv * scalar;
+                let r = inv.to_affine().get_xy().unwrap();
+                point = Some(r);
+            }
+        }
+        // Let's witness the point
+        let inv = self.witness_point(&mut cs, || Ok(point.unwrap()))?;
+        // Let's now endo_multiply on it
+        let should_be_original = self.endo_multiply(&mut cs, &inv, bits)?;
+        // Now, compare
+        {
+            let lhs = p.0.lc(&mut cs);
+            let rhs = should_be_original.0.lc(&mut cs);
+            cs.enforce_zero(lhs - &rhs);
+        }
+        {
+            let lhs = p.1.lc(&mut cs);
+            let rhs = should_be_original.1.lc(&mut cs);
+            cs.enforce_zero(lhs - &rhs);
+        }
+
+        Ok(inv)
+    }
+
     fn endo_multiply<CS: ConstraintSystem<E1::Scalar>>(
         &self,
         mut cs: CS,
         p: &(Num<E1::Scalar>, Num<E1::Scalar>),
+        bits: &[AllocatedBit],
     ) -> Result<(Num<E1::Scalar>, Num<E1::Scalar>), SynthesisError> {
-        unimplemented!()
+        assert_eq!(bits.len(), 128);
+
+        // Perform the first step
+        // Acc = 2(endo(P) + P)
+        let acc = self.add_incomplete(&mut cs, &(p.0.scale(E1::Scalar::ZETA), p.1), &(p.0, p.1))?;
+        let mut acc = self.double(&mut cs, &acc)?;
+
+        for i in (0..64).rev() {
+            let should_negate = &bits[i * 2 + 1];
+            let should_endo = &bits[i * 2];
+            let q_x = Combination::from(p.0).conditional_multiply(
+                &mut cs,
+                should_endo,
+                E1::Scalar::ZETA,
+            )?;
+            let q_y = Combination::from(p.1).conditional_multiply(
+                &mut cs,
+                should_negate,
+                -E1::Scalar::one(),
+            )?;
+            acc = self.double_and_add(&mut cs, &acc, &(q_x, q_y))?;
+        }
+
+        Ok(acc)
     }
 
+    // TODO: could be optimized
     fn add_incomplete<CS: ConstraintSystem<E1::Scalar>>(
         &self,
         mut cs: CS,
         p: &(Num<E1::Scalar>, Num<E1::Scalar>),
         q: &(Num<E1::Scalar>, Num<E1::Scalar>),
     ) -> Result<(Num<E1::Scalar>, Num<E1::Scalar>), SynthesisError> {
-        unimplemented!()
+        let x1 = p.0;
+        let y1 = p.1;
+        let x2 = Combination::from(q.0);
+        let y2 = Combination::from(q.1);
+
+        let y1_neg = (Coeff::NegativeOne, y1);
+        let lambda =
+            (y2 + y1_neg.clone()).div(&mut cs, &(x2.clone() + (Coeff::NegativeOne, x1)))?;
+        let lambda2 = Combination::from(Num::from(lambda)).square(&mut cs)?;
+        let x3 =
+            Combination::from(lambda2) + (Coeff::NegativeOne, x1) + x2.scale(-E1::Scalar::one());
+        let x3 = x3.evaluate(&mut cs)?;
+        let y3 = (Combination::from(Combination::from(lambda).mul(
+            &mut cs,
+            &(Combination::zero() + (Coeff::One, x1) + (Coeff::NegativeOne, x3)),
+        )?) + (y1_neg))
+            .evaluate(&mut cs)?;
+
+        Ok((x3, y3))
+    }
+
+    // TODO: could be optimized
+    fn double<CS: ConstraintSystem<E1::Scalar>>(
+        &self,
+        mut cs: CS,
+        p: &(Num<E1::Scalar>, Num<E1::Scalar>),
+    ) -> Result<(Num<E1::Scalar>, Num<E1::Scalar>), SynthesisError> {
+        let x = p.0;
+        let y = p.1;
+
+        let x2 = x.mul(&mut cs, &x)?;
+
+        let lambda = Combination::zero() + (Coeff::Full(E1::Scalar::from_u64(3)), x2);
+        let lambda = lambda.div(
+            &mut cs,
+            &(Combination::zero() + (Coeff::Full(E1::Scalar::from_u64(2)), y)),
+        )?;
+        let lambda2 = Combination::from(Num::from(lambda)).square(&mut cs)?;
+        let x3 = Combination::from(lambda2) + (Coeff::Full(-E1::Scalar::from_u64(2)), x);
+        let x3 = x3.evaluate(&mut cs)?;
+        let y3 = (Combination::from(Combination::from(lambda).mul(
+            &mut cs,
+            &(Combination::zero() + (Coeff::One, x) + (Coeff::NegativeOne, x3)),
+        )?) + (Coeff::NegativeOne, y))
+            .evaluate(&mut cs)?;
+
+        Ok((x3, y3))
     }
 
     fn check_on_curve<CS: ConstraintSystem<E1::Scalar>>(

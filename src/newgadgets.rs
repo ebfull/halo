@@ -1133,7 +1133,7 @@ impl<F: Field> Num<F> {
                 }
                 .into())
             }
-            _ => unimplemented!(),
+            (Num::Constant(val1), Num::Constant(val2)) => Ok(Num::Constant(val1 * val2)),
         }
     }
 
